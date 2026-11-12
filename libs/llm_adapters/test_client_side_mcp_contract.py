@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,15 +35,28 @@ def test_client_side_loop_disallowed_with_mcp_server_tool_names() -> None:
     assert client_side_mcp_tool_loop_allowed(tools=tools, remote_mcp=False) is False
 
 
-def test_validate_raises_when_loop_would_dial_mcp() -> None:
+def test_validate_raises_when_non_in_process_tools_present() -> None:
     req = FrontierRequest(
         messages=[{"role": "user", "content": "hi"}],
         model="openai/gpt-5.4",
         tools=[_tool("fs")],
-        mcp_tool_loop=True,
+        mcp_tool_loop=False,
         remote_mcp=False,
     )
     with pytest.raises(ValueError, match="remote_mcp"):
+        validate_client_side_mcp_tool_loop(req)
+
+
+def test_validate_raises_even_when_loop_disabled() -> None:
+    """Guard is independent of mcp_tool_loop — offenders must not ship on the wire."""
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "hi"}],
+        model="openai/gpt-5.4",
+        tools=[_tool("cortex"), _tool("rag")],
+        mcp_tool_loop=False,
+        remote_mcp=False,
+    )
+    with pytest.raises(ValueError, match="rag"):
         validate_client_side_mcp_tool_loop(req)
 
 
@@ -81,7 +96,7 @@ def test_adapter_build_frontier_request_refuses_mcp_server_tool_loop(
         messages=[{"role": "user", "content": "hi"}],
         model="openai/gpt-5.4",
         tools=[_tool("brave_search")],
-        mcp_tool_loop=True,
+        mcp_tool_loop=False,
         remote_mcp=False,
         max_tokens=256,
     )
@@ -110,7 +125,7 @@ def test_client_side_mcp_module_import_graph_hygiene() -> None:
 
 
 @pytest.mark.offline
-def test_client_side_mcp_consumers_declared_and_package_import_verified() -> None:
+def test_client_side_mcp_consumers_file_grain_verify() -> None:
     from implement_admission.consumer_import_verify import (
         clear_verify_caches,
         verify_consumer_import,
@@ -122,13 +137,34 @@ def test_client_side_mcp_consumers_declared_and_package_import_verified() -> Non
 
     clear_verify_caches()
     module_path = "libs/llm_adapters/client_side_mcp.py"
-    pkg_path = "libs/llm_adapters/__init__.py"
-    text = Path(__file__).resolve().parents[2].joinpath(*module_path.split("/")).read_text(
-        encoding="utf-8"
+    text = (
+        Path(__file__)
+        .resolve()
+        .parents[2]
+        .joinpath(*module_path.split("/"))
+        .read_text(encoding="utf-8")
     )
     declared = tuple_declared_in_source(text, "CONSUMERS")
-    assert declared == ("cloud_proxy", "gateway", "mcp", "stargate")
+    assert declared == ("cloud_proxy", "mcp", "stargate")
     slugs = {slug for slug, _src in nominations_for_lib_path(module_path)}
     assert slugs == set(declared)
     for slug in declared:
-        assert verify_consumer_import(slug, pkg_path) == "verified"
+        status = verify_consumer_import(slug, module_path)
+        assert status == "verified", f"{slug}: {status}"
+
+
+@pytest.mark.offline
+def test_llm_adapters_import_no_cycle_with_client_side_mcp() -> None:
+    """core and each frontier adapter must import after client_side_mcp loads."""
+    for mod in (
+        "llm_adapters.core",
+        "llm_adapters.anthropic.adapter",
+        "llm_adapters.google",
+        "llm_adapters.responses.adapter",
+    ):
+        sys.modules.pop(mod, None)
+    importlib.import_module("llm_adapters.client_side_mcp")
+    importlib.import_module("llm_adapters.core")
+    importlib.import_module("llm_adapters.anthropic.adapter")
+    importlib.import_module("llm_adapters.google")
+    importlib.import_module("llm_adapters.responses.adapter")

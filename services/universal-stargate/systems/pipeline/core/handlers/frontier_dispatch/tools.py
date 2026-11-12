@@ -36,11 +36,9 @@ async def resolve_dispatch_tool_set(
     - Persona-bound: ``agent`` is set — hydrates agent and selects tool tier.
       Models with ``mcp_client_tool_loop=False`` get ``tools=[]`` (server-side
       built-ins are injected separately via the ``server_tools`` knob).
-    - Persona-free: no agent — full live MCP catalog when ``mcp_enabled``,
-      same surface as persona-bound dispatch. The dispatch path (frontier HTTP
-      vs team HTTP / MCP ``team_dispatch``) no longer determines the tool
-      surface; ``mcp=False`` or the card-selected remote-connector path is the
-      MCP-class suppression signal.
+    - Persona-free: no agent — in-process client tools when ``mcp_enabled`` and
+      not ``remote_mcp``. ``mcp=False`` or the card-selected remote-connector
+      path is the MCP-class suppression signal.
     """
     from agent_seat import assemble_system_prompt, hydrate_agent
     from agent_seat.tools import in_process_client_tool_definitions

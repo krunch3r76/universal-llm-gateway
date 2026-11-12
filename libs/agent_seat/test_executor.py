@@ -18,8 +18,6 @@ from agent_seat import executor as _ex
 from agent_seat.executor import (
     _parse_dispatch_arguments,
     execute_tool,
-    get_mcp_tool_definitions,
-    resolve_tool_definitions,
 )
 
 
@@ -276,36 +274,3 @@ async def test_execute_agent_bus_reply_posts_body(
     assert captured["method"] == "POST"
     assert captured["path"] == "/turns"
     assert captured["body"] == args
-
-
-@pytest.mark.asyncio
-async def test_get_mcp_tool_definitions_returns_in_process_registry() -> None:
-    defs = await get_mcp_tool_definitions()
-    names = [d["function"]["name"] for d in defs]
-    assert names == ["cortex", "agent_bus"]
-
-
-@pytest.mark.asyncio
-async def test_get_mcp_tool_definitions_does_not_http_dial_mcp(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import httpx
-
-    async def forbidden(*_a: Any, **_k: Any) -> Any:
-        raise AssertionError("httpx must not be called for in-process tool defs")
-
-    monkeypatch.setattr(httpx, "AsyncClient", forbidden)
-    defs = await get_mcp_tool_definitions()
-    assert defs
-
-
-@pytest.mark.asyncio
-async def test_resolve_tool_definitions_in_process_only() -> None:
-    defs = await resolve_tool_definitions(["cortex", "agent_bus"])
-    assert [d["function"]["name"] for d in defs] == ["cortex", "agent_bus"]
-
-
-@pytest.mark.asyncio
-async def test_resolve_tool_definitions_rejects_mcp_only_names() -> None:
-    with pytest.raises(ValueError, match="MCP-only"):
-        await resolve_tool_definitions(["rag"])

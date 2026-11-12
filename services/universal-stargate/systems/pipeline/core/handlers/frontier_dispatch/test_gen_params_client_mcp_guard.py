@@ -6,12 +6,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from llm_adapters.client_side_mcp import client_side_mcp_tool_loop_allowed
 
 from systems.pipeline.core.execution.errors import ClientSideMcpHttpRefusedError
-from systems.pipeline.core.handlers.frontier_dispatch import (
-    gen_params as gen_params_mod,
-)
 from systems.pipeline.core.handlers.frontier_dispatch.admission_gate import (
     AdmissionResult,
 )
@@ -47,26 +43,8 @@ def _minimal_admission(*, tools: list[dict[str, Any]]) -> AdmissionResult:
     )
 
 
-def test_build_frontier_request_refuses_mcp_server_tools_when_loop_would_dial(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Entry point: gen_params — previously wired HTTP tool loop on bad tool sets."""
-
-    def _force_loop_enabled(**_kwargs: Any) -> bool:
-        return True
-
-    monkeypatch.setattr(
-        gen_params_mod,
-        "client_side_mcp_tool_loop_allowed",
-        _force_loop_enabled,
-    )
-    monkeypatch.setattr(gen_params_mod, "server_side_tools", lambda _m: [])
-    # Sanity: without the monkeypatch the same admission would not enable the loop.
-    assert client_side_mcp_tool_loop_allowed(
-        tools=[_tool("cortex"), _tool("rag")],
-        remote_mcp=False,
-    ) is False
-
+def test_build_frontier_request_refuses_mcp_server_tools_without_loop_flag() -> None:
+    """Production path: mixed in-process + MCP tools raises before wire build."""
     handler = SimpleNamespace(
         _build_generation_params=lambda _step, resolved_config: ({}, {})
     )

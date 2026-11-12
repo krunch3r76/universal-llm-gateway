@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 from agent_seat.tools import (
-    BRAVE_SEARCH_TOOL_DEFINITION,
     CORTEX_TOOL_DEFINITION,
     TEAM_TOOL_DEFINITIONS,
     TOOL_DEFINITIONS,
@@ -71,11 +70,10 @@ def test_tool_registry_resolve_known() -> None:
 
 
 def test_tool_registry_rejects_brave_search_mcp_only() -> None:
-    """brave_search is not in-process; schema kept for remote_mcp docs only (C2)."""
+    """brave_search is not in-process (C2)."""
     assert "brave_search" not in TOOL_REGISTRY
     with pytest.raises(ValueError, match="unknown tool"):
         resolve_tools(["brave_search"])
-    assert BRAVE_SEARCH_TOOL_DEFINITION["function"]["name"] == "brave_search"
 
 
 def test_tool_registry_resolve_unknown_raises() -> None:

@@ -17,6 +17,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from llm_adapters._tool_schema import sanitize_tool_parameters
+from llm_adapters.client_side_mcp import validate_client_side_mcp_tool_loop
 from llm_adapters.google_replay import (
     log_tool_round_trace,
     normalize_gemini_parts,
@@ -137,8 +138,6 @@ class GoogleAdapter:
         req: FrontierRequest,
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
         """Build Gemini native generateContent request from FrontierRequest."""
-        from llm_adapters.client_side_mcp import validate_client_side_mcp_tool_loop
-
         validate_client_side_mcp_tool_loop(req)
         if req.remote_mcp:
             raise NotImplementedError("google has no native remote MCP protocol")

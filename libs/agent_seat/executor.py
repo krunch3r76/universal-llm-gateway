@@ -27,11 +27,6 @@ from transport_utils import (
 from ulg_routing_headers.client import internal_dispatch_headers
 
 from agent_seat.context import get_active_role
-from agent_seat.tools import (
-    IN_PROCESS_CLIENT_TOOL_NAMES,
-    TOOL_REGISTRY,
-    in_process_client_tool_definitions,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -50,35 +45,6 @@ def _parse_dispatch_arguments(raw: Any) -> dict[str, Any] | None:
             logger.warning("dispatch arguments JSON invalid: %s", exc)
             return None
     return None
-
-
-async def get_mcp_tool_definitions() -> list[dict[str, Any]]:
-    """Return in-process client tool defs (no live MCP catalog fetch)."""
-
-    return in_process_client_tool_definitions()
-
-
-async def resolve_tool_definitions(names: list[str]) -> list[dict[str, Any]]:
-    """Resolve tool names against the static in-process registry only."""
-
-    definitions: list[dict[str, Any]] = []
-    unknown: list[str] = []
-    for name in names:
-        entry = TOOL_REGISTRY.get(name)
-        if entry is None:
-            unknown.append(name)
-            continue
-        if name not in IN_PROCESS_CLIENT_TOOL_NAMES:
-            unknown.append(name)
-            continue
-        definitions.append(entry["definition"])
-    if unknown:
-        available = sorted(IN_PROCESS_CLIENT_TOOL_NAMES)
-        raise ValueError(
-            f"unknown or MCP-only tool {sorted(set(unknown))!r}; "
-            f"in-process available: {available}"
-        )
-    return definitions
 
 
 async def _cortex_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:

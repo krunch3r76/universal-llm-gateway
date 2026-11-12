@@ -4,21 +4,25 @@ Stargate must not HTTP-dial the MCP server for client-side tool loops. Only
 tools executable via the in-process registry (cortex, agent_bus REST relays)
 may run under ``mcp_tool_loop=True`` without ``remote_mcp``. Full MCP catalog
 tools require the card-selected provider ``remote_mcp`` connector.
+
+``universal_cloud_proxy.McpToolExecutor`` is out of scope here (leaf MCP client
+per browser-resource-governance C1); this module governs Stargate/agent-seat
+in-process dispatch only.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from llm_adapters.core import FrontierRequest
+if TYPE_CHECKING:
+    from llm_adapters.core import FrontierRequest
 
 # In-process client tool loop — no MCP HTTP dial (C2). Canonical list lives here
 # so ``llm_adapters`` does not import ``agent_seat`` (import-graph hygiene).
 IN_PROCESS_CLIENT_TOOL_NAMES: frozenset[str] = frozenset({"cortex", "agent_bus"})
 
-# Harvest nominates loaders that import this module (file-grain; package CONSUMERS
-# on ``llm_adapters/__init__.py`` covers the rest).
-CONSUMERS: tuple[str, ...] = ("cloud_proxy", "gateway", "mcp", "stargate")
+# Harvest nominates loaders that import this module (file-grain only).
+CONSUMERS: tuple[str, ...] = ("cloud_proxy", "mcp", "stargate")
 
 _MCP_HTTP_REFUSAL_MESSAGE = (
     "Client-side mcp_tool_loop cannot include MCP-server tools without "
@@ -61,10 +65,8 @@ def client_side_mcp_tool_loop_allowed(
 
 def validate_client_side_mcp_tool_loop(req: FrontierRequest) -> None:
     """Raise ``ValueError`` when the client loop would require MCP HTTP."""
-    if not req.mcp_tool_loop or req.remote_mcp:
+    if req.remote_mcp:
         return
     offenders = non_in_process_tool_names(req.tools)
     if offenders:
-        raise ValueError(
-            f"{_MCP_HTTP_REFUSAL_MESSAGE} Offending tools: {offenders!r}."
-        )
+        raise ValueError(f"{_MCP_HTTP_REFUSAL_MESSAGE} Offending tools: {offenders!r}.")

@@ -29,6 +29,7 @@ from llm_adapters.anthropic._helpers import (
     _is_claude4_model,
 )
 from llm_adapters.capability_dispatch import resolve_dispatch
+from llm_adapters.client_side_mcp import validate_client_side_mcp_tool_loop
 
 if TYPE_CHECKING:
     from llm_adapters import FrontierRequest, LLMRequest
@@ -145,8 +146,6 @@ class AnthropicAdapter:
         # ``CapabilityDispatch`` boundary (cross-knob budget bump + ceiling
         # clamp already applied upstream in ``gen_params``).
         body["max_tokens"] = req.max_tokens
-
-        from llm_adapters.client_side_mcp import validate_client_side_mcp_tool_loop
 
         validate_client_side_mcp_tool_loop(req)
         if req.remote_mcp:
