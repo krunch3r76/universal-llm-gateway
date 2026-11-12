@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 from agent_seat.tools import (
-    BRAVE_SEARCH_TOOL_DEFINITION,
     CORTEX_TOOL_DEFINITION,
     TEAM_TOOL_DEFINITIONS,
     TOOL_DEFINITIONS,
@@ -70,16 +69,11 @@ def test_tool_registry_resolve_known() -> None:
     assert defs[0] == TOOL_REGISTRY["cortex"]["definition"]
 
 
-def test_tool_registry_brave_search_alias() -> None:
-    """brave_search must be in registry and NOT named web_search in schema."""
-    defs, execs = resolve_tools(["brave_search"])
-    assert execs == ["brave_search"]
-    fn_name = defs[0]["function"]["name"]
-    assert fn_name == "brave_search", (
-        f"tool name in schema must be 'brave_search', got {fn_name!r}; "
-        "collision with native model web_search would result in silent fallback"
-    )
-    assert defs[0] is BRAVE_SEARCH_TOOL_DEFINITION
+def test_tool_registry_rejects_brave_search_mcp_only() -> None:
+    """brave_search is not in-process (C2)."""
+    assert "brave_search" not in TOOL_REGISTRY
+    with pytest.raises(ValueError, match="unknown tool"):
+        resolve_tools(["brave_search"])
 
 
 def test_tool_registry_resolve_unknown_raises() -> None:

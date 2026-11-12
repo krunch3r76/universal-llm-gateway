@@ -348,7 +348,8 @@ def test_maybe_subscribe_on_checkpoint_skips_on_error() -> None:
 
 def test_continuity_ops_does_not_import_cursor_agents_hop() -> None:
     path = Path(__file__).resolve().parent / "continuity_ops.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
     forbidden = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
@@ -356,7 +357,7 @@ def test_continuity_ops_does_not_import_cursor_agents_hop() -> None:
             if mod == "cursor_bridge.cursor_agents_hop" or mod.startswith(
                 "cursor_bridge.cursor_agents_hop."
             ):
-                forbidden.append(ast.get_source_segment(path.read_text(encoding="utf-8"), node))
+                forbidden.append(ast.get_source_segment(source, node))
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name.startswith("cursor_bridge.cursor_agents_hop"):

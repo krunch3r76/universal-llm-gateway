@@ -10,6 +10,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from bus_compact_pointer.pointer import giw_parent_pointer_enrichment
 from closeout_memo.client import PostResult, post_closeout_memo
 from closeout_memo.events import emit_closeout_memo
 from closeout_memo.models import CloseoutMemoRequest, coerce_status
@@ -59,6 +60,20 @@ def _record(row: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _read_sidecar_text(sidecar_ref: str) -> str | None:
+    """Return UTF-8 sidecar bytes at ``sidecar_ref``, or None when unreadable."""
+    try:
+        from implement_admission.scheme_resolve import resolve_fs_ingress
+
+        ingress = resolve_fs_ingress(sidecar_ref.strip())
+        path = ingress.resolved
+        if path is None or not path.is_file():
+            return None
+        return path.read_text(encoding="utf-8")
+    except (OSError, ValueError, FileNotFoundError):
+        return None
+
+
 def parent_bus_target(
     row: dict[str, Any], rec: dict[str, Any]
 ) -> tuple[str, str] | None:
@@ -103,12 +118,23 @@ def build_parent_bus_pointer(
         f"worker_thread: {worker_thread}",
         f"worker_closeout_turn: {turn}",
     ]
-    if isinstance(sidecar, str) and sidecar.strip():
-        body_lines.append(f"sidecar_ref: {sidecar.strip()}")
+    sidecar_ref = sidecar.strip() if isinstance(sidecar, str) and sidecar.strip() else ""
+    if sidecar_ref:
+        body_lines.append(f"sidecar_ref: {sidecar_ref}")
     body_lines.append(
         "emitted_by: git_integration_worker closeout-memo (system pointer)"
     )
-    return parent_thread, to_agent, subject, "\n".join(body_lines)
+    base_body = "\n".join(body_lines)
+    if sidecar_ref:
+        sidecar_text = _read_sidecar_text(sidecar_ref)
+        body = giw_parent_pointer_enrichment(
+            sidecar_uri=sidecar_ref,
+            sidecar_text=sidecar_text,
+            base_body=base_body,
+        )
+    else:
+        body = base_body
+    return parent_thread, to_agent, subject, body
 
 
 def classify_memo(

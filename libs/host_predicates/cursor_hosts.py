@@ -14,13 +14,14 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _config_path() -> Path:
+def config_path() -> Path:
+    """Absolute path of the tracked Glass window table at ``config/cursor-windows.json``."""
     return _repo_root() / "config" / "cursor-windows.json"
 
 
 @lru_cache(maxsize=1)
-def _load_config() -> dict[str, Any]:
-    data = json.loads(_config_path().read_text(encoding="utf-8"))
+def load_config() -> dict[str, Any]:
+    data = json.loads(config_path().read_text(encoding="utf-8"))
     if data.get("schema_version") != _SCHEMA:
         raise ValueError("cursor-windows.json schema_version must be 1")
     windows = data.get("windows")
@@ -44,10 +45,10 @@ def _alias_index(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _row_for_gui_host(
+def row_for_gui_host(
     gui_host: str | None, *, config: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
-    cfg = config if config is not None else _load_config()
+    cfg = config if config is not None else load_config()
     key = str(gui_host or "").strip() or ":8"
     idx = _alias_index(cfg)
     if key in idx:
@@ -61,8 +62,25 @@ def _row_for_gui_host(
 
 
 def is_cursor_xvfb_host(gui_host: str | None) -> bool:
-    """True when ``gui_host`` names a Glass Cursor Agents CDP target."""
-    return _row_for_gui_host(gui_host) is not None
+    """True when ``gui_host`` names a Glass Cursor Agents CDP target.
+
+    ``None`` and ``''`` are treated as the default ``:8`` row (both return True
+    when that row is present in the window table).
+    """
+    return row_for_gui_host(gui_host) is not None
 
 
-__all__ = ["is_cursor_xvfb_host"]
+def all_gui_host_aliases() -> frozenset[str]:
+    """Every gui_host label and alias the window table accepts."""
+    cfg = load_config()
+    idx = _alias_index(cfg)
+    return frozenset(idx.keys())
+
+
+__all__ = [
+    "all_gui_host_aliases",
+    "config_path",
+    "is_cursor_xvfb_host",
+    "load_config",
+    "row_for_gui_host",
+]

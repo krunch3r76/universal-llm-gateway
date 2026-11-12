@@ -160,3 +160,33 @@ def test_read_mcp_docker_exec_timeout() -> None:
         fields, reason = read_mcp_container_deploy_identity()
     assert fields == {}
     assert reason == "stamp_exec:TimeoutExpired"
+
+
+def test_read_mcp_shared_budget_omits_inspect_when_budget_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Second docker call must not exceed the manage-health deadline budget."""
+    text = format_source_sync_stamp(_SHA, synced_at=_SYNCED)
+    calls: list[list[str]] = []
+    times = iter([1000.0, 1000.0, 1002.0])
+
+    def _monotonic() -> float:
+        return next(times, 1002.0)
+
+    monkeypatch.setattr("deploy_identity.stamp_identity.time.monotonic", _monotonic)
+
+    def _run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        if "cat" in cmd:
+            return type(
+                "P",
+                (),
+                {"returncode": 0, "stdout": text.encode(), "stderr": b""},
+            )()
+        raise AssertionError(f"unexpected cmd: {cmd}")
+
+    with patch("deploy_identity.stamp_identity.subprocess.run", side_effect=_run):
+        fields, reason = read_mcp_container_deploy_identity(budget_s=1.0)
+    assert fields == {}
+    assert reason == "stamp_budget_exhausted"
+    assert len(calls) == 1

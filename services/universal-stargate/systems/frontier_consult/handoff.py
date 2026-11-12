@@ -620,11 +620,20 @@ def build_pointer_only_dispatch_pointer(
     correlation_id: str,
 ) -> str:
     """Bus pointer that cites a sidecar and a digest, never prompt text."""
-    return (
-        f"{lane} {contract} generate — prompt off bus. "
-        f"sidecar `{sidecar_ref or 'unknown'}` "
-        f"sha256 `{prompt_sha256 or 'unknown'}` "
-        f"correlation `{correlation_id}`."
+    from bus_compact_pointer import compact_pointer_body
+
+    ref = sidecar_ref or "unknown"
+    digest = prompt_sha256 or "unknown"
+    return compact_pointer_body(
+        verdict="GENERATE",
+        execution_id=correlation_id,
+        sidecar_uri=ref,
+        sidecar_sha256=digest,
+        context_lines=[
+            f"lane: {lane}",
+            f"contract: {contract}",
+            "prompt off bus",
+        ],
     )
 
 

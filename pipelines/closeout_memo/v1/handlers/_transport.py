@@ -7,6 +7,13 @@ import os
 from typing import Any
 
 import httpx
+from closeout_memo.bus_pointer import compact_overflow_bus_body
+from closeout_memo.models import CloseoutMemoRequest
+from cortex_store.dispatch_ops._thread_sidecar import (
+    SidecarContentTooLargeError,
+    SidecarWriteError,
+    write_thread_sidecar_for_send,
+)
 from transport_utils import (
     DEFAULT_AGENT_BUS_URL,
     DEFAULT_STARGATE_URL,
@@ -240,6 +247,60 @@ async def harvest_marker(
         return True
     blob = str(parsed)
     return marker in blob and parsed.get("outcome") not in {None, "error"}
+
+
+def spill_overflow_sidecar(
+    *, wake_lane: str, subject: str, overflow: str
+) -> str | None:
+    """Write overflow bytes to cortex; return uri or None on failure."""
+    try:
+        result = write_thread_sidecar_for_send(
+            thread=wake_lane,
+            subject=subject,
+            content=overflow,
+            from_agent="closeout-memo",
+            oversized=True,
+        )
+    except (SidecarWriteError, SidecarContentTooLargeError, OSError) as exc:
+        logger.warning("closeout memo overflow spill failed: %s", exc)
+        return None
+    return result.uri
+
+
+async def post_overflow_pointer(
+    *,
+    wake_lane: str,
+    subject: str,
+    memo: CloseoutMemoRequest | None,
+    overflow: str,
+    coalesced_count: int,
+    sidecar_markdown: str | None = None,
+) -> bool:
+    """Spill overflow to cortex when needed, post compact pointer body."""
+    text = overflow.strip()
+    if not text:
+        return False
+    spill_uri: str | None = None
+    use_cortex = (
+        coalesced_count == 1
+        and memo is not None
+        and memo.sidecar is not None
+        and sidecar_markdown is not None
+    )
+    if not use_cortex:
+        spill_uri = spill_overflow_sidecar(
+            wake_lane=wake_lane, subject=subject, overflow=text
+        )
+        if spill_uri is None:
+            return False
+    body = compact_overflow_bus_body(
+        memo=memo,
+        overflow_markdown=text,
+        sidecar_markdown=sidecar_markdown,
+        coalesced_count=coalesced_count,
+        spill_uri=spill_uri,
+    )
+    return await post_bus_turn(wake_lane=wake_lane, subject=subject, body=body)
 
 
 async def post_bus_turn(

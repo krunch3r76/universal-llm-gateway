@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import pytest
+from host_predicates.cursor_hosts import all_gui_host_aliases, is_cursor_xvfb_host
 
-from cursor_bridge.cursor_agents_hop import (
-    cursor_debug_url_for_gui_host,
-    is_cursor_xvfb_host,
-)
+from cursor_bridge.cursor_agents_hop import cursor_debug_url_for_gui_host
 from cursor_bridge.cursor_window_config import (
     config_path,
+    is_configured_cursor_glass_host,
     load_config,
     subscription_display_for_gui_host,
     unknown_gui_host_error,
@@ -40,7 +39,19 @@ def test_cursor_windows_config_tracked_and_loads() -> None:
 )
 def test_configured_hosts_match_prior_behavior(host: str) -> None:
     assert is_cursor_xvfb_host(host) is True
-    assert is_cursor_xvfb_host("jupiter") is False
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        *sorted(all_gui_host_aliases()),
+        "jupiter",
+        None,
+        "",
+    ],
+)
+def test_is_cursor_xvfb_host_matches_configured_glass_host(host: str | None) -> None:
+    assert is_cursor_xvfb_host(host) == is_configured_cursor_glass_host(host)
 
 
 def test_cdp_origins_from_config() -> None:

@@ -10,9 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from bus_watch.fable_lock import WATCH_DIR
-
-CONSUMERS: tuple[str, ...] = ("mcp",)
+from spawn_ledger.watch_dir import WATCH_DIR
 
 _ROW_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _LEDGER_ROW_BODY_RE = re.compile(r"^ledger_row: ([0-9a-f]{32})$", re.MULTILINE)
@@ -106,7 +104,9 @@ def _fold_spawn_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return folded
 
 
-def _append_row(row: dict[str, Any], *, watch_dir: Path | None = None) -> dict[str, Any]:
+def _append_row(
+    row: dict[str, Any], *, watch_dir: Path | None = None
+) -> dict[str, Any]:
     payload = _compact_payload(row)
     if len(payload.encode("utf-8")) >= _LINE_BUDGET_BYTES:
         return {"ok": False, "error": "line_too_long"}
@@ -619,8 +619,7 @@ def _spawn_matches_parent(spawn: dict[str, Any], parent: dict[str, str]) -> bool
     if not isinstance(obj, dict):
         return False
     return (
-        str(obj.get("agent") or "").strip()
-        == str(parent.get("agent") or "").strip()
+        str(obj.get("agent") or "").strip() == str(parent.get("agent") or "").strip()
         and str(obj.get("thread") or "").strip()
         == str(parent.get("thread") or "").strip()
     )
@@ -691,9 +690,7 @@ def read_house_ledger(
         _serve_row_with_status(row, watch_dir=watch_dir) for row in candidates[:lim]
     ]
     head_status = (
-        project_row_status(
-            str(matched[0].get("row_id") or ""), watch_dir=watch_dir
-        )
+        project_row_status(str(matched[0].get("row_id") or ""), watch_dir=watch_dir)
         if matched
         else {"status": "unknown", "source_status": None}
     )
@@ -721,9 +718,7 @@ def read_house_ledger(
         matched.pop()
         budget["truncated"] = True
         head_status = (
-            project_row_status(
-                str(matched[0].get("row_id") or ""), watch_dir=watch_dir
-            )
+            project_row_status(str(matched[0].get("row_id") or ""), watch_dir=watch_dir)
             if matched
             else {"status": "unknown", "source_status": None}
         )

@@ -12,7 +12,7 @@ Two tiers:
 - ``TEAM_TOOL_DEFINITIONS`` — cortex + agent_bus (write access + inter-agent
   messaging). Superset of the read tier.
 
-RAG is sourced from the live MCP ``rag`` descriptor, not a local shim.
+In-process dispatch exposes cortex and agent_bus only — not the live MCP catalog.
 The cortex op registry lives in cortex-api; both tiers share the same tool
 schema here and the same op space at the /dispatch endpoint.
 """
@@ -20,6 +20,8 @@ schema here and the same op space at the /dispatch endpoint.
 from __future__ import annotations
 
 from typing import Any
+
+from llm_adapters.client_side_mcp import IN_PROCESS_CLIENT_TOOL_NAMES
 
 
 def _fn(
@@ -42,7 +44,7 @@ def _fn(
 _CORTEX_OPS_DOC = (
     "  activate (entity_ids, depth?, max_results?, exclude_ids?, suppress_hubs?, decay_factor?)\n"
     "  analyze_impact (entity_id, claim, confidence?, resolve_aliases?, raw_id?)\n"
-    "  assemble_transcript (jsonl_path, session_id, agent?, assistant_label?) — Assemble a verbatim transcript layer from a Cursor JSONL. Args: jsonl_path: path under ``CURSOR_AGENT_TRANSCRIPTS_ROOT`` (absolute or relative to the root).  Sandbox-enforced — paths outside the root return ``{\"error\", \"reason\": \"path_outside_root\"}``. session_id: ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` — appears in the H1 line. agent: cosmetic; echoed in the response. assistant_label: heading label for assistant blocks; default ``\"Assistant\"``. Returns: ``{\"verbatim_md\", \"turn_count\", \"byte_count\", \"agent\"}`` on success, ``{\"error\", \"reason\"}`` otherwise.  ``verbatim_md`` here is the verbatim layer ONLY — the dispatch caller (debug / probe) is expected to inspect it, NOT to pass it back as a `session_close` argument (that path is dead — see Phase 2 of session-close-server-side-transcript).\n"
+    '  assemble_transcript (jsonl_path, session_id, agent?, assistant_label?) — Assemble a verbatim transcript layer from a Cursor JSONL. Args: jsonl_path: path under ``CURSOR_AGENT_TRANSCRIPTS_ROOT`` (absolute or relative to the root).  Sandbox-enforced — paths outside the root return ``{"error", "reason": "path_outside_root"}``. session_id: ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` — appears in the H1 line. agent: cosmetic; echoed in the response. assistant_label: heading label for assistant blocks; default ``"Assistant"``. Returns: ``{"verbatim_md", "turn_count", "byte_count", "agent"}`` on success, ``{"error", "reason"}`` otherwise.  ``verbatim_md`` here is the verbatim layer ONLY — the dispatch caller (debug / probe) is expected to inspect it, NOT to pass it back as a `session_close` argument (that path is dead — see Phase 2 of session-close-server-side-transcript).\n'
     "  assert (entity_id, claim, confidence, evidence, evidence_uris?, seeded_by?, derivation_type?, confidence_score?, observed_at?, valid_from?, chunk_id?, reasoning_summary?, prospective_summary?, events_json?, artifact_uri?, artifact_storage?, predicate_form?, force?, supersedes_id?, acknowledge_audit_gaps?, dry_run?, attributes?, resolve_aliases?, raw_id?, session_id?, related?)\n"
     "  assertion_get (assertion_id) — Read a single assertion by id. Used by `pipelines/predicate_extract/` for the §6.7 idempotency check (predicate_form IS NULL sentinel) without forcing a list-and-filter round trip. Returns the same shape as `_create_assertion_impl`'s `item` field — `predicate_form` included.\n"
     "  assertion_state (entity_id, resolve_aliases?, raw_id?) — Lightweight ratification/count projection for a single entity.\n"
@@ -71,7 +73,7 @@ _CORTEX_OPS_DOC = (
     "  entities_bulk_upsert (entities?, if_exists?)\n"
     "  entities_by_content_hash (type?, limit?) — Dedicated content-hash lookup op. Requires content_hash; defaults limit=5.\n"
     "  entity_create (id, type, name, description?, workflow_state?, notes?, aliases?, attributes?, source_uri?)\n"
-    "  entity_get (entity_id, entity_ids?, include_edges?, edge_limit?, intent?, include_superseded?, debug?, top_k?, resolve_aliases?, raw_id?, section?, full_body?, include_body?) — Dispatch surface for entity_get (v2.4 §6.1). intent=\"full\" — EntityDetail with active assertions + superseded breadcrumb. intent=\"full-historical\" — all rows with full enrichment (audit path). intent=\"card\" — Card v0 via projection-aware fetch (§6.3). intent=\"card-md\" — comprehension-first markdown render (root-only). intent=\"body\" — source_uri markdown (not the KG card). Params: ``section`` (md_read one heading), ``full_body`` (``false``=section manifest only). Default (no section, ``full_body`` unset): whole body. Response includes ``render_mode`` (``\"full\"`` | ``\"manifest\"``). intent in {\"cluster\",\"impact\"} — reserved; rejected until later phases. ``entity_ids`` — batch read; same ``intent``/options for every id; returns ``{\"items\": [...], \"count\": N}`` (batch mode supports ``body`` and ``card`` only). ``include_body`` — on intent=card for ``type=runbook``, inline markdown from ``source_uri`` (default on). Set false to omit. Ignored for other types (surfaces ``validation_warnings``).\n"
+    '  entity_get (entity_id, entity_ids?, include_edges?, edge_limit?, intent?, include_superseded?, debug?, top_k?, resolve_aliases?, raw_id?, section?, full_body?, include_body?) — Dispatch surface for entity_get (v2.4 §6.1). intent="full" — EntityDetail with active assertions + superseded breadcrumb. intent="full-historical" — all rows with full enrichment (audit path). intent="card" — Card v0 via projection-aware fetch (§6.3). intent="card-md" — comprehension-first markdown render (root-only). intent="body" — source_uri markdown (not the KG card). Params: ``section`` (md_read one heading), ``full_body`` (``false``=section manifest only). Default (no section, ``full_body`` unset): whole body. Response includes ``render_mode`` (``"full"`` | ``"manifest"``). intent in {"cluster","impact"} — reserved; rejected until later phases. ``entity_ids`` — batch read; same ``intent``/options for every id; returns ``{"items": [...], "count": N}`` (batch mode supports ``body`` and ``card`` only). ``include_body`` — on intent=card for ``type=runbook``, inline markdown from ``source_uri`` (default on). Set false to omit. Ignored for other types (surfaces ``validation_warnings``).\n'
     "  entity_merge (source_id, target_id)\n"
     "  entity_rekey (old_id, new_id)\n"
     "  entity_retype (entity_id, new_type, force?)\n"
@@ -88,7 +90,7 @@ _CORTEX_OPS_DOC = (
     "  predicate_renormalize (dry_run?, sample_limit?) — Run dry_run_stratify and optional T0 flag-fields-only clear pass.\n"
     "  prose_fact_scan (principal?, paths?, tier?, dry_run?, unsafe_full_scan?)\n"
     "  recon_sidecar_write (label, theme, body, scopes?, queries?, sink_backend?)\n"
-    "  register_skill_substrate (skill_id, skill_path, case_id?, description?, trigger_phrases?, skill_binding?, session_id?, agent?) — Atomic DB-only composite: agent_skill: + document: + relationship_create. C1 atomicity — CREATE PATH: all three writes (agent_skill entity, document entity, keystone_of relationship, plus the optional uses_skill relationship) execute on a single connection under WRITE_LOCK inside one explicit ``BEGIN IMMEDIATE`` … ``COMMIT``, via the conn-taking impls ``create_entity_impl(conn, …, commit=False)`` and ``create_relationship_on_conn(conn, …, commit=False)``. A mid-composite failure rolls back every member — partial failures cannot leave orphaned entities. The ``_op_*`` wrappers are bypassed on this path, which drops their advisory-only machinery (write-discipline nudge, collision warning, per-member ``mcp.cortex.*.created`` events); the RAG source-changed nudge is covered by the periodic backstop for ``commit=False`` callers. MATCHING-PATH BACKFILL is intentionally NON-atomic per member: each backfilled member (document entity, keystone relationship) is written by the wrapper ops on their own connections and is independently durable and idempotent — a failed backfill converges on retry. Idempotency (W3): - If agent_skill:<skill_id> exists and matches (name, source_uri canonical, description, trigger_phrases as set), return existing with _status=\"existing\"; the document member and keystone relationship are backfilled when missing (composite completion — the substantiation migration registers over pre-existing skill entities, which must end up fully substantiated). - If diverges, return composite_conflict with diff + suggested entity_update (the suggested update covers name/source_uri/description/attributes so a re-register after applying it converges to \"existing\"). - Else create all three rows atomically. Canonical ``source_uri`` for new registrations: ``workspaces://universal-llm-gateway/.cursor/skills/{skill_id}/SKILL.md``. Legacy ``cortex://agent-skills/`` paths are rejected (invalid_skill_path). Emits cortex.composite.registered with entity_ids, composite, status.\n"
+    '  register_skill_substrate (skill_id, skill_path, case_id?, description?, trigger_phrases?, skill_binding?, session_id?, agent?) — Atomic DB-only composite: agent_skill: + document: + relationship_create. C1 atomicity — CREATE PATH: all three writes (agent_skill entity, document entity, keystone_of relationship, plus the optional uses_skill relationship) execute on a single connection under WRITE_LOCK inside one explicit ``BEGIN IMMEDIATE`` … ``COMMIT``, via the conn-taking impls ``create_entity_impl(conn, …, commit=False)`` and ``create_relationship_on_conn(conn, …, commit=False)``. A mid-composite failure rolls back every member — partial failures cannot leave orphaned entities. The ``_op_*`` wrappers are bypassed on this path, which drops their advisory-only machinery (write-discipline nudge, collision warning, per-member ``mcp.cortex.*.created`` events); the RAG source-changed nudge is covered by the periodic backstop for ``commit=False`` callers. MATCHING-PATH BACKFILL is intentionally NON-atomic per member: each backfilled member (document entity, keystone relationship) is written by the wrapper ops on their own connections and is independently durable and idempotent — a failed backfill converges on retry. Idempotency (W3): - If agent_skill:<skill_id> exists and matches (name, source_uri canonical, description, trigger_phrases as set), return existing with _status="existing"; the document member and keystone relationship are backfilled when missing (composite completion — the substantiation migration registers over pre-existing skill entities, which must end up fully substantiated). - If diverges, return composite_conflict with diff + suggested entity_update (the suggested update covers name/source_uri/description/attributes so a re-register after applying it converges to "existing"). - Else create all three rows atomically. Canonical ``source_uri`` for new registrations: ``workspaces://universal-llm-gateway/.cursor/skills/{skill_id}/SKILL.md``. Legacy ``cortex://agent-skills/`` paths are rejected (invalid_skill_path). Emits cortex.composite.registered with entity_ids, composite, status.\n'
     "  relationship_create (source_id, target_id, type_id, role?, strength?, evidence?, chunk_id?, valid_from?, valid_until?, source_uri?, session_id?, agent?, resolve_aliases?, from_entity?, to_entity?, type?)\n"
     "  relationship_delete (relationship_id)\n"
     "  relationship_update (relationship_id, role?, strength?, evidence?, valid_from?, valid_until?, source_uri?, session_id?, agent?)\n"
@@ -109,8 +111,8 @@ _CORTEX_OPS_DOC = (
     "  seat_heartbeat (holder_id)\n"
     "  seat_release (holder_id)\n"
     "  session_audit (session_id, entity_ids?, defer_gaps?) — Manually invoke the session audit for a session ID. Runs graph-only detectors scoped to entity_ids (or full graph if empty). Does not block or modify session state — advisory only. Use case_audit for a full (graph + fs) audit of a case entity.\n"
-    "  session_close (session_id?, agent, transcript_jsonl_path?, transcript_messages?, transcript_messages_path?, session_summary_md, session_summary_md_path?, summary, transcript_depth?, domains?, decisions?, open_items?, entity_ids?, prior_session_id?, handoff_prompt?, handoff_source_path?, handoff_source_section?, expected_handoff_prompt?, expected_derived_handoff_prompt_sha256?, expected_source_file_sha256?, assistant_label?, source_ref?, source_ref_derivation?, defer_gaps?, promote_todos?, dry_run?, digest?, closed_by?, succession_seal_authority?, conversation_uuid?, handoff?, stamp_thread?, stamp_surface?, stamp_transcript_id?) — Atomic session close (server-side transcript derivation). Flow: 1. Cheap arg + session_id + summary validation. 2. Audit gate — may BLOCK before any file/DB write. 3. If ``dry_run``: assemble in-memory, validate, return preview. 4. Hand off to the route handler (`_close_session_impl`) which owns the atomic boundary: resolve path → assemble verbatim → compose → write file → DB tx → content_hash. 5. Append audit warnings + post-close detectors + structural warnings to the response. ``transcript_depth`` (default ``\"verbatim\"``) selects the archival layer — ``light`` writes a structural-only file with the transcript entity flagged as non-enrichment-eligible; ``none`` writes no file and no transcript entity, only the journal row (plus the continues edge). ``handoff_prompt`` / ``handoff_source_path`` at ``none`` return 422 ``handoff.requires_transcript_entity`` — use ``light`` minimum. Continuity is preserved at all depths. ``session_summary_md_path`` (optional) loads the structural summary from a CORTEX_FILES_ROOT-relative file. When both path and inline ``session_summary_md`` are set, **path wins**. ``session_id`` may be omitted when ``transcript_jsonl_path`` is set — the server derives it from JSONL session-start (successor hop, then mint). See session-close-server-side-transcript Phase 2 for the architecture rewrite; the route handler in `routes/session_journals.py` is the single atomic boundary.\n"
-    "  session_close_preflight (session_id?, agent, transcript_jsonl_path?, transcript_messages?, transcript_messages_path?, session_summary_md, session_summary_md_path?, summary, transcript_depth?, handoff_prompt?, handoff_source_path?, entity_ids?, defer_gaps?, assistant_label?) — Validate args + path sandbox + audit-gate health WITHOUT writing. Returns ``{\"ok\": True, \"audit\": {...}, \"turn_count\": int}`` on a path that would succeed at close time, or ``{\"ok\": False, \"error\", \"reason\"}`` otherwise.  Verbatim assembly is performed in-memory (no file written, no DB row) so the agent learns about a bad JSONL before paying for the audit and DB tx. ``transcript_depth`` (default ``\"verbatim\"``) selects the archival depth — ``none`` skips assembly entirely; ``light`` derives the composed file from ``session_summary_md`` alone. ``session_summary_md_path`` (optional) loads the structural summary from a CORTEX_FILES_ROOT-relative file. When both path and inline ``session_summary_md`` are set, **path wins**. ``session_id`` may be omitted when ``transcript_jsonl_path`` is set — the server derives it from JSONL session-start (successor hop, then mint).\n"
+    '  session_close (session_id?, agent, transcript_jsonl_path?, transcript_messages?, transcript_messages_path?, session_summary_md, session_summary_md_path?, summary, transcript_depth?, domains?, decisions?, open_items?, entity_ids?, prior_session_id?, handoff_prompt?, handoff_source_path?, handoff_source_section?, expected_handoff_prompt?, expected_derived_handoff_prompt_sha256?, expected_source_file_sha256?, assistant_label?, source_ref?, source_ref_derivation?, defer_gaps?, promote_todos?, dry_run?, digest?, closed_by?, succession_seal_authority?, conversation_uuid?, handoff?, stamp_thread?, stamp_surface?, stamp_transcript_id?) — Atomic session close (server-side transcript derivation). Flow: 1. Cheap arg + session_id + summary validation. 2. Audit gate — may BLOCK before any file/DB write. 3. If ``dry_run``: assemble in-memory, validate, return preview. 4. Hand off to the route handler (`_close_session_impl`) which owns the atomic boundary: resolve path → assemble verbatim → compose → write file → DB tx → content_hash. 5. Append audit warnings + post-close detectors + structural warnings to the response. ``transcript_depth`` (default ``"verbatim"``) selects the archival layer — ``light`` writes a structural-only file with the transcript entity flagged as non-enrichment-eligible; ``none`` writes no file and no transcript entity, only the journal row (plus the continues edge). ``handoff_prompt`` / ``handoff_source_path`` at ``none`` return 422 ``handoff.requires_transcript_entity`` — use ``light`` minimum. Continuity is preserved at all depths. ``session_summary_md_path`` (optional) loads the structural summary from a CORTEX_FILES_ROOT-relative file. When both path and inline ``session_summary_md`` are set, **path wins**. ``session_id`` may be omitted when ``transcript_jsonl_path`` is set — the server derives it from JSONL session-start (successor hop, then mint). See session-close-server-side-transcript Phase 2 for the architecture rewrite; the route handler in `routes/session_journals.py` is the single atomic boundary.\n'
+    '  session_close_preflight (session_id?, agent, transcript_jsonl_path?, transcript_messages?, transcript_messages_path?, session_summary_md, session_summary_md_path?, summary, transcript_depth?, handoff_prompt?, handoff_source_path?, entity_ids?, defer_gaps?, assistant_label?) — Validate args + path sandbox + audit-gate health WITHOUT writing. Returns ``{"ok": True, "audit": {...}, "turn_count": int}`` on a path that would succeed at close time, or ``{"ok": False, "error", "reason"}`` otherwise.  Verbatim assembly is performed in-memory (no file written, no DB row) so the agent learns about a bad JSONL before paying for the audit and DB tx. ``transcript_depth`` (default ``"verbatim"``) selects the archival depth — ``none`` skips assembly entirely; ``light`` derives the composed file from ``session_summary_md`` alone. ``session_summary_md_path`` (optional) loads the structural summary from a CORTEX_FILES_ROOT-relative file. When both path and inline ``session_summary_md`` are set, **path wins**. ``session_id`` may be omitted when ``transcript_jsonl_path`` is set — the server derives it from JSONL session-start (successor hop, then mint).\n'
     "  session_handoff_upsert (session_id, handoff_prompt, handoff_source_path?, handoff_source_section?, expected_handoff_prompt?, expected_derived_handoff_prompt_sha256?, expected_source_file_sha256?) — Upsert handoff_prompt on a closed session (journal row + transcript mirror).\n"
     "  staging_approve (staging_id?, reviewer?)\n"
     "  staging_batch_approve (staging_ids?, ledger_id?, reviewer?)\n"
@@ -141,9 +143,7 @@ CORTEX_TOOL_DEFINITION: dict[str, Any] = _fn(
     "cortex",
     "Cortex knowledge system — unified dispatch tool for the full Cortex "
     "surface.\n\n"
-    "Key operations:\n"
-    + _CORTEX_OPS_DOC
-    + "\n"
+    "Key operations:\n" + _CORTEX_OPS_DOC + "\n"
     "confidence: confirmed / believed / suspected / hypothesized\n"
     "arguments MUST be a JSON string or an object.",
     {
@@ -163,28 +163,6 @@ CORTEX_TOOL_DEFINITION: dict[str, Any] = _fn(
         },
     },
     ["tool"],
-)
-
-
-# Safe alias for the Brave Search MCP tool. The MCP tool is named
-# "web_search" at the server layer, but that name collides with
-# Claude's and Gemini's native search capability when injected into
-# frontier model tool lists.  Callers MUST use "brave_search" — the
-# executor translates the call to "web_search" on the MCP side.
-BRAVE_SEARCH_TOOL_DEFINITION: dict[str, Any] = _fn(
-    "brave_search",
-    "Live web search via the Brave Search API. Returns current search "
-    "results for the given query. Use this for real-time lookups — "
-    "prices, news, recent events, URLs. ALWAYS use this tool, never "
-    "the model's native web_search capability.",
-    {
-        "query": {"type": "string", "description": "Search query"},
-        "max_results": {
-            "type": "integer",
-            "description": "Max results to return (default 5, max 10)",
-        },
-    },
-    ["query"],
 )
 
 
@@ -231,9 +209,14 @@ TEAM_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     _AGENT_BUS_TOOL_DEFINITION,
 ]
 
-# Static fallback when the live MCP catalog is unreachable. TEAM_TOOL_DEFINITIONS
+# Static in-process tool surface (cortex + agent_bus). TEAM_TOOL_DEFINITIONS
 # is the superset — do NOT concatenate TOOL_DEFINITIONS (duplicate cortex).
 STATIC_TOOL_FALLBACK: list[dict[str, Any]] = TEAM_TOOL_DEFINITIONS
+
+
+def in_process_client_tool_definitions() -> list[dict[str, Any]]:
+    """OpenAI-shaped tool defs Stargate may attach without HTTP-dialing MCP."""
+    return list(STATIC_TOOL_FALLBACK)
 
 
 # Tool-registry entry: definition + async executor reference name. The
@@ -248,13 +231,6 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "agent_bus": {
         "definition": _AGENT_BUS_TOOL_DEFINITION,
         "executor": "agent_bus_dispatch",
-    },
-    # Safe alias — executor remaps to MCP "web_search" (see executor.py).
-    # ¬use "web_search" directly in frontier dispatches: collides with
-    # Claude's and Gemini's native search tool name.
-    "brave_search": {
-        "definition": BRAVE_SEARCH_TOOL_DEFINITION,
-        "executor": "brave_search",
     },
 }
 
@@ -271,6 +247,9 @@ def resolve_tools(
     executors: list[str] = []
     unknown: list[str] = []
     for name in names:
+        if name not in IN_PROCESS_CLIENT_TOOL_NAMES:
+            unknown.append(name)
+            continue
         entry = TOOL_REGISTRY.get(name)
         if entry is None:
             unknown.append(name)

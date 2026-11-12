@@ -397,7 +397,7 @@ def main() -> int:
                 sync_policy_gui_host,
             )
             from bus_watch.ide_hop import cleanup_xvfb_sidebar_on_holder_claim
-            from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
+            from host_predicates.cursor_hosts import is_cursor_xvfb_host
 
             xvfb_extra: dict = {}
             holder_agent_id = parse_ide_holder_agent_id(args.holder) or ""

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+
+from host_predicates.cursor_hosts import is_cursor_xvfb_host
 
 from bus_watch.digest_budget import _bus, _get
 from bus_watch.fable_lock import WATCH_DIR, read_lock, refresh_fable_lock
@@ -31,7 +34,6 @@ from bus_watch.judgment_rows import harvest_judgment_turns
 from bus_watch.liaison_digest import build_digest, effective_policy
 from bus_watch.now_row import format_now_line, resolve_now_row
 from bus_watch.tick_state import load_state, save_state
-from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
 
 
 def liaison_tick_once(
@@ -69,9 +71,10 @@ def liaison_tick_once(
 
 
 def _jsonl_turn_count(transcript_id: str) -> int | None:
-    from bus_watch.ide_budget import AGENT_TRANSCRIPTS
     from cortex_store.dispatch_ops.ops_transcript_discover import _live_jsonl_turn_count
     from cortex_store.transcript_session_id import jsonl_path_for_uuid
+
+    from bus_watch.ide_budget import AGENT_TRANSCRIPTS
 
     path = jsonl_path_for_uuid(AGENT_TRANSCRIPTS, transcript_id)
     if not path.is_file():

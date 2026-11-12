@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -271,12 +273,14 @@ async def test_deliver_oversized_with_archive_posts_pointer(
 
     sidecar_calls: list[dict[str, object]] = []
     posted_bodies: list[str] = []
+    post_kwargs: list[dict[str, object]] = []
 
     async def fake_sidecar(**kwargs: object) -> None:
         sidecar_calls.append(dict(kwargs))
 
     async def fake_post(**kwargs: object) -> PostOutcome:
         posted_bodies.append(str(kwargs.get("body")))
+        post_kwargs.append(dict(kwargs))
         return PostOutcome(ok=True, http_status=201)
 
     huge = "x" * 170_000
@@ -307,11 +311,12 @@ async def test_deliver_oversized_with_archive_posts_pointer(
     assert sidecar_calls == []
     assert len(posted_bodies) == 1
     body = posted_bodies[0]
-    assert len(body) <= delivery.BUS_MAX_BODY_CHARS
+    assert len(body) <= 2000
     assert "cortex://notes/system/threads/cdp-ask-archive-existing.md" in body
     assert "abc123sha256" in body
     assert huge not in body
-    assert "relocated to cortex" in body
+    assert "VERDICT:" in body
+    assert "allow_long_body" not in post_kwargs[0]
 
 
 @pytest.mark.asyncio
@@ -358,10 +363,11 @@ async def test_deliver_oversized_without_archive_writes_sidecar(
     assert sidecar_calls[0]["content"] == huge
     assert len(posted_bodies) == 1
     body = posted_bodies[0]
-    assert len(body) <= delivery.BUS_MAX_BODY_CHARS
+    assert len(body) <= 2000
     assert "cortex://notes/system/threads/9880-sidecar.md" in body
     assert "deadbeefsha256" in body
     assert huge not in body
+    assert "## sections" in body
 
 
 @pytest.mark.asyncio
@@ -385,6 +391,7 @@ async def test_deliver_under_limit_inline_unchanged(
         thread_id="5583",
         to_agent="dispatch",
         request_id="r-inline",
+        body_mode="inline",
     )
     assert ok is True
     assert len(posted_bodies) == 1
@@ -393,22 +400,311 @@ async def test_deliver_under_limit_inline_unchanged(
 
 
 @pytest.mark.asyncio
+async def test_c3_archive_without_sha_writes_sidecar_not_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+    from systems.frontier_consult.cdp_onbehalf_delivery import SidecarResult
+
+    sidecar_calls: list[dict[str, object]] = []
+
+    async def fake_sidecar(**kwargs: object) -> SidecarResult:
+        sidecar_calls.append(dict(kwargs))
+        return SidecarResult(
+            uri="cortex://notes/system/threads/arch-fallback.md",
+            sha256="f" * 64,
+            body_chars=10,
+        )
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+
+    huge = "z" * 170_000
+    result = CdpGenerateResult(
+        ok=True,
+        body=huge,
+        execution_id="c3exec123456789",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://notes/prompt.md",
+        picker_model="fable-5",
+        archive_uri="cortex://notes/system/threads/cdp-archive.md",
+        content_proof_sha256=None,
+    )
+    body = await delivery.build_cdp_success_delivery_body(
+        result=result,
+        thread_id="9901",
+        subject="cdp reply — c3",
+        format_metadata=format_cdp_result_body(result),
+        body_mode="compact",
+    )
+    assert body is not None
+    assert len(sidecar_calls) == 1
+    assert f"sha256: `{('f' * 64)}`" in body
+    assert "cortex://notes/system/threads/arch-fallback.md" in body
+
+
+@pytest.mark.asyncio
+async def test_c3_archive_pointer_skips_harvest_section_map(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+
+    async def fake_sidecar(**kwargs: object) -> None:
+        raise AssertionError("sidecar write must not run when archive+sha present")
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+
+    harvest = "## findings\n\nLine.\n## verdict\n\nVERDICT: APPROVE\n"
+    result = CdpGenerateResult(
+        ok=True,
+        body=harvest,
+        execution_id="c3bexec12345678",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://notes/prompt.md",
+        picker_model="fable-5",
+        archive_uri="cortex://notes/system/threads/cdp-archive.md",
+        content_proof_sha256="a" * 64,
+    )
+    body = await delivery.build_cdp_success_delivery_body(
+        result=result,
+        thread_id="9902",
+        subject="cdp reply — c3b",
+        format_metadata=format_cdp_result_body(result),
+        body_mode="compact",
+    )
+    assert body is not None
+    assert "## sections" in body
+    assert "cortex://notes/system/threads/cdp-archive.md" in body
+
+
+@pytest.mark.asyncio
+async def test_c7_deliver_sidecar_write_none_degraded_inline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W3 — write_cdp_harvest_sidecar -> None -> degraded inline, no DELIVERY FAILED."""
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+
+    posted_bodies: list[str] = []
+    subjects: list[str] = []
+
+    async def fake_sidecar(**kwargs: object) -> None:
+        return None
+
+    async def fake_post(**kwargs: object) -> PostOutcome:
+        subjects.append(str(kwargs.get("subject")))
+        posted_bodies.append(str(kwargs.get("body")))
+        return PostOutcome(ok=True, http_status=201)
+
+    result = _ok_result_no_archive(body="inline harvest verdict")
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="9880",
+        to_agent="dispatch",
+        request_id="r-sidecar-none",
+    )
+    assert ok is True
+    assert len(subjects) == 1
+    assert subjects[0].startswith("cdp reply")
+    assert "[sidecar write failed]" not in subjects[0]
+    assert "DELIVERY FAILED" not in subjects[0]
+    assert len(posted_bodies) == 1
+    body = posted_bodies[0]
+    assert "sidecar write failed" in body
+    assert "inline harvest verdict" in body
+    assert "sidecar_ref:" not in body
+    assert "sha256:" not in body
+
+
+@pytest.mark.asyncio
+async def test_w3_degraded_subject_marker_happy_path_subject_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Degraded inline keeps normal subject; body carries sidecar-failed marker."""
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+    from systems.frontier_consult.cdp_onbehalf_delivery import SidecarResult
+
+    degraded_subjects: list[str] = []
+    degraded_bodies: list[str] = []
+    happy_subjects: list[str] = []
+
+    async def fake_sidecar_none(**kwargs: object) -> None:
+        return None
+
+    async def fake_sidecar_ok(**kwargs: object) -> SidecarResult:
+        content = str(kwargs.get("content"))
+        return SidecarResult(
+            uri="cortex://notes/system/threads/w3-happy.md",
+            sha256=hashlib.sha256(content.encode()).hexdigest(),
+            body_chars=len(content),
+        )
+
+    async def fake_post_degraded(**kwargs: object) -> PostOutcome:
+        degraded_subjects.append(str(kwargs.get("subject")))
+        degraded_bodies.append(str(kwargs.get("body")))
+        return PostOutcome(ok=True, http_status=201)
+
+    async def fake_post_happy(**kwargs: object) -> PostOutcome:
+        happy_subjects.append(str(kwargs.get("subject")))
+        return PostOutcome(ok=True, http_status=201)
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar_none)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post_degraded,
+    )
+    await deliver_cdp_result_turn(
+        result=_ok_result_no_archive(body="small harvest"),
+        thread_id="9882",
+        to_agent="dispatch",
+        request_id="r-w3-degraded-subject",
+    )
+    assert len(degraded_subjects) == 1
+    assert degraded_subjects[0].startswith("cdp reply")
+    assert "[sidecar write failed]" not in degraded_subjects[0]
+    assert len(degraded_bodies) == 1
+    assert "sidecar write failed" in degraded_bodies[0]
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar_ok)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post_happy,
+    )
+    await deliver_cdp_result_turn(
+        result=_ok_result(),
+        thread_id="9883",
+        to_agent="dispatch",
+        request_id="r-w3-happy-subject",
+    )
+    assert len(happy_subjects) == 1
+    assert happy_subjects[0].startswith("cdp reply")
+    assert "[sidecar write failed]" not in happy_subjects[0]
+
+
+@pytest.mark.asyncio
+async def test_r5_deliver_sidecar_incomplete_degraded_autospill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W3 — incomplete sidecar write -> degraded inline with harvest."""
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+
+    cx_calls: list[tuple[str, dict[str, object]]] = []
+    post_kwargs: list[dict[str, object]] = []
+
+    async def fake_cx_async(op: str, payload: dict[str, object]) -> dict[str, object]:
+        cx_calls.append((op, dict(payload)))
+        if op == "thread_sidecar_write":
+            return {
+                "uri": "cortex://notes/system/threads/incomplete.md",
+                "body_chars": 10,
+            }
+        raise AssertionError(op)
+
+    async def fake_post(**kwargs: object) -> PostOutcome:
+        post_kwargs.append(dict(kwargs))
+        return PostOutcome(ok=True, http_status=201)
+
+    huge = "z" * 170_000
+    result = _ok_result_no_archive(body=huge)
+
+    monkeypatch.setattr(
+        "systems.pipeline.core.handlers.thread_persistence.events.cx_async",
+        fake_cx_async,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+    monkeypatch.setattr(delivery.asyncio, "sleep", AsyncMock())
+
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="9881",
+        to_agent="dispatch",
+        request_id="r-missing-sha",
+    )
+    assert ok is True
+    assert any(op == "thread_sidecar_write" for op, _ in cx_calls)
+    assert len(post_kwargs) == 1
+    assert "allow_long_body" not in post_kwargs[0]
+    assert "sidecar_content" not in post_kwargs[0]
+    spill_body = str(post_kwargs[0]["body"])
+    assert "sidecar write failed" in spill_body
+    assert spill_body.count("z") == 170_000
+    assert "sidecar_ref:" not in spill_body
+
+
+@pytest.mark.asyncio
+async def test_r3_inline_downgrade_compact_never_allow_long_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inline body_mode >64k downgrades to compact pointer without allow_long_body."""
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+    from systems.frontier_consult.cdp_onbehalf_delivery import SidecarResult
+
+    post_kwargs: list[dict[str, object]] = []
+
+    async def fake_sidecar(**kwargs: object) -> SidecarResult:
+        content = str(kwargs.get("content"))
+        return SidecarResult(
+            uri="cortex://notes/system/threads/inline-downgrade.md",
+            sha256=hashlib.sha256(content.encode()).hexdigest(),
+            body_chars=len(content),
+        )
+
+    async def fake_post(**kwargs: object) -> PostOutcome:
+        post_kwargs.append(dict(kwargs))
+        return PostOutcome(ok=True, http_status=201)
+
+    huge = "h" * 70_000
+    result = _ok_result_no_archive(body=huge)
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="9882",
+        to_agent="dispatch",
+        request_id="r-inline-downgrade",
+        body_mode="inline",
+    )
+    assert ok is True
+    assert len(post_kwargs) == 1
+    body = str(post_kwargs[0]["body"])
+    assert "sidecar_ref:" in body
+    assert len(body) <= 2000
+    assert "allow_long_body" not in post_kwargs[0]
+
+
+@pytest.mark.asyncio
 async def test_deliver_oversized_sidecar_fail_terminal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-4 — sidecar write failed: no success post; DELIVERY FAILED terminal."""
+    """W3 — degraded posts exhaust: DELIVERY FAILED only after bus refuses."""
     from systems.frontier_consult import cdp_onbehalf_delivery as delivery
 
     sidecar_calls: list[dict[str, object]] = []
     subjects: list[str] = []
+    post_attempt = 0
 
     async def fake_sidecar(**kwargs: object) -> None:
         sidecar_calls.append(dict(kwargs))
         return None
 
     async def fake_post(**kwargs: object) -> PostOutcome:
+        nonlocal post_attempt
+        post_attempt += 1
         subjects.append(str(kwargs.get("subject")))
-        return PostOutcome(ok=False, http_status=503, detail_preview="sidecar fail")
+        return PostOutcome(ok=False, http_status=503, detail_preview="bus down")
 
     huge = "z" * 170_000
     result = _ok_result_no_archive(body=huge)
@@ -428,9 +724,273 @@ async def test_deliver_oversized_sidecar_fail_terminal(
     )
     assert ok is False
     assert len(sidecar_calls) == 1
-    assert all("cdp reply" not in s for s in subjects)
-    assert subjects[0].startswith("cdp DELIVERY FAILED —")
+    assert post_attempt >= 2
+    assert subjects[-1].startswith("cdp DELIVERY FAILED —")
     assert ONBEHALF_POST_FAILED_STALL in format_onbehalf_delivery_failed_body(result)
+
+
+@pytest.mark.asyncio
+async def test_w3_degraded_spill_413_bounded_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W3 — spill refused (413) -> bounded allow_long_body with truncation note."""
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+
+    post_kwargs: list[dict[str, object]] = []
+
+    async def fake_sidecar(**kwargs: object) -> None:
+        return None
+
+    async def fake_post(**kwargs: object) -> PostOutcome:
+        post_kwargs.append(dict(kwargs))
+        if kwargs.get("allow_long_body"):
+            return PostOutcome(ok=True, http_status=201)
+        body = str(kwargs.get("body"))
+        if len(body) > 2000:
+            return PostOutcome(ok=False, http_status=413, detail_preview="too large")
+        return PostOutcome(ok=False, http_status=500, detail_preview="unexpected")
+
+    long_harvest = "h" * 2500
+    result = _ok_result_no_archive(body=long_harvest)
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="9883",
+        to_agent="dispatch",
+        request_id="r-spill-413",
+    )
+    assert ok is True
+    assert len(post_kwargs) == 2
+    assert "sidecar_content" not in post_kwargs[0]
+    assert "allow_long_body" not in post_kwargs[0]
+    assert len(str(post_kwargs[0]["body"])) > 2000
+    assert post_kwargs[1].get("allow_long_body") is True
+    body = str(post_kwargs[1]["body"])
+    assert "sidecar write failed" in body
+    assert long_harvest in body
+    assert len(body) <= delivery.BUS_MAX_BODY_CHARS
+
+
+@pytest.mark.asyncio
+async def test_w3_degraded_spill_503_bounded_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W3 — non-413 first post failure -> bounded allow_long_body once."""
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+
+    post_kwargs: list[dict[str, object]] = []
+
+    async def fake_sidecar(**kwargs: object) -> None:
+        return None
+
+    async def fake_post(**kwargs: object) -> PostOutcome:
+        post_kwargs.append(dict(kwargs))
+        if kwargs.get("allow_long_body"):
+            return PostOutcome(ok=True, http_status=201)
+        return PostOutcome(ok=False, http_status=503, detail_preview="unavailable")
+
+    long_harvest = "s" * 2500
+    result = _ok_result_no_archive(body=long_harvest)
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="9884",
+        to_agent="dispatch",
+        request_id="r-spill-503",
+    )
+    assert ok is True
+    assert len(post_kwargs) == 2
+    assert "sidecar_content" not in post_kwargs[0]
+    assert "allow_long_body" not in post_kwargs[0]
+    assert post_kwargs[1].get("allow_long_body") is True
+
+
+@pytest.mark.asyncio
+async def test_w3_sidecar_write_exception_degraded_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.pipeline.core.handlers.thread_persistence import events as tp_events
+
+    posted: list[str] = []
+
+    async def boom(**kwargs: object) -> dict[str, object]:
+        raise RuntimeError("cx_async sidecar unavailable")
+
+    async def fake_post(**kwargs: object) -> PostOutcome:
+        posted.append(str(kwargs.get("body")))
+        return PostOutcome(ok=True, http_status=201)
+
+    result = _ok_result_no_archive(body="exception path harvest")
+
+    monkeypatch.setattr(tp_events, "cx_async", boom)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="9885",
+        to_agent="dispatch",
+        request_id="r-sidecar-exc",
+    )
+    assert ok is True
+    assert len(posted) == 1
+    assert "sidecar write failed" in posted[0]
+    assert "exception path harvest" in posted[0]
+
+
+@pytest.mark.asyncio
+async def test_w3_degraded_fallback_failure_delivery_failed_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+
+    subjects: list[str] = []
+    allow_long_calls = 0
+
+    async def fake_sidecar(**kwargs: object) -> None:
+        return None
+
+    async def fake_post(**kwargs: object) -> PostOutcome:
+        nonlocal allow_long_calls
+        subjects.append(str(kwargs.get("subject")))
+        if kwargs.get("allow_long_body"):
+            allow_long_calls += 1
+        return PostOutcome(ok=False, http_status=503, detail_preview="down")
+
+    result = _ok_result_no_archive(body="z" * 3000)
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+    monkeypatch.setattr(delivery.asyncio, "sleep", AsyncMock())
+
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="9886",
+        to_agent="dispatch",
+        request_id="r-fallback-fail",
+    )
+    assert ok is False
+    assert allow_long_calls == 1
+    fail_subjects = [s for s in subjects if s.startswith("cdp DELIVERY FAILED")]
+    assert len(fail_subjects) == 1
+
+
+def test_bounded_degraded_fallback_reports_exact_drop_count() -> None:
+    from systems.frontier_consult.cdp_onbehalf_delivery import (
+        BUS_MAX_BODY_CHARS,
+        _bounded_degraded_fallback,
+    )
+
+    huge = "x" * (BUS_MAX_BODY_CHARS + 5000)
+    out = _bounded_degraded_fallback(huge)
+    assert len(out) <= BUS_MAX_BODY_CHARS
+    note_idx = out.find("\n… truncated")
+    assert note_idx > 0
+    dropped = len(huge) - len(out[:note_idx])
+    assert re.search(rf"truncated {dropped} chars", out)
+
+
+@pytest.mark.asyncio
+async def test_w3_degraded_at_most_one_allow_long_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+
+    allow_long_calls = 0
+    primary_calls = 0
+
+    async def fake_sidecar(**kwargs: object) -> None:
+        return None
+
+    async def fake_post(**kwargs: object) -> PostOutcome:
+        nonlocal allow_long_calls, primary_calls
+        if kwargs.get("allow_long_body"):
+            allow_long_calls += 1
+            return PostOutcome(ok=False, http_status=503, detail_preview="down")
+        primary_calls += 1
+        if primary_calls >= 2:
+            return PostOutcome(ok=True, http_status=201)
+        return PostOutcome(ok=False, http_status=503, detail_preview="down")
+
+    result = _ok_result_no_archive(body="q" * 4000)
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+    monkeypatch.setattr(delivery.asyncio, "sleep", AsyncMock())
+
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="9887",
+        to_agent="dispatch",
+        request_id="r-one-fallback",
+    )
+    assert ok is True
+    assert allow_long_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_post_cdp_turn_degraded_payload_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import cdp_generate_worker as worker
+
+    payloads: list[dict[str, object]] = []
+
+    class _Resp:
+        status_code = 201
+        text = "ok"
+
+    class _Client:
+        async def post(self, path: str, json: dict, headers: dict) -> _Resp:
+            assert path == "/turns"
+            payloads.append(dict(json))
+            return _Resp()
+
+        async def patch(self, *args: object, **kwargs: object) -> _Resp:
+            return _Resp()
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(worker, "make_async_client", lambda *a, **k: _Client())
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "1")
+
+    full = "WARNING: sidecar write failed\n\n" + ("p" * 3000)
+    outcome = await worker.post_cdp_turn(
+        thread_id="9900",
+        to_agent="dispatch",
+        subject="cdp reply — deadbeef",
+        body=full,
+        request_id="payload-shape",
+    )
+    assert outcome.ok is True
+    assert len(payloads) == 1
+    assert payloads[0]["body"] == full
+    assert "sidecar_content" not in payloads[0]
+    assert "allow_long_body" not in payloads[0]
 
 
 @pytest.mark.asyncio
@@ -783,6 +1343,7 @@ async def test_post_cdp_turn_on_behalf_marks_pointer_only(
     assert len(posts) == 1
     assert posts[0]["on_behalf"] is True
     assert posts[0]["from"] == "web-anthropic"
+    assert "allow_long_body" not in posts[0]
 
 
 @pytest.mark.asyncio

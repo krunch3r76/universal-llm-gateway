@@ -5,14 +5,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from spawn_ledger.spawn_endpoint_house_ledger import (
+    last_successful_wake,
+    record_tab_wake,
+)
+
 from cursor_bridge.glass_services_js import (
     RESOLVE_COMPOSER_FOR_AGENT_FN,
     rename_composer_title_js,
     submit_wake_line_js,
-)
-from cursor_bridge.spawn_endpoint_house_ledger import (
-    last_successful_wake,
-    record_tab_wake,
 )
 from cursor_bridge.tab_ready_rehandshake import tab_ready_instruction
 

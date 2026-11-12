@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -10,6 +11,7 @@ from deploy_identity.mcp_restart_gate import CONTAINER_NAME
 
 _DEFAULT_STAMP_PATH = "/app/.source_sync_stamp"
 _DOCKER_TIMEOUT_S = 4.0
+_MANAGE_HEALTH_BUDGET_S = 4.5
 
 
 def _parse_ts(raw: str) -> datetime | None:
@@ -39,10 +41,22 @@ def deploy_identity_from_stamp_text(text: str) -> dict[str, str]:
     }
 
 
+def _remaining_budget(deadline: float, *, cap: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return 0.0
+    return min(cap, remaining)
+
+
 def _read_container_started_at(
     container: str,
+    *,
+    deadline: float,
 ) -> tuple[datetime | None, str | None]:
     """Read docker State.StartedAt; return (parsed, reason) when unknown."""
+    timeout = _remaining_budget(deadline, cap=_DOCKER_TIMEOUT_S)
+    if timeout <= 0:
+        return None, "stamp_budget_exhausted"
     try:
         proc = subprocess.run(
             [
@@ -54,7 +68,7 @@ def _read_container_started_at(
             ],
             capture_output=True,
             check=False,
-            timeout=_DOCKER_TIMEOUT_S,
+            timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return None, f"stamp_exec:{type(exc).__name__}"
@@ -75,14 +89,19 @@ def read_mcp_container_deploy_identity(
     container: str = CONTAINER_NAME,
     *,
     stamp_path: str = _DEFAULT_STAMP_PATH,
+    budget_s: float = _MANAGE_HEALTH_BUDGET_S,
 ) -> tuple[dict[str, Any], str | None]:
     """Read MCP container stamp via docker exec; never invent field values."""
+    deadline = time.monotonic() + budget_s
+    timeout = _remaining_budget(deadline, cap=_DOCKER_TIMEOUT_S)
+    if timeout <= 0:
+        return {}, "stamp_budget_exhausted"
     try:
         proc = subprocess.run(
             ["docker", "exec", container, "cat", stamp_path],
             capture_output=True,
             check=False,
-            timeout=_DOCKER_TIMEOUT_S,
+            timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {}, f"stamp_exec:{type(exc).__name__}"
@@ -96,7 +115,7 @@ def read_mcp_container_deploy_identity(
     if synced_at is None:
         return {}, "stamp_unreadable"
 
-    started_at, started_reason = _read_container_started_at(container)
+    started_at, started_reason = _read_container_started_at(container, deadline=deadline)
     if started_reason:
         return {}, started_reason
     if started_at is not None and started_at < synced_at:

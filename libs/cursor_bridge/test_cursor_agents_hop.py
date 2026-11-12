@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from bus_watch import ide_hop
+from host_predicates.cursor_hosts import is_cursor_xvfb_host
 
 from cursor_bridge.cursor_agents_archive import (
     _list_root_sidebar_rows_js,
@@ -25,7 +26,6 @@ from cursor_bridge.cursor_agents_hop import (
     _select_agent_js,
     archive_cursor_agents_tab,
     cursor_debug_url_for_gui_host,
-    is_cursor_xvfb_host,
     launch_cursor_agents_tab,
     prune_cursor_agents_predecessors,
 )
