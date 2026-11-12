@@ -16,7 +16,7 @@ _GLASS_ROW_PROBE_JS = (
     "const rowActive=(el)=>el.getAttribute('data-active')==='true'"
     "||!!el.querySelector('.ui-sidebar-menu-button-trigger[aria-current=\"page\"]')"
     "||el.getAttribute('aria-selected')==='true'||el.getAttribute('aria-current')==='true'"
-    "||!!el.querySelector('[aria-current=\"page\"],[aria-selected=\"true\"]');"
+    '||!!el.querySelector(\'[aria-current="page"],[aria-selected="true"]\');'
     "const rowAgentId=(el)=>(el.getAttribute('data-sidebar-file-drop-agent-id')"
     "||el.getAttribute('data-agent-id')||'').trim();"
     "const fiberKey=(el)=>{for(const k of Object.keys(el)){if(k.startsWith('__reactFiber$'))return k;}"
@@ -157,16 +157,21 @@ def rename_agent_row_in_sidebar(
     *,
     debug_url: str = "http://127.0.0.1:9338",
     timeout_s: float = 10.0,
+    allowed_ports: frozenset[int] | None = None,
 ) -> dict[str, Any]:
     """Rename one Glass sidebar row (DOM + best-effort workbench title sync)."""
     if not str(agent_id or "").strip() or not str(new_title or "").strip():
         return {"ok": False, "reason": "empty_agent_id_or_title"}
-    ws_url, err = _cursor_agents_ws_url(debug_url, timeout_s)
+    ws_url, err = _cursor_agents_ws_url(
+        debug_url, timeout_s, allowed_ports=allowed_ports
+    )
     if err:
         return err
     assert ws_url is not None
     return _hop.asyncio.run(
-        _rename_title_async(ws_url, agent_id.strip(), new_title.strip(), timeout_s=timeout_s)
+        _rename_title_async(
+            ws_url, agent_id.strip(), new_title.strip(), timeout_s=timeout_s
+        )
     )
 
 
@@ -186,29 +191,41 @@ rename_cursor_agents_sidebar_title = rename_agent_row_in_sidebar
 
 
 def _cursor_agents_ws_url(
-    debug_url: str, timeout_s: float
+    debug_url: str,
+    timeout_s: float,
+    *,
+    allowed_ports: frozenset[int] | None = None,
 ) -> tuple[str | None, dict[str, Any] | None]:
     try:
         pages = _hop.list_pages(debug_url, timeout_s=min(timeout_s, 5.0))
     except OSError as exc:
-        return None, {"ok": False, "reason": "debug_unreachable", "detail": type(exc).__name__}
+        return None, {
+            "ok": False,
+            "reason": "debug_unreachable",
+            "detail": type(exc).__name__,
+        }
     page = _hop.pick_chat_page(pages, surface="cursor")
     if page is None:
         return None, {"ok": False, "reason": "no_page", "pages": len(pages)}
     ws_url = page["web_socket_debugger_url"]
-    from cursor_bridge.cdp_pages import (
-        CdpWebSocketRefusedError,
-        assert_web_socket_debugger_url_allowed,
-    )
+    if allowed_ports is not None:
+        from cursor_bridge.cdp_pages import (
+            CdpWebSocketRefusedError,
+            assert_web_socket_debugger_url_allowed,
+        )
 
-    try:
-        assert_web_socket_debugger_url_allowed(ws_url, http_origin=debug_url)
-    except CdpWebSocketRefusedError as exc:
-        return None, {
-            "ok": False,
-            "reason": "cdp_port_refused",
-            "detail": str(exc),
-        }
+        try:
+            assert_web_socket_debugger_url_allowed(
+                ws_url,
+                http_origin=debug_url,
+                allowed_ports=allowed_ports,
+            )
+        except CdpWebSocketRefusedError as exc:
+            return None, {
+                "ok": False,
+                "reason": "cdp_port_refused",
+                "detail": str(exc),
+            }
     return ws_url, None
 
 
@@ -249,7 +266,9 @@ async def _archive_on_ws(
 ) -> dict[str, Any]:
     deadline = time.monotonic() + max(0.0, wait_until_idle_s)
     while True:
-        result = await _hop._eval_await(ws, eval_id, _archive_agent_js(agent_id), timeout_s)
+        result = await _hop._eval_await(
+            ws, eval_id, _archive_agent_js(agent_id), timeout_s
+        )
         if isinstance(result, dict):
             if result.get("ok") or result.get("reason") != "agent_streaming":
                 return result
@@ -353,7 +372,9 @@ async def _prune_predecessors_async(
     skipped: list[dict[str, Any]] = []
     eval_mid = 1
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
-        raw_rows = await _hop._eval(ws, eval_mid, _list_root_sidebar_rows_js(root_id), timeout_s)
+        raw_rows = await _hop._eval(
+            ws, eval_mid, _list_root_sidebar_rows_js(root_id), timeout_s
+        )
         eval_mid += 1
         if not isinstance(raw_rows, list):
             return {"ok": False, "reason": "list_rows_failed", "result": raw_rows}
@@ -395,7 +416,10 @@ async def _prune_predecessors_async(
         if any(int(row_by_aid.get(a, {}).get("created_at") or 0) for a in predecessors):
             indexed = list(enumerate(predecessors))
             indexed.sort(
-                key=lambda t: (-int(row_by_aid.get(t[1], {}).get("created_at") or 0), t[0])
+                key=lambda t: (
+                    -int(row_by_aid.get(t[1], {}).get("created_at") or 0),
+                    t[0],
+                )
             )
             predecessors = [a for _, a in indexed]
         if departing:
@@ -411,7 +435,12 @@ async def _prune_predecessors_async(
                 continue
             if aid in protected:
                 skipped.append(
-                    {"id": aid, "agent_id": aid, "ok": False, "reason": "protected_agent_id"}
+                    {
+                        "id": aid,
+                        "agent_id": aid,
+                        "ok": False,
+                        "reason": "protected_agent_id",
+                    }
                 )
                 continue
             row = row_by_aid.get(aid, {})
@@ -468,7 +497,10 @@ async def _prune_predecessors_async(
                 archived.append(aid)
             else:
                 skipped.append(
-                    {"agent_id": aid, **(result if isinstance(result, dict) else {"result": result})}
+                    {
+                        "agent_id": aid,
+                        **(result if isinstance(result, dict) else {"result": result}),
+                    }
                 )
     return {
         "ok": True,

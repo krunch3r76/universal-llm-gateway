@@ -15,8 +15,6 @@ from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-# Must match ``services/grok-window-edge/grok_window_edge/config.py`` ``CDP_PORT_ALLOWLIST``.
-_GLASS_EDGE_CDP_PORT_ALLOWLIST: frozenset[int] = frozenset({9339, 9340})
 _LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
@@ -25,7 +23,7 @@ class CdpWebSocketRefusedError(ValueError):
 
 
 def assert_loopback_cdp_http_origin(http_origin: str) -> None:
-    """Refuse non-loopback HTTP CDP origins before any dial on the glass edge path."""
+    """Refuse non-loopback HTTP CDP origins (edge-only; legacy may use 172.18.0.1)."""
     parsed = urlparse(http_origin.strip())
     host = (parsed.hostname or "").lower()
     if host not in _LOOPBACK_HOSTS:
@@ -34,8 +32,13 @@ def assert_loopback_cdp_http_origin(http_origin: str) -> None:
         )
 
 
-def assert_web_socket_debugger_url_allowed(ws_url: str, *, http_origin: str) -> None:
-    """Refuse a browser-reported websocket URL before connect (cursor_glass dial guard)."""
+def assert_web_socket_debugger_url_allowed(
+    ws_url: str,
+    *,
+    http_origin: str,
+    allowed_ports: frozenset[int],
+) -> None:
+    """Edge dial guard: loopback, allowlist, and websocket must match HTTP origin."""
     assert_loopback_cdp_http_origin(http_origin)
     http = urlparse(http_origin.strip())
     http_port = http.port
@@ -43,10 +46,8 @@ def assert_web_socket_debugger_url_allowed(ws_url: str, *, http_origin: str) -> 
         raise CdpWebSocketRefusedError(
             f"CDP HTTP origin {http_origin!r} has no port for grok-window-edge"
         )
-    if http_port not in _GLASS_EDGE_CDP_PORT_ALLOWLIST:
-        allowed = ", ".join(
-            str(port) for port in sorted(_GLASS_EDGE_CDP_PORT_ALLOWLIST)
-        )
+    if http_port not in allowed_ports:
+        allowed = ", ".join(str(port) for port in sorted(allowed_ports))
         raise CdpWebSocketRefusedError(
             f"CDP port {http_port} is not allowlisted for grok-window-edge "
             f"(allowed: {allowed})"
@@ -64,10 +65,8 @@ def assert_web_socket_debugger_url_allowed(ws_url: str, *, http_origin: str) -> 
         raise CdpWebSocketRefusedError(
             f"websocket port {ws_port} does not match HTTP origin port {http_port}"
         )
-    if ws_port not in _GLASS_EDGE_CDP_PORT_ALLOWLIST:
-        allowed = ", ".join(
-            str(port) for port in sorted(_GLASS_EDGE_CDP_PORT_ALLOWLIST)
-        )
+    if ws_port not in allowed_ports:
+        allowed = ", ".join(str(port) for port in sorted(allowed_ports))
         raise CdpWebSocketRefusedError(
             f"CDP port {ws_port} is not allowlisted for grok-window-edge "
             f"(allowed: {allowed})"

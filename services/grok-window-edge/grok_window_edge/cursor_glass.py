@@ -18,6 +18,7 @@ from cursor_bridge.glass_cdp_core import rename_tab_cdp, wake_tab_cdp
 from cursor_bridge.wake_delivery import normalize_target
 
 from .cdp import CdpPortRefusedError, assert_cdp_origin_allowed
+from .config import CDP_PORT_ALLOWLIST
 
 _SUPPORTED_OPS = frozenset({"wake_tab", "rename_tab"})
 
@@ -69,6 +70,7 @@ def _wake_tab_sync(args: dict[str, Any]) -> dict[str, Any]:
         agent_id=str(agent_id).strip() if agent_id else None,
         body=body,
         thread=None,
+        allowed_ports=CDP_PORT_ALLOWLIST,
     )
     if res.get("error") == "unknown_target":
         return {
@@ -110,7 +112,12 @@ def _rename_tab_sync(args: dict[str, Any]) -> dict[str, Any]:
         assert_cdp_origin_allowed(origin)
     except CdpPortRefusedError as exc:
         return _cdp_refusal(op="rename_tab", gui_host=gui_host, exc=exc)
-    res = rename_tab_cdp(gui_host=gui_host, agent_id=agent_id, title=title)
+    res = rename_tab_cdp(
+        gui_host=gui_host,
+        agent_id=agent_id,
+        title=title,
+        allowed_ports=CDP_PORT_ALLOWLIST,
+    )
     return res
 
 

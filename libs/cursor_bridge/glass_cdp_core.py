@@ -37,6 +37,7 @@ def wake_tab_cdp(
     agent_id: str | None,
     body: str,
     thread: str | None = None,
+    allowed_ports: frozenset[int] | None = None,
 ) -> dict[str, Any]:
     """Paste a wake line via CDP only (no ledger or bus side effects)."""
     from cursor_bridge.cdp_pages import list_pages
@@ -110,20 +111,23 @@ def wake_tab_cdp(
         assert_web_socket_debugger_url_allowed,
     )
 
-    try:
-        assert_web_socket_debugger_url_allowed(
-            ws_url, http_origin=str(target["origin"])
-        )
-    except CdpWebSocketRefusedError as exc:
-        return {
-            "ok": False,
-            "error": "cdp_port_refused",
-            "detail": str(exc),
-            "op": "wake_tab",
-            "gui_host": gui_host,
-            "agent_id": aid,
-            "paste_attempted": False,
-        }
+    if allowed_ports is not None:
+        try:
+            assert_web_socket_debugger_url_allowed(
+                ws_url,
+                http_origin=str(target["origin"]),
+                allowed_ports=allowed_ports,
+            )
+        except CdpWebSocketRefusedError as exc:
+            return {
+                "ok": False,
+                "error": "cdp_port_refused",
+                "detail": str(exc),
+                "op": "wake_tab",
+                "gui_host": gui_host,
+                "agent_id": aid,
+                "paste_attempted": False,
+            }
     try:
         paste_res = asyncio.run(_paste_cursor_services(ws_url, body, agent_id=aid))
     except (TimeoutError, RuntimeError, OSError) as exc:
@@ -152,10 +156,16 @@ def rename_tab_cdp(
     gui_host: str,
     agent_id: str,
     title: str,
+    allowed_ports: frozenset[int] | None = None,
 ) -> dict[str, Any]:
     """Rename a Glass sidebar row via CDP only (no bus TAB_GONE)."""
     debug_url = cursor_debug_url_for_gui_host(gui_host)
-    res = rename_agent_row_in_sidebar(agent_id, title, debug_url=debug_url)
+    res = rename_agent_row_in_sidebar(
+        agent_id,
+        title,
+        debug_url=debug_url,
+        allowed_ports=allowed_ports,
+    )
     return {
         **res,
         "op": "rename_tab",
