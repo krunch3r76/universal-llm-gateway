@@ -21,9 +21,8 @@ def DeployStateGateDualReadMismatch(  # noqa: N802
         "field": field,
         "get_value": get_value,
         "manage_value": manage_value,
+        "request_id": request_id,
     }
-    if request_id:
-        payload["request_id"] = request_id
     return Event(
         signal="deploy_state_gate.dual_read_mismatch",
         payload=payload,

@@ -38,10 +38,10 @@ from typing import Any
 import httpx
 from cursor_bridge.cursor_agents_hop import (
     cursor_debug_url_for_gui_host,
-    is_cursor_xvfb_host,
     launch_cursor_agents_tab,
 )
 from durable_io.atomic import durable_write_text
+from host_predicates.cursor_hosts import is_cursor_xvfb_host
 from transport_utils import (
     DEFAULT_AGENT_BUS_URL,
     DEFAULT_STARGATE_URL,
@@ -49,10 +49,10 @@ from transport_utils import (
 )
 
 from bus_watch.digest_budget import (
-    POLICY_DEFAULTS,
     _IDE_TOOL_CALLS_BACKSTOP,
     _IDE_TOOL_CALLS_THRESHOLD,
     _IDE_TOOL_RESULT_TOKENS_THRESHOLD,
+    POLICY_DEFAULTS,
     agent_bus_bearer_headers,
 )
 from bus_watch.doorbell_skills import primary_liaison_slug

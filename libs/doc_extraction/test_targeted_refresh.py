@@ -278,6 +278,299 @@ def _normalize_refresh_text(text: str) -> str:
     return text
 
 
+def _gateway_fixture_doc(prior_commit: str | None) -> str:
+    stamp = (
+        "<!-- GENERATED:START generated=2020-01-01 method=targeted-refresh "
+        f"inventory_sha=abc source_commit={prior_commit or '000000000000'} "
+        "refreshed_by=fixture packages=1/1 modules=1/1 -->"
+        if prior_commit
+        else "<!-- GENERATED:START generated=2020-01-01 method=targeted-refresh "
+        "inventory_sha=abc refreshed_by=fixture packages=1/1 modules=1/1 -->"
+    )
+    return "\n".join(
+        [
+            "# Gateway fixture",
+            "",
+            stamp,
+            "",
+            "> disclaimer",
+            "",
+            "## 1. Section one",
+            "",
+            "Authored prose for sections 1-10.",
+            "",
+            "## 11. Per-package module inventory",
+            "",
+            "Generated §11 placeholder.",
+            "",
+            "<!-- GENERATED:END -->",
+            "",
+            "---",
+            "",
+            "### missing_coverage",
+            "",
+            "Stale missing_coverage body.",
+            "",
+            "### unsupported_claims",
+            "",
+            "tail",
+        ]
+    )
+
+
+def _normalize_gateway_output(text: str) -> str:
+    text = re.sub(r"generated=\d{4}-\d{2}-\d{2}", "generated=DATE", text)
+    text = re.sub(r"source_commit=[0-9a-f]{7,40}", "source_commit=COMMIT", text)
+    text = re.sub(
+        r"inventory_sha=[0-9a-f]{12}",
+        "inventory_sha=SHA",
+        text,
+    )
+    return text
+
+
+def _carried_from_value(text: str) -> str:
+    m = re.search(
+        r"<!-- AUTHORED carried_from=([^\s>]+) -->",
+        text,
+    )
+    assert m is not None
+    return m.group(1)
+
+
+def test_refresh_gateway_twice_idempotent_carried_from_and_markers(
+    hermetic_workspace: Path,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    prior = "0d45bbef52c8"
+    gw_dir = hermetic_workspace / "services/_universal-llm-gateway"
+    gw_dir.mkdir(parents=True)
+    (gw_dir / "mod.py").write_text('"""Gateway module."""\n', encoding="utf-8")
+    docs = hermetic_workspace / "docs/architecture"
+    docs.mkdir(parents=True)
+    doc_path = docs / "gateway.md"
+    doc_path.write_text(_gateway_fixture_doc(prior), encoding="utf-8")
+
+    run1 = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    doc_path.write_text(run1, encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "docs/architecture/gateway.md"],
+        cwd=hermetic_workspace,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "refresh gateway once"],
+        cwd=hermetic_workspace,
+        check=True,
+        capture_output=True,
+    )
+
+    run2 = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    doc_path.write_text(run2, encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "docs/architecture/gateway.md"],
+        cwd=hermetic_workspace,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "refresh gateway twice"],
+        cwd=hermetic_workspace,
+        check=True,
+        capture_output=True,
+    )
+
+    run3 = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+
+    assert _normalize_gateway_output(run1) == _normalize_gateway_output(run2)
+    assert _normalize_gateway_output(run2) == _normalize_gateway_output(run3)
+    assert _carried_from_value(run1) == prior
+    assert _carried_from_value(run2) == prior
+    assert _carried_from_value(run3) == prior
+    assert run3.count("<!-- AUTHORED carried_from=") == 1
+    assert run3.count("<!-- /AUTHORED carried_from=") == 1
+
+
+def test_refresh_gateway_no_prior_stamp_carried_from_unknown(
+    hermetic_workspace: Path,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    gw_dir = hermetic_workspace / "services/_universal-llm-gateway"
+    gw_dir.mkdir(parents=True)
+    (gw_dir / "mod.py").write_text('"""Gateway module."""\n', encoding="utf-8")
+    docs = hermetic_workspace / "docs/architecture"
+    docs.mkdir(parents=True)
+    doc_path = docs / "gateway.md"
+    doc_path.write_text(_gateway_fixture_doc(prior_commit=None), encoding="utf-8")
+    text = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    assert _carried_from_value(text) == "unknown"
+
+
+def _write_gateway_doc(hermetic_workspace: Path, body: str) -> None:
+    gw_dir = hermetic_workspace / "services/_universal-llm-gateway"
+    gw_dir.mkdir(parents=True, exist_ok=True)
+    (gw_dir / "mod.py").write_text('"""m"""\n', encoding="utf-8")
+    docs = hermetic_workspace / "docs/architecture"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "gateway.md").write_text(body, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "body,match",
+    [
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "## 1. Section one",
+                "<!-- AUTHORED carried_from=aaaaaaaabbbb -->\n## 1. Section one",
+            ),
+            "carried_from",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "## 1. Section one",
+                "<!-- AUTHORED carried_from=aaaaaaaabbbb -->\n"
+                "<!-- /AUTHORED carried_from=bbbbbbbbbbbb -->\n"
+                "## 1. Section one",
+            ),
+            "mismatch",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "## 1. Section one",
+                "<!-- /AUTHORED carried_from=aaaaaaaabbbb -->\n"
+                "<!-- AUTHORED carried_from=aaaaaaaabbbb -->\n"
+                "## 1. Section one",
+            ),
+            "precedes",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "## 1. Section one",
+                "<!-- AUTHORED carried_from=aaaaaaaaaaaa -->\n"
+                "## 1. Section one\n"
+                "<!-- /AUTHORED carried_from=aaaaaaaaaaaa -->\n"
+                "<!-- AUTHORED carried_from=bbbbbbbbbbbb -->\n"
+                "extra\n"
+                "<!-- /AUTHORED carried_from=bbbbbbbbbbbb -->\n",
+            ),
+            "exactly one",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "## 1. Section one",
+                "<!-- /AUTHORED carried_from=aaaaaaaabbbb -->\n## 1. Section one",
+            ),
+            "exactly one",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "### unsupported_claims",
+                "### missing_coverage\n\nsecond\n\n### unsupported_claims",
+            ),
+            "missing_coverage",
+        ),
+        (
+            _gateway_fixture_doc("aaaaaaaabbbb").replace(
+                "### missing_coverage",
+                "",
+            ),
+            "missing_coverage",
+        ),
+    ],
+)
+def test_refresh_gateway_carried_from_and_tail_negative_raises(
+    hermetic_workspace: Path,
+    body: str,
+    match: str,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    _write_gateway_doc(hermetic_workspace, body)
+    with pytest.raises(TargetedRefreshError, match=match):
+        refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+
+
+def test_refresh_gateway_missing_coverage_preserves_level4_and_level2_tail(
+    hermetic_workspace: Path,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    body = _gateway_fixture_doc("dddddddddddd").replace(
+        "Stale missing_coverage body.",
+        "Stale missing_coverage body.\n\n#### nested_under_missing\n\nkeep-subheading",
+    ).replace(
+        "tail",
+        "## Later_section\n\nalso-keep\n\ntail",
+    )
+    _write_gateway_doc(hermetic_workspace, body)
+    text = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    assert "Stale missing_coverage body." not in text
+    assert "#### nested_under_missing" in text
+    assert "keep-subheading" in text
+    assert "## Later_section" in text
+    assert "also-keep" in text
+
+
+def test_refresh_gateway_missing_coverage_empty_body_keeps_next_section(
+    hermetic_workspace: Path,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    body = _gateway_fixture_doc("eeeeeeeeeeee").replace(
+        "Stale missing_coverage body.\n\n",
+        "",
+    )
+    _write_gateway_doc(hermetic_workspace, body)
+    text = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    assert "### unsupported_claims" in text
+    assert "tail" in text
+
+
+def test_refresh_gateway_missing_coverage_keeps_level5_heading(
+    hermetic_workspace: Path,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    body = _gateway_fixture_doc("ffffffffffff").replace(
+        "Stale missing_coverage body.",
+        "Stale missing_coverage body.\n\n##### deep_heading\n\nkeep-five",
+    )
+    _write_gateway_doc(hermetic_workspace, body)
+    text = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    assert "##### deep_heading" in text
+    assert "keep-five" in text
+    assert "Stale missing_coverage body." not in text
+
+
+@pytest.mark.parametrize(
+    "body_mutator,match",
+    [
+        (lambda b: b.replace("<!-- GENERATED:END -->", ""), "GENERATED:END"),
+        (
+            lambda b: b.replace(
+                "<!-- GENERATED:END -->",
+                "<!-- GENERATED:END -->\n<!-- GENERATED:END -->",
+            ),
+            "multiple",
+        ),
+    ],
+)
+def test_refresh_gateway_generated_end_marker_raises(
+    hermetic_workspace: Path,
+    body_mutator,
+    match: str,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    gw_dir = hermetic_workspace / "services/_universal-llm-gateway"
+    gw_dir.mkdir(parents=True)
+    (gw_dir / "mod.py").write_text('"""m"""\n', encoding="utf-8")
+    docs = hermetic_workspace / "docs/architecture"
+    docs.mkdir(parents=True)
+    (docs / "gateway.md").write_text(
+        body_mutator(_gateway_fixture_doc("cccccccccccc")),
+        encoding="utf-8",
+    )
+    with pytest.raises(TargetedRefreshError, match=match):
+        refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+
+
 def test_refresh_twice_is_idempotent_ignoring_date(hermetic_workspace: Path) -> None:
     _init_git_repo(hermetic_workspace)
     routing_root = hermetic_workspace / "services/universal-stargate/systems/routing"
@@ -316,3 +609,67 @@ def test_refresh_twice_is_idempotent_ignoring_date(hermetic_workspace: Path) -> 
     (docs / "routing.md").write_text(once, encoding="utf-8")
     twice = refresh_routing(hermetic_workspace, refreshed_by=_REFRESHED_BY)
     assert _normalize_refresh_text(once) == _normalize_refresh_text(twice)
+
+
+@pytest.mark.parametrize(
+    "synthesis_line,expected",
+    [
+        (
+            "End — summarized in **Module Inventory** (1/1) with authority.",
+            "**Module Inventory** (2/2)",
+        ),
+        (
+            "End — summarized in Module Inventory (1/1) with authority.",
+            "Module Inventory (2/2)",
+        ),
+        (
+            "End — summarized in **Module Inventory (1/1)** with authority.",
+            "**Module Inventory (2/2)**",
+        ),
+    ],
+)
+def test_refresh_routing_synthesis_module_inventory_count_preserves_label_form(
+    hermetic_workspace: Path,
+    synthesis_line: str,
+    expected: str,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    routing_root = hermetic_workspace / "services/universal-stargate/systems/routing"
+    routing_root.mkdir(parents=True)
+    (routing_root / "one.py").write_text('"""One."""\n', encoding="utf-8")
+    (routing_root / "two.py").write_text('"""Two."""\n', encoding="utf-8")
+    docs = hermetic_workspace / "docs/architecture"
+    docs.mkdir(parents=True)
+    (docs / "routing.md").write_text(
+        "\n".join(
+            [
+                "# R",
+                "<!-- GENERATED:START generated=2020-01-01 "
+                "method=targeted-refresh coverage=1/1 -->",
+                "## Scope",
+                "---",
+                "## Module Inventory (1/1)",
+                "",
+                "| Module | Description |",
+                "| `one.py` | One. |",
+                "",
+                "---",
+                "## Key Functions",
+                "x",
+                "## Imports and Dependencies (full routing tree)",
+                "y",
+                "<!-- AUTHORED -->",
+                "## Synthesis",
+                "",
+                synthesis_line,
+                "<!-- GENERATED:END -->",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    text = refresh_routing(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    assert expected in text
+    if expected == "**Module Inventory** (2/2)":
+        assert "**Module Inventory (2/2)**" not in text
+    elif expected == "**Module Inventory (2/2)**":
+        assert "**Module Inventory** (2/2)" not in text

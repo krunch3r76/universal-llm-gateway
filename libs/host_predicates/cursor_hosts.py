@@ -45,7 +45,7 @@ def _alias_index(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _row_for_gui_host(
+def row_for_gui_host(
     gui_host: str | None, *, config: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
     cfg = config if config is not None else load_config()
@@ -67,7 +67,7 @@ def is_cursor_xvfb_host(gui_host: str | None) -> bool:
     ``None`` and ``''`` are treated as the default ``:8`` row (both return True
     when that row is present in the window table).
     """
-    return _row_for_gui_host(gui_host) is not None
+    return row_for_gui_host(gui_host) is not None
 
 
 def all_gui_host_aliases() -> frozenset[str]:
@@ -82,4 +82,5 @@ __all__ = [
     "config_path",
     "is_cursor_xvfb_host",
     "load_config",
+    "row_for_gui_host",
 ]
