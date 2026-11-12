@@ -2,47 +2,57 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import uuid
 from typing import Any
 
-from systems.edge_ops import config as edge_ops_config
-from systems.edge_ops.model import CODE_EDGE_PENDING, CODE_EDGE_UNAVAILABLE
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 
 EDGE_GLASS_WAKE_RENAME_ENV = "EDGE_GLASS_WAKE_RENAME_ENABLED"
+EDGE_OPS_ENABLED_ENV = "EDGE_OPS_ENABLED"
+AWAIT_MAX_SECONDS = 30.0
+CODE_EDGE_PENDING = "edge_pending"
+CODE_EDGE_UNAVAILABLE = "edge_unavailable"
 _BRIDGE_GRANT = "bridge"
 _BRIDGE_AUTH_SOURCE = "mcp:cursor_bridge"
 _ADMIT_PATH = "/api/v1/edge/ops"
 _RESULT_PATH = "/api/v1/edge/ops/{op_id}/result"
-_HTTP_TIMEOUT = edge_ops_config.AWAIT_MAX_SECONDS + 5.0
+_HTTP_TIMEOUT = AWAIT_MAX_SECONDS + 5.0
 
 _TRUE = frozenset({"true", "1", "yes", "on"})
 
 
+def edge_ops_enabled() -> bool:
+    return os.getenv(EDGE_OPS_ENABLED_ENV, "").strip().lower() in _TRUE
+
+
 def edge_glass_wake_rename_enabled() -> bool:
     """True when both Stargate edge ops and this slice flag are on."""
-    if not edge_ops_config.edge_ops_enabled():
+    if not edge_ops_enabled():
         return False
     return os.getenv(EDGE_GLASS_WAKE_RENAME_ENV, "").strip().lower() in _TRUE
 
 
-def _validate_bridge_grant(*, grant: str, authorization_source: str) -> dict[str, Any] | None:
-    grant_s = grant.strip().lower()
-    auth = authorization_source.strip()
-    if grant_s not in {"bridge", "explicit"} or not auth:
-        return {
-            "ok": False,
-            "error": "grant_or_source_required",
-            "detail": "grant (bridge|explicit) and authorization_source are required",
-        }
-    return None
+def _clamp_await_seconds(timeout_s: float | None) -> float:
+    if timeout_s is None:
+        return AWAIT_MAX_SECONDS
+    return max(0.0, min(float(timeout_s), AWAIT_MAX_SECONDS))
 
 
-def _idempotency_key(op: str, args: dict[str, Any]) -> str:
-    raw = f"{op}:{args.get('gui_host')}:{args.get('agent_id')}:{args.get('body') or args.get('title')}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+def _apply_edge_finish(op: str, envelope: dict[str, Any]) -> dict[str, Any]:
+    """Ledger and bus work when the hub receives a completed edge core result."""
+    if op == "wake_tab":
+        from cursor_bridge.bridge_glass_relay import finish_wake_tab
+
+        return finish_wake_tab(envelope)
+    if op == "rename_tab":
+        from cursor_bridge.bridge_glass_relay import finish_rename_tab
+
+        thread = envelope.get("thread")
+        if thread is None and isinstance(envelope.get("args"), dict):
+            thread = envelope["args"].get("thread")
+        return finish_rename_tab(envelope, thread=str(thread) if thread else None)
+    return envelope
 
 
 def admit_and_await_cursor_glass(
@@ -54,23 +64,20 @@ def admit_and_await_cursor_glass(
     wait_s: float | None = None,
 ) -> dict[str, Any]:
     """POST admit then GET result (binding 3: ≤30 s)."""
-    grant_err = _validate_bridge_grant(
-        grant=str(args.get("grant") or ""),
-        authorization_source=str(args.get("authorization_source") or ""),
+    key = idempotency_key or fresh_idempotency_key()
+    effective_deadline = (
+        AWAIT_MAX_SECONDS if deadline_s is None else min(float(deadline_s), 900.0)
     )
-    if grant_err is not None:
-        return grant_err
-
-    key = idempotency_key or _idempotency_key(op, args)
     admit_body = {
         "kind": "cursor_glass",
         "op": op,
         "args": args,
         "idempotency_key": key,
-        "deadline_s": deadline_s,
+        "deadline_s": effective_deadline,
     }
-    budget = edge_ops_config.clamp_await_seconds(wait_s)
+    budget = _clamp_await_seconds(wait_s)
     stargate_url = os.environ.get("STARGATE_URL", DEFAULT_STARGATE_URL).strip()
+    op_id: str | None = None
 
     try:
         with make_sync_client(stargate_url, timeout=_HTTP_TIMEOUT) as client:
@@ -94,7 +101,11 @@ def admit_and_await_cursor_glass(
                 }
             op_id = (admit.json() or {}).get("op_id")
             if not op_id:
-                return {"ok": False, "code": "edge_admit_failed", "detail": "missing op_id"}
+                return {
+                    "ok": False,
+                    "code": "edge_admit_failed",
+                    "detail": "missing op_id",
+                }
 
             result = client.get(
                 _RESULT_PATH.format(op_id=op_id),
@@ -124,8 +135,24 @@ def admit_and_await_cursor_glass(
             "op_id": envelope.get("op_id", op_id),
             "detail": "edge op still pending",
         }
-    envelope.pop("op_id", None)
-    return envelope
+    if code in {"edge_op_failed", "edge_op_expired", "edge_op_unknown"}:
+        return {
+            "ok": False,
+            "code": code,
+            "op_id": envelope.get("op_id", op_id),
+            "detail": str(envelope.get("detail") or ""),
+            "status": envelope.get("status"),
+        }
+    if envelope.get("ok") is False and code:
+        envelope.setdefault("op_id", op_id)
+        return envelope
+
+    thread = args.get("thread")
+    if thread is not None:
+        envelope["thread"] = thread
+    finished = _apply_edge_finish(op, envelope)
+    finished.setdefault("op_id", op_id)
+    return finished
 
 
 def bridge_edge_args(**fields: Any) -> dict[str, Any]:
@@ -137,14 +164,16 @@ def bridge_edge_args(**fields: Any) -> dict[str, Any]:
 
 
 def fresh_idempotency_key() -> str:
-    """Caller-supplied idempotency when args are not stable enough to hash."""
+    """Per-call idempotency for MCP edge admits."""
     return uuid.uuid4().hex
 
 
 __all__ = [
+    "AWAIT_MAX_SECONDS",
     "EDGE_GLASS_WAKE_RENAME_ENV",
     "admit_and_await_cursor_glass",
     "bridge_edge_args",
     "edge_glass_wake_rename_enabled",
+    "edge_ops_enabled",
     "fresh_idempotency_key",
 ]

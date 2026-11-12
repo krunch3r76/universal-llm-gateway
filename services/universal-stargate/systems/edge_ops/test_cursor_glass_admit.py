@@ -1,4 +1,4 @@
-"""Grant re-validation at admit for ``cursor_glass``."""
+"""Per-slice gate and args validation for ``cursor_glass`` admits."""
 
 from __future__ import annotations
 
@@ -8,11 +8,10 @@ from fastapi.testclient import TestClient
 
 from systems.edge_ops import config, runtime
 from systems.edge_ops.auth import require_internal_caller
-from systems.edge_ops.model import CODE_GRANT_REFUSED
+from systems.edge_ops.model import CODE_ARGS_INVALID, CODE_KIND_DISABLED
 from systems.edge_ops.routes import router
 
 from .conftest import seen_edge
-from .test_routes import EDGE_HEADERS
 
 
 @pytest.fixture
@@ -28,19 +27,22 @@ def client(journal, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admit_cursor_glass_requires_grant(journal) -> None:
+async def test_admit_cursor_glass_kind_disabled(journal) -> None:
     await seen_edge(journal, kinds=("cursor_glass",))
 
     from systems.edge_ops.kinds.cursor_glass import validate_cursor_glass_admit
     from systems.edge_ops.model import EdgeOpRefusedError
 
     with pytest.raises(EdgeOpRefusedError) as refusal:
-        validate_cursor_glass_admit(op="wake_tab", args={"gui_host": ":8", "body": "x"})
-    assert refusal.value.code == CODE_GRANT_REFUSED
+        validate_cursor_glass_admit(
+            op="wake_tab",
+            args={"gui_host": ":8", "body": "x"},
+        )
+    assert refusal.value.code == CODE_KIND_DISABLED
 
 
 @pytest.mark.asyncio
-async def test_admit_http_rejects_missing_grant(client, journal) -> None:
+async def test_admit_http_rejects_kind_disabled(client, journal) -> None:
     await seen_edge(journal, kinds=("cursor_glass",))
     response = client.post(
         "/edge/ops",
@@ -51,5 +53,24 @@ async def test_admit_http_rejects_missing_grant(client, journal) -> None:
             "args": {"gui_host": ":8", "body": "wake"},
         },
     )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == CODE_KIND_DISABLED
+
+
+@pytest.mark.asyncio
+async def test_admit_http_rejects_missing_body_when_gate_on(
+    client, journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(config.CURSOR_GLASS_ENV_KEY, "true")
+    await seen_edge(journal, kinds=("cursor_glass",))
+    response = client.post(
+        "/edge/ops",
+        json={
+            "kind": "cursor_glass",
+            "op": "wake_tab",
+            "idempotency_key": "k2",
+            "args": {"gui_host": ":8"},
+        },
+    )
     assert response.status_code == 400
-    assert response.json()["error"]["code"] == CODE_GRANT_REFUSED
+    assert response.json()["error"]["code"] == CODE_ARGS_INVALID

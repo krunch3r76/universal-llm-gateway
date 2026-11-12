@@ -19,16 +19,16 @@ def test_a_9341_dial_raises() -> None:
         cdp_endpoint(9341)
 
 
-@pytest.mark.parametrize("port", [9338, 9339, 9340])
+@pytest.mark.parametrize("port", [9339, 9340])
 def test_allowlisted_ports_build_a_loopback_endpoint(port: int) -> None:
     assert cdp_endpoint(port) == f"http://127.0.0.1:{port}"
 
 
-def test_the_allowlist_includes_cursor_and_grok_ports() -> None:
-    assert CDP_PORT_ALLOWLIST == frozenset({9338, 9339, 9340})
+def test_the_allowlist_is_the_two_grok_ports() -> None:
+    assert CDP_PORT_ALLOWLIST == frozenset({9339, 9340})
 
 
-@pytest.mark.parametrize("port", [9341, 19338, 0, -1, 65535])
+@pytest.mark.parametrize("port", [9338, 9341, 19338, 0, -1, 65535])
 def test_every_other_port_is_refused(port: int) -> None:
     with pytest.raises(CdpPortRefusedError):
         cdp_endpoint(port)
@@ -91,5 +91,5 @@ def test_a_hard_denied_port_is_refused_even_when_allowlisted(
 def test_the_denied_ports_are_the_cookie_sustain_pair_and_disjoint() -> None:
     """Binding 9's hard-deny list, and the allowlist it must never overlap."""
     assert DENIED_PORTS == frozenset({9314, 9341})
-    assert CDP_PORT_ALLOWLIST == frozenset({9338, 9339, 9340})
+    assert CDP_PORT_ALLOWLIST == frozenset({9339, 9340})
     assert not DENIED_PORTS & CDP_PORT_ALLOWLIST

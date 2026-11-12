@@ -40,13 +40,13 @@ class EdgeLoop:
         self,
         client: StargateEdgeClient,
         *,
-        kinds: tuple[str, ...] = config.DEFAULT_KINDS,
+        kinds: tuple[str, ...] | None = None,
         handlers: dict[str, Handler] | None = None,
         lease_wait_s: float = config.DEFAULT_LEASE_WAIT_SECONDS,
         sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._client = client
-        self._kinds = kinds
+        self._kinds = kinds if kinds is not None else config.edge_kinds()
         self._handlers = handlers if handlers is not None else HANDLERS
         self._lease_wait_s = lease_wait_s
         self._sleeper = sleeper

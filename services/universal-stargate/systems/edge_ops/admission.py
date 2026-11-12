@@ -69,6 +69,10 @@ async def admit(
         EdgeOpRefusedError: 503 ``edge_unavailable`` when no edge serving
             *kind* has polled within two long-poll intervals.
     """
+    if kind == "cursor_glass":
+        from .kinds.cursor_glass import validate_cursor_glass_admit
+
+        validate_cursor_glass_admit(op=op, args=args)
     if not await journal.edge_seen_recently(kind=kind):
         raise EdgeOpRefusedError(
             503,

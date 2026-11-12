@@ -12,6 +12,10 @@ by any function here other than the comparison the auth dependency performs.
     When ``true`` **and** ``EDGE_OPS_ENABLED`` is on, MCP ``cursor_bridge``
     ``wake_tab`` / ``rename_tab`` admit through Stargate instead of dialing CDP
     locally. Both must be on; either off keeps the legacy path unchanged.
+
+``EDGE_OPS_CURSOR_GLASS`` (Stargate admit gate, default ``false``)
+    When off, ``kind=cursor_glass`` admits are refused with ``edge_kind_disabled``
+    even if ``EDGE_OPS_ENABLED`` is on.
 ``EDGE_OPS_EDGE_TOKENS``
     Per-edge bearer map, ``<edge_id>:<token>[,<edge_id>:<token>...]``. The
     lease, event, result, release and directive routes accept only the token
@@ -33,6 +37,7 @@ import os
 from pathlib import Path
 
 ENABLED_ENV_KEY = "EDGE_OPS_ENABLED"
+CURSOR_GLASS_ENV_KEY = "EDGE_OPS_CURSOR_GLASS"
 EDGE_TOKENS_ENV_KEY = "EDGE_OPS_EDGE_TOKENS"
 DATA_DIR_ENV_KEY = "DATA_DIR"
 
@@ -56,6 +61,11 @@ _TRUE_VALUES = frozenset({"true", "1", "yes", "on"})
 def edge_ops_enabled() -> bool:
     """Read the gate flag now. Absent or unparseable means off."""
     return os.getenv(ENABLED_ENV_KEY, "").strip().lower() in _TRUE_VALUES
+
+
+def cursor_glass_admit_enabled() -> bool:
+    """Whether ``kind=cursor_glass`` may be admitted (default off)."""
+    return os.getenv(CURSOR_GLASS_ENV_KEY, "").strip().lower() in _TRUE_VALUES
 
 
 def data_dir() -> Path:

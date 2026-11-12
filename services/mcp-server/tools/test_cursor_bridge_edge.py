@@ -65,6 +65,7 @@ def test_admit_payload_shape() -> None:
     assert body["idempotency_key"] == "fixed-key"
     assert body["args"]["grant"] == "bridge"
     assert body["args"]["authorization_source"] == "mcp:cursor_bridge"
+    assert body["deadline_s"] == _cursor_bridge_edge.AWAIT_MAX_SECONDS
 
 
 def test_edge_pending_maps_ok_false() -> None:
@@ -88,6 +89,14 @@ def test_edge_pending_maps_ok_false() -> None:
         out = _wake_tab(gui_host=":8", agent_id="a", body="wake")
     assert out["ok"] is False
     assert out["code"] == "edge_pending"
+
+
+def test_shim_does_not_import_systems() -> None:
+    from pathlib import Path
+
+    text = Path(__file__).resolve().parent.joinpath("_cursor_bridge_edge.py").read_text()
+    assert "systems." not in text
+    assert "from systems" not in text
 
 
 def test_flag_on_wake_uses_admit(monkeypatch: pytest.MonkeyPatch) -> None:

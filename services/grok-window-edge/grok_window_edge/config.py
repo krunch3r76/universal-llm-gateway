@@ -34,10 +34,9 @@ from __future__ import annotations
 
 import os
 
-# Explicit set. 9339/9340 are the grok windows A1 serves. 9338 (Cursor :8)
-# is allowlisted for ``cursor_glass`` wake/rename; 19338 only if a ported
-# handler is shown to dial it.
-CDP_PORT_ALLOWLIST: frozenset[int] = frozenset({9338, 9339, 9340})
+# Explicit set. 9339/9340 are the grok windows A1 serves. Cursor :8 (9338) is
+# added when the cursor kinds go live — not in this slice.
+CDP_PORT_ALLOWLIST: frozenset[int] = frozenset({9339, 9340})
 
 # Never reachable from this process, whatever else is added above. The port
 # denies are checked before the allowlist, so releasing 9341 into it later —
@@ -56,7 +55,8 @@ DEFAULT_EDGE_ID = "grok-window-edge"
 DEFAULT_LEASE_WAIT_SECONDS = 60.0
 DEFAULT_BACKOFF_INITIAL_SECONDS = 1.0
 DEFAULT_BACKOFF_MAX_SECONDS = 30.0
-DEFAULT_KINDS: tuple[str, ...] = ("ping", "cursor_glass")
+DEFAULT_KINDS: tuple[str, ...] = ("ping",)
+KINDS_ENV_KEY = "GROK_WINDOW_EDGE_KINDS"
 
 
 def edge_id() -> str:
@@ -67,6 +67,13 @@ def edge_id() -> str:
 def edge_token() -> str:
     """The bearer this edge presents. Never logged or echoed."""
     return os.getenv(EDGE_TOKEN_ENV_KEY, "").strip()
+
+
+def edge_kinds() -> tuple[str, ...]:
+    """Kinds this process leases for, from ``GROK_WINDOW_EDGE_KINDS`` (default ping)."""
+    raw = (os.getenv(KINDS_ENV_KEY) or "ping").strip()
+    kinds = tuple(part.strip() for part in raw.split(",") if part.strip())
+    return kinds or DEFAULT_KINDS
 
 
 def display_lock_dir() -> str | None:

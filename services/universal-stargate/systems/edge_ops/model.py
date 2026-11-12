@@ -67,6 +67,9 @@ CODE_NOT_STARTED = "edge_not_started"
 CODE_TERMINAL = "edge_op_terminal"
 CODE_IDENTITY_REFUSED = "edge_identity_refused"
 CODE_GRANT_REFUSED = "edge_grant_refused"
+CODE_KIND_DISABLED = "edge_kind_disabled"
+CODE_OP_UNSUPPORTED = "edge_op_unsupported"
+CODE_ARGS_INVALID = "edge_args_invalid"
 
 # Reasons carried on fold transitions and on the matching lifecycle events.
 REASON_DEADLINE = "deadline_while_queued"

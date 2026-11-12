@@ -46,7 +46,7 @@ def main(argv: list[str] | None = None) -> None:
     from grok_window_edge import EdgeLoop, HttpEdgeClient
     from grok_window_edge import config as edge_config
 
-    kinds = tuple(args.kinds) if args.kinds else edge_config.DEFAULT_KINDS
+    kinds = tuple(args.kinds) if args.kinds else edge_config.edge_kinds()
     lease_wait_s = (
         args.lease_wait
         if args.lease_wait is not None
