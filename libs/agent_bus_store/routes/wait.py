@@ -12,7 +12,6 @@ lives here, never in the MCP handler.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -22,9 +21,8 @@ from openapi_mcp.binding import x_mcp
 from ..auth import require_token
 from ..db import (
     get_thread,
-    get_thread_wait_activity_probe,
+    get_thread_turns_asc,
     get_thread_with_links,
-    get_wait_snapshot_turns,
     normalize_thread_id,
 )
 from ..producer_projection import project_thread_producers
@@ -55,13 +53,6 @@ _POLL_INTERVAL_SECONDS = 1.0
 _GENERATE_PIPELINE_ID = "cursor-sdk-generate"
 _STATUS_DONE_UNSATISFIABLE = "cursor_sdk_status_done_unsatisfiable"
 _STATUS_DONE_FIX_HINT = "completion=first_reply_from from_agent=cursor-sdk"
-
-
-@dataclass
-class _WaitTurnsCache:
-    probe: tuple[int, str | None] | None = None
-    turns: list[dict[str, Any]] = field(default_factory=list)
-    turn_count: int = 0
 
 
 async def _pinned_reader_witness(
@@ -99,28 +90,35 @@ async def _pinned_reader_witness(
     return witness, {execution_id: witness}
 
 
-def _raise_snapshot_not_found(thread_id: str) -> None:
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Thread {thread_id} not found",
-    )
-
-
-def _build_snapshot_payload(
-    thread_row: dict[str, Any],
-    turns: list[dict[str, Any]],
+async def _snapshot(
+    thread_id: str,
     *,
-    turn_count: int,
     after_turn: int,
     completion: Completion,
-    execution_id: str | None,
-    pinned_witness: Literal["live", "dead"] | None,
-    witness_map: dict[str, Literal["live", "dead"] | None] | None,
-    clock: datetime,
+    execution_id: str | None = None,
 ) -> dict[str, Any]:
-    """Pure derivation over already-loaded thread + turns (no I/O)."""
+    """Read thread + turns once and build the wait response payload.
+
+    Exposes raw observables (pointer_read_at, qualifying_reply_turn) as DATA so
+    a caller can inspect them, but never promotes them to a lifecycle ``status``
+    (decision: ship C — no read_at-derived awaiting_push).
+    """
+    thread_row = get_thread_with_links(thread_id)
+    if thread_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
     dispatch_links = thread_row.get("dispatch_links") or []
+    turns = get_thread_turns_asc(thread_id)
     pointer = next((t for t in turns if t["turn_number"] == after_turn), None)
+    clock = datetime.now(UTC)
+    pinned_witness, witness_map = await _pinned_reader_witness(
+        thread_id=thread_id,
+        execution_id=execution_id,
+        dispatch_links=dispatch_links,
+        now=clock,
+    )
     producer = classify_producer_link(
         execution_id=execution_id,
         dispatch_links=dispatch_links,
@@ -160,6 +158,9 @@ def _build_snapshot_payload(
         after_turn=after_turn,
         turns=turns,
     )
+    # A pinned probe asks for one producer. Listing every dispatch link
+    # (~70 rows, ~14 KB on role:root 16416) tripped KERNEL-H (a:39827).
+    # The thread-wide registry remains the unpinned wait.
     if execution_id:
         producers = [producer]
     else:
@@ -169,88 +170,23 @@ def _build_snapshot_payload(
             liveness_witnesses=witness_map,
         )
     return {
-        "thread_id": thread_row["id"],
+        "thread_id": thread_id,
         "complete": complete,
         "status": wait_status,
         "producer": producer,
         "producers": producers,
         "suggested_next": suggested,
+        # push_required is never asserted under C (no observable push signal).
+        # The field is retained at constant False for forward-compat with a
+        # future Phase 4 server-owned ack; do NOT derive it from read_at.
         "push_required": False,
         "next_poll_after_s": 0 if complete else int(_POLL_INTERVAL_SECONDS),
-        "turn_count": turn_count,
+        "turn_count": len(turns),
         "thread_status": thread_row["status"],
+        # Raw, non-authoritative observables (telemetry only — not a status).
         "pointer_read_at": pointer.get("read_at") if pointer else None,
         "qualifying_reply_turn": reply_turn,
     }
-
-
-async def _load_turns_for_poll(
-    thread_id: str,
-  *,
-    after_turn: int,
-    cache: _WaitTurnsCache,
-) -> tuple[list[dict[str, Any]], int]:
-    probe = await asyncio.to_thread(get_thread_wait_activity_probe, thread_id)
-    if cache.probe == probe and cache.turns:
-        return cache.turns, cache.turn_count
-    turns, turn_count = await asyncio.to_thread(
-        get_wait_snapshot_turns,
-        thread_id,
-        after_turn=after_turn,
-    )
-    cache.probe = probe
-    cache.turns = turns
-    cache.turn_count = turn_count
-    return turns, turn_count
-
-
-async def _snapshot(
-    thread_id: str,
-    *,
-    after_turn: int,
-    completion: Completion,
-    execution_id: str | None = None,
-    turns_cache: _WaitTurnsCache | None = None,
-) -> dict[str, Any]:
-    """Read thread + turns once and build the wait response payload.
-
-    Exposes raw observables (pointer_read_at, qualifying_reply_turn) as DATA so
-    a caller can inspect them, but never promotes them to a lifecycle ``status``
-    (decision: ship C — no read_at-derived awaiting_push).
-    """
-    thread_row = await asyncio.to_thread(get_thread_with_links, thread_id)
-    if thread_row is None:
-        _raise_snapshot_not_found(thread_id)
-
-    if turns_cache is None:
-        turns, turn_count = await asyncio.to_thread(
-            get_wait_snapshot_turns,
-            thread_id,
-            after_turn=after_turn,
-        )
-    else:
-        turns, turn_count = await _load_turns_for_poll(
-            thread_id, after_turn=after_turn, cache=turns_cache
-        )
-
-    clock = datetime.now(UTC)
-    pinned_witness, witness_map = await _pinned_reader_witness(
-        thread_id=thread_id,
-        execution_id=execution_id,
-        dispatch_links=thread_row.get("dispatch_links") or [],
-        now=clock,
-    )
-    return _build_snapshot_payload(
-        thread_row,
-        turns,
-        turn_count=turn_count,
-        after_turn=after_turn,
-        completion=completion,
-        execution_id=execution_id,
-        pinned_witness=pinned_witness,
-        witness_map=witness_map,
-        clock=clock,
-    )
 
 
 def _cursor_sdk_generate_only(thread_row: dict[str, Any]) -> bool:
@@ -355,20 +291,13 @@ async def wait_thread_route(
     if from_agent:
         comp["from_agent"] = from_agent
 
-    if await asyncio.to_thread(get_thread, thread_id) is None:
+    if get_thread(thread_id) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",
         )
-    precheck_turns, _ = await asyncio.to_thread(
-        get_wait_snapshot_turns,
-        thread_id,
-        after_turn=after_turn,
-        include_pointer_body=True,
-    )
-    if is_dead_wait_no_auto_producer(
-        precheck_turns, after_turn=after_turn, completion=comp
-    ):
+    turns = get_thread_turns_asc(thread_id)
+    if is_dead_wait_no_auto_producer(turns, after_turn=after_turn, completion=comp):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
@@ -377,10 +306,9 @@ async def wait_thread_route(
                 "pointer_turn": after_turn,
             },
         )
-    await asyncio.to_thread(
-        _raise_if_status_done_unsatisfiable,
+    _raise_if_status_done_unsatisfiable(
         thread_id,
-        precheck_turns,
+        turns,
         after_turn=after_turn,
         completion=completion,
     )
@@ -388,7 +316,6 @@ async def wait_thread_route(
     wait_clamped = max(0.0, min(wait, MAX_WAIT_SECONDS))
     loop = asyncio.get_running_loop()
     deadline = loop.time() + wait_clamped
-    turns_cache = _WaitTurnsCache()
 
     while True:
         snap = await _snapshot(
@@ -396,7 +323,6 @@ async def wait_thread_route(
             after_turn=after_turn,
             completion=comp,
             execution_id=execution_id,
-            turns_cache=turns_cache,
         )
         if snap["complete"] or loop.time() >= deadline:
             return snap

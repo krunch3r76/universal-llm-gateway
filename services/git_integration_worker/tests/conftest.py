@@ -131,6 +131,17 @@ def _cursor_bus_default_is_test_double(
 
 
 @pytest.fixture(autouse=True)
+def _clear_dispatch_ledger_nested_cache() -> None:
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        clear_nested_children_cache,
+    )
+
+    clear_nested_children_cache()
+    yield
+    clear_nested_children_cache()
+
+
+@pytest.fixture(autouse=True)
 def house_watch_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     from implement_admission.house_testing import isolate_watch_dir
 

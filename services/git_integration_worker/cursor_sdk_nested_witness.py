@@ -18,6 +18,7 @@ _IMPLEMENT_JOBS = frozenset(
     {"implement", "pure-mechanical", "mechanical", "none", "freeform"}
 )
 _MAX_NEST_WALK = 12
+_MAX_NEST_CHILDREN_PER_LEVEL = 32
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _COMMITS_AHEAD_RE = re.compile(r'(?i)(?:^|[,{])\s*"commits_ahead"\s*:\s*(\d+)')
 _SIDECAR_REL = "tmp/reviews/closeouts/{dispatch_id}.md"
@@ -258,7 +259,9 @@ def _nested_descendant_has_commits(
     if depth >= _MAX_NEST_WALK or parent_dispatch_id in seen:
         return False
     seen.add(parent_dispatch_id)
-    child_ids = ledger.list_nested_children(parent_dispatch_id=parent_dispatch_id)
+    child_ids = ledger.list_nested_children(parent_dispatch_id=parent_dispatch_id)[
+        :_MAX_NEST_CHILDREN_PER_LEVEL
+    ]
     if not child_ids:
         return False
     with ledger._connect() as conn:

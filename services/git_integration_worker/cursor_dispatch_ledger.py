@@ -47,6 +47,15 @@ CURSOR_SDK_DISPATCH_LEDGER_ENV = "CURSOR_SDK_DISPATCH_LEDGER"
 
 logger = get_logger(__name__)
 
+_NESTED_CHILDREN_CACHE_TTL_S = 3.0
+_nested_children_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
+_LEGACY_NEST_JSON_SCAN_LIMIT = 4000
+
+
+def clear_nested_children_cache() -> None:
+    """Test hook — drop cached nested-child lists."""
+    _nested_children_cache.clear()
+
 _STATUS_QUEUED = "queued"
 _STATUS_ADMITTED = "admitted"
 _STATUS_RUNNING = "running"
@@ -2465,24 +2474,60 @@ class CursorDispatchLedger:
             )
 
     def list_nested_children(self, *, parent_dispatch_id: str) -> list[str]:
-        """Return dispatch ids admitted with ``nest_under=parent_dispatch_id``."""
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT dispatch_id, record_json FROM cursor_sdk_dispatches "
-                "WHERE record_json LIKE ?",
-                ('%"nest_under"%',),
-            ).fetchall()
+        """Return dispatch ids admitted with ``nest_under=parent_dispatch_id``.
+
+        Indexed ``nest_under`` column first; legacy JSON-only rows fall back to a
+        bounded scan. Terminal parents return ``[]`` without a table walk. Short
+        TTL cache avoids repeat scans during nested-witness polling.
+        """
+        parent = str(parent_dispatch_id or "").strip()
+        if not parent:
+            return []
+        now = time.monotonic()
+        cached = _nested_children_cache.get(parent)
+        if cached is not None and cached[0] > now:
+            return list(cached[1])
+
         child_ids: list[str] = []
-        for row in rows:
-            dispatch_id = row["dispatch_id"]
-            if dispatch_id == parent_dispatch_id:
-                continue
+        with self._connect() as conn:
             try:
-                data = json.loads(row["record_json"] or "{}")
-            except json.JSONDecodeError:
-                continue
-            if isinstance(data, dict) and data.get("nest_under") == parent_dispatch_id:
-                child_ids.append(dispatch_id)
+                rows = conn.execute(
+                    "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE nest_under=?",
+                    (parent,),
+                ).fetchall()
+                child_ids = [
+                    str(row["dispatch_id"])
+                    for row in rows
+                    if str(row["dispatch_id"]) != parent
+                ]
+            except sqlite3.OperationalError:
+                child_ids = []
+
+            if not child_ids:
+                legacy_rows = conn.execute(
+                    "SELECT dispatch_id, record_json FROM cursor_sdk_dispatches "
+                    "WHERE record_json LIKE ? LIMIT ?",
+                    ('%"nest_under"%', _LEGACY_NEST_JSON_SCAN_LIMIT),
+                ).fetchall()
+                for row in legacy_rows:
+                    dispatch_id = str(row["dispatch_id"])
+                    if dispatch_id == parent:
+                        continue
+                    try:
+                        data = json.loads(row["record_json"] or "{}")
+                    except json.JSONDecodeError:
+                        continue
+                    if (
+                        isinstance(data, dict)
+                        and data.get("nest_under") == parent
+                    ):
+                        child_ids.append(dispatch_id)
+
+        child_ids = child_ids[:64]
+        _nested_children_cache[parent] = (
+            now + _NESTED_CHILDREN_CACHE_TTL_S,
+            tuple(child_ids),
+        )
         return child_ids
 
     def _nest_under_from_row(self, row: Any) -> str | None:

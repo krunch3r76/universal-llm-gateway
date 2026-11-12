@@ -1,0 +1,52 @@
+"""Await-reply bus poll hot path (cpu-pin C)."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+
+from services.git_integration_worker.cursor_sdk_await_reply import (
+    AwaitedGenerate,
+    _bus_thread_is_closed,
+    _snapshot_replies,
+)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_replies_dedupes_thread_after_turn_per_tick() -> None:
+    calls: list[tuple[str, int]] = []
+
+    def turns_fn(thread_id: str, after_turn: int) -> list[dict]:
+        calls.append((thread_id, after_turn))
+        return []
+
+    awaited = [
+        AwaitedGenerate(
+            execution_id="e1",
+            thread_id="22613",
+            after_turn=3,
+            from_agent="web",
+            model=None,
+            fired_at="",
+        ),
+        AwaitedGenerate(
+            execution_id="e2",
+            thread_id="22613",
+            after_turn=3,
+            from_agent="web",
+            model=None,
+            fired_at="",
+        ),
+    ]
+    await _snapshot_replies(awaited, bus_turns_fn=turns_fn)
+    assert calls == [("22613", 3)]
+
+
+def test_bus_thread_is_closed_true_for_closed_status() -> None:
+    client = MagicMock()
+    client.get.return_value = SimpleNamespace(
+        status_code=200, json=lambda: {"status": "closed"}
+    )
+    assert _bus_thread_is_closed(client, "22613") is True
