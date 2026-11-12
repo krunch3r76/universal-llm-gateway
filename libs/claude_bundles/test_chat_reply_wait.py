@@ -1029,3 +1029,105 @@ async def test_tail_hold_idle_expiry_classifies_observer_unverified(
     assert is_unverifiable_stall(
         "observer_unverified", msg, url="https://claude.ai/cowork/cse_x"
     )
+
+
+@pytest.mark.asyncio
+async def test_anchor_never_committed_raises_at_grace_not_idle_budget(
+    advance_clock,
+) -> None:
+    from claude_bundles.reply_anchor import ReplyAnchor
+
+    inflight = {
+        **_state(body_len=0, n=0),
+        "anchored": True,
+        "anchor_found": False,
+        "anchor_matches": 0,
+        "streaming": True,
+    }
+    page = _FakePage([inflight] * 30)
+    anchor = ReplyAnchor(marker="never-commits", prior_matches=0)
+    with pytest.raises(HarvestIncompleteError) as exc:
+        await wait_assistant_reply(
+            page,
+            anchor=anchor,
+            timeout_s=360,
+            poll_ms=500,
+            stable_polls=2,
+            anchor_commit_grace_s=2,
+        )
+    msg = str(exc.value)
+    assert exc.value.anchor_found is False
+    assert "anchor not committed within grace" in msg
+    assert advance_clock["t"] < 1_000.0 + 5.0
+
+
+@pytest.mark.asyncio
+async def test_anchor_seen_then_lost_does_not_trip_grace(advance_clock) -> None:
+    from claude_bundles.reply_anchor import ReplyAnchor
+
+    found = {
+        **_state(body_len=0, n=0),
+        "anchored": True,
+        "anchor_found": True,
+        "anchor_matches": 1,
+    }
+    lost = {
+        **_state(body_len=0, n=0),
+        "anchored": True,
+        "anchor_found": False,
+        "anchor_matches": 0,
+    }
+    page = _FakePage([found, *([lost] * 12)])
+    anchor = ReplyAnchor(marker="flash", prior_matches=0)
+    with pytest.raises(HarvestIncompleteError) as exc:
+        await wait_assistant_reply(
+            page,
+            anchor=anchor,
+            timeout_s=2,
+            poll_ms=500,
+            stable_polls=2,
+            anchor_commit_grace_s=120,
+        )
+    assert "anchor not committed within grace" not in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_anchor_committed_within_grace_completes(advance_clock) -> None:
+    from claude_bundles.reply_anchor import ReplyAnchor
+
+    body = "x" * 500
+    inflight = {
+        **_state(body_len=0, n=0, streaming=True),
+        "anchored": True,
+        "anchor_found": True,
+        "anchor_matches": 1,
+    }
+    done = _state(body_len=len(body), n=1, body=body)
+    page = _FakePage([inflight, done, done])
+    anchor = ReplyAnchor(marker="ok", prior_matches=0)
+    state = await wait_assistant_reply(
+        page,
+        anchor=anchor,
+        timeout_s=360,
+        poll_ms=500,
+        stable_polls=2,
+        anchor_commit_grace_s=120,
+    )
+    assert state["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_unanchored_wait_ignores_commit_grace(advance_clock) -> None:
+    body = "x" * 500
+    page = _FakePage(
+        [_state(body_len=len(body), n=1, body=body)] * 3,
+    )
+    state = await wait_assistant_reply(
+        page,
+        before=_state(body_len=0, n=0),
+        timeout_s=360,
+        poll_ms=500,
+        stable_polls=2,
+        anchor_commit_grace_s=1,
+    )
+    assert state["n"] == 1

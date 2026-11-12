@@ -51,6 +51,8 @@ from claude_bundles.reply_completion import (
     fatal_error_banner,
 )
 
+ANCHOR_COMMIT_GRACE_S = 120
+
 if TYPE_CHECKING:
     from claude_bundles.reply_anchor import ReplyAnchor
 
@@ -113,6 +115,7 @@ async def wait_assistant_reply(
     min_msg_chars: int | None = None,
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
     require_review_verdict: bool = False,
+    anchor_commit_grace_s: int = ANCHOR_COMMIT_GRACE_S,
 ) -> dict:
     """Wait until complete(turn) or idle timeout.
 
@@ -133,6 +136,8 @@ async def wait_assistant_reply(
     last_len = -1
     saw_working = False
     idle_deadline = time.monotonic() + max(timeout_s, 1)
+    anchor_seen = False
+    commit_deadline = time.monotonic() + max(anchor_commit_grace_s, 1)
     structural_quiet = StructuralQuietTracker()
     prev_badge_key: str | None = None
     prev_progress_key: tuple[int, str] | None = None
@@ -165,6 +170,19 @@ async def wait_assistant_reply(
         state = await _sample()
         if on_harvest is not None:
             await on_harvest(state)
+        if anchor is not None:
+            if state.get("anchor_found"):
+                anchor_seen = True
+            elif not anchor_seen and time.monotonic() >= commit_deadline:
+                matches = state.get("anchor_matches", 0)
+                prior = anchor.prior_matches
+                raise HarvestIncompleteError(
+                    "anchor not committed within grace: no user turn matched the "
+                    f"prompt marker (matches={matches}, prior={prior}, "
+                    f"grace_s={anchor_commit_grace_s}) — ¬delete",
+                    state=state,
+                    anchor_found=False,
+                )
         structural_quiet.observe(state)
         cur_len = state.get("body_len", 0)
         cur_n = state.get("n", 0)
