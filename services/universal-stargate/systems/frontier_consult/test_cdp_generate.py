@@ -271,12 +271,14 @@ async def test_deliver_oversized_with_archive_posts_pointer(
 
     sidecar_calls: list[dict[str, object]] = []
     posted_bodies: list[str] = []
+    post_kwargs: list[dict[str, object]] = []
 
     async def fake_sidecar(**kwargs: object) -> None:
         sidecar_calls.append(dict(kwargs))
 
     async def fake_post(**kwargs: object) -> PostOutcome:
         posted_bodies.append(str(kwargs.get("body")))
+        post_kwargs.append(dict(kwargs))
         return PostOutcome(ok=True, http_status=201)
 
     huge = "x" * 170_000
@@ -307,11 +309,12 @@ async def test_deliver_oversized_with_archive_posts_pointer(
     assert sidecar_calls == []
     assert len(posted_bodies) == 1
     body = posted_bodies[0]
-    assert len(body) <= delivery.BUS_MAX_BODY_CHARS
+    assert len(body) <= 2000
     assert "cortex://notes/system/threads/cdp-ask-archive-existing.md" in body
     assert "abc123sha256" in body
     assert huge not in body
-    assert "relocated to cortex" in body
+    assert "VERDICT:" in body
+    assert "allow_long_body" not in post_kwargs[0]
 
 
 @pytest.mark.asyncio
@@ -358,10 +361,11 @@ async def test_deliver_oversized_without_archive_writes_sidecar(
     assert sidecar_calls[0]["content"] == huge
     assert len(posted_bodies) == 1
     body = posted_bodies[0]
-    assert len(body) <= delivery.BUS_MAX_BODY_CHARS
+    assert len(body) <= 2000
     assert "cortex://notes/system/threads/9880-sidecar.md" in body
     assert "deadbeefsha256" in body
     assert huge not in body
+    assert "## sections" in body
 
 
 @pytest.mark.asyncio
@@ -385,6 +389,7 @@ async def test_deliver_under_limit_inline_unchanged(
         thread_id="5583",
         to_agent="dispatch",
         request_id="r-inline",
+        body_mode="inline",
     )
     assert ok is True
     assert len(posted_bodies) == 1
@@ -783,6 +788,7 @@ async def test_post_cdp_turn_on_behalf_marks_pointer_only(
     assert len(posts) == 1
     assert posts[0]["on_behalf"] is True
     assert posts[0]["from"] == "web-anthropic"
+    assert "allow_long_body" not in posts[0]
 
 
 @pytest.mark.asyncio

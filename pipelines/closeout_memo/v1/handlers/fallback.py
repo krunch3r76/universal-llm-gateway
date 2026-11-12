@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from typing import Any, override
 
+from closeout_memo.bus_pointer import compact_overflow_bus_body
 from closeout_memo.events import emit_closeout_memo
+from closeout_memo.models import CloseoutMemoRequest
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
@@ -48,7 +50,21 @@ class CloseoutMemoFallbackHandler(BaseHandler):
                 status = str(row.get("status") or status)
         memo8 = memo_ids[0][:8] if memo_ids else "unknown"
         subject = f"closeout memo — undelivered {memo8} {kind} status:{status}"
-        body = _blocks({**coalesce, **deliver})
+        raw = _blocks({**coalesce, **deliver})
+        memo_model: CloseoutMemoRequest | None = None
+        if memo_ids:
+            row = _ledger.load(memo_ids[0])
+            if row is not None:
+                import json
+
+                memo_model = CloseoutMemoRequest.model_validate(
+                    json.loads(row["payload_json"])
+                )
+        body = (
+            compact_overflow_bus_body(memo=memo_model, overflow_markdown=raw)
+            if memo_model and raw
+            else raw
+        )
         posted = await _transport.post_bus_turn(
             wake_lane=wake_lane, subject=subject, body=body
         )

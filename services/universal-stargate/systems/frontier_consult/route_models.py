@@ -89,9 +89,10 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     prompt: str | None = None
     sidecar_ref: str | None = None
     prompt_sha256: str | None = None
-    # Writer pipeline opt-in. ``pointer_only`` keeps prompt and harvest text
-    # off agent-bus turns. Omitted leaves every other caller unchanged.
-    bus_body: Literal["pointer_only"] | None = None
+    # Writer pipeline bus body shape. ``inline`` keeps legacy full harvest on-bus.
+    # ``pointer_only`` keeps the minimal pointer (no section map). Omitted ⇒ compact
+    # pointer with sidecar + section map (default).
+    bus_body: Literal["pointer_only", "inline"] | None = None
     # When set and packet_path is absent (job=implement|wrap), the server
     # materializes the six-block packet via resolve_source_ref_to_packet
     # (first-class wrap). Grammar: todo:/plan:/plan_phase:/agent-bus:/packet:.

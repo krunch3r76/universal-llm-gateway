@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from typing import Any, override
 
+from closeout_memo.bus_pointer import compact_overflow_bus_body
 from closeout_memo.events import emit_closeout_memo
+from closeout_memo.models import CloseoutMemoRequest
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
@@ -265,11 +267,20 @@ class CloseoutMemoDeliverHandler(BaseHandler):
                 followup_by_address=_transport.post_followup_by_address,
             )
         overflow = str(coalesced.get("overflow_bus_text") or "")
-        if outcome.get("delivered") and overflow:
+        if outcome.get("delivered") and overflow and memo_ids:
+            row = _ledger.load(memo_ids[0])
+            pointer_body = overflow
+            if row is not None:
+                import json
+
+                memo = CloseoutMemoRequest.model_validate(json.loads(row["payload_json"]))
+                pointer_body = compact_overflow_bus_body(
+                    memo=memo, overflow_markdown=overflow
+                )
             await _transport.post_bus_turn(
                 wake_lane=wake_lane,
                 subject=f"closeout memo — overflow {memo_ids[0][:8]}",
-                body=overflow,
+                body=pointer_body,
             )
         outcome["overflow_bus_text"] = overflow
         outcome["wake_lane"] = wake_lane

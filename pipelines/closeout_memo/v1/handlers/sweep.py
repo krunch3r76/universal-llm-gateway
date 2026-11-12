@@ -8,6 +8,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 
+from closeout_memo.bus_pointer import compact_overflow_bus_body
 from closeout_memo.events import emit_closeout_memo
 from closeout_memo.models import CloseoutMemoRequest
 from closeout_memo.render import render_memos
@@ -38,10 +39,15 @@ async def _post_overflow(wake_lane: str, memo_ids: list[str], overflow: str) -> 
     text = overflow.strip()
     if not text or not memo_ids:
         return
+    body = text
+    row = _ledger.load(memo_ids[0])
+    if row is not None:
+        memo = CloseoutMemoRequest.model_validate(json.loads(row["payload_json"]))
+        body = compact_overflow_bus_body(memo=memo, overflow_markdown=text)
     await _transport.post_bus_turn(
         wake_lane=wake_lane,
         subject=f"closeout memo — overflow {memo_ids[0][:8]}",
-        body=text,
+        body=body,
     )
 
 

@@ -45,6 +45,7 @@ def _inline_delivery_body(harvest: str) -> str:
             subject="cdp reply — exec-verdict-dedupe",
             format_metadata="# CDP generate result",
             pointer_only=False,
+            body_mode="inline",
         )
     )
     assert body is not None
@@ -62,8 +63,9 @@ def test_pointer_only_dispatch_omits_prompt_line() -> None:
     assert _MARKER not in body
     assert "Summary:" not in body
     assert "cortex://notes/off-bus.txt" in body
-    assert "sha256 `abc`" in body
+    assert "abc" in body
     assert "exec-1" in body
+    assert "VERDICT:" in body
 
 
 def test_pointer_only_worker_message_reads_and_verifies_sidecar() -> None:
@@ -138,3 +140,48 @@ def test_fenced_canonical_verdict_not_collapsed_with_unfenced() -> None:
     harvest = f"```\n{_CANON}\n```\n{_CANON}\n"
     body = _inline_delivery_body(harvest)
     assert body.count(_CANON) == 2
+
+
+def test_default_compact_cdp_delivery_omits_harvest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _sidecar(**kwargs: object) -> object:
+        assert "harvest" in str(kwargs.get("content", "")).lower() or _MARKER in str(
+            kwargs.get("content")
+        )
+
+        class _Side:
+            uri = "cortex://notes/harvest-compact.md"
+            sha256 = "cafe" * 16
+            body_chars = 99
+
+        return _Side()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_onbehalf_delivery.write_cdp_harvest_sidecar",
+        _sidecar,
+    )
+    harvest = f"# reply\n\n{_CANON}\n\nextra {_MARKER}\n"
+    result = CdpGenerateResult(
+        ok=True,
+        body=harvest,
+        execution_id="exec-compact",
+        satellite_execution_id="sat",
+        prompt_uri="cortex://notes/prompt.txt",
+        picker_model="opus",
+    )
+    body = asyncio.run(
+        build_cdp_success_delivery_body(
+            result=result,
+            thread_id="23222",
+            subject="cdp reply — exec-compact",
+            format_metadata="meta-line",
+            body_mode="compact",
+        )
+    )
+    assert body is not None
+    assert len(body) <= 2000
+    assert _MARKER not in body
+    assert "cafe" in body
+    assert "## sections" in body
+    assert "VERDICT:" in body

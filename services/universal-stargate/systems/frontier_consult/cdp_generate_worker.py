@@ -234,6 +234,7 @@ async def post_cdp_turn(
     body: str,
     request_id: str,
     pointer_turn: int = 1,
+    allow_long_body: bool = False,
 ) -> PostOutcome:
     """Post on-behalf bus turn as ``from=web-anthropic`` (endpoint address).
 
@@ -268,9 +269,10 @@ async def post_cdp_turn(
                 "body": body,
                 "status": "open",
                 "after_turn": 0,
-                "allow_long_body": True,
                 "on_behalf": True,
             }
+            if allow_long_body:
+                payload["allow_long_body"] = True
             resp = await client.post("/turns", json=payload, headers=headers)
             if resp.status_code < 300:
                 return PostOutcome(ok=True, http_status=resp.status_code)
