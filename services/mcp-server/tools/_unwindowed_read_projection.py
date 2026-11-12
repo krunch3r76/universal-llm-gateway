@@ -182,7 +182,7 @@ def sidecar_section_listing(
     sidecar_uri: str,
     text: str,
 ) -> dict[str, Any]:
-    """md_list-shaped listing and follow-up md_read calls for a sidecar body."""
+    """Manifest-shaped section listing and follow-up md_read calls for a sidecar body."""
     try:
         raw_sections = md_list_sections(text)
     except SectionError as exc:

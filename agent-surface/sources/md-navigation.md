@@ -13,8 +13,8 @@ operational context) when a single section answers the question.
 
 | Op | Purpose |
 |---|---|
-| `md_list` | Heading tree (TOC) |
-| `md_read(section=<heading>)` | One section by heading |
+| `md_list` | Manifest section descriptors (`id`, paging via `offset`) |
+| `md_read(section=<id>)` | One section by `id` from `md_list` (`__preamble__` for pre-heading body) |
 | `md_replace` / `md_append` / `md_delete` | Section-level edits |
 
 ## Pattern

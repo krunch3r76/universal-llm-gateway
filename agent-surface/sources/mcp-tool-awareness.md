@@ -46,8 +46,8 @@ For large markdown files, prefer section-level access over full reads:
 
 | Op | Purpose | Extra args |
 |---|---|---|
-| `md_list` | Heading tree (TOC) | `path` |
-| `md_read` | Read one section by heading | `path`, `section` |
+| `md_list` | Manifest section index (`id`, paging via `offset`) | `path`, optional `offset` |
+| `md_read` | Read one section by `id` from `md_list` | `path`, `section` |
 | `md_replace` | Replace section body | `path`, `section`, `content` |
 | `md_append` | Append to section body | `path`, `section`, `content` |
 | `md_delete` | Delete section + body | `path`, `section` |

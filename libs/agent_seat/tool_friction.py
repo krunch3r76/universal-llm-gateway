@@ -94,7 +94,7 @@ def classify_tool_failure(
                 "code": "section_not_found",
                 "target": target,
                 "message": message[:300],
-                "suggested_next_action": "Run md_list for the document, then retry with an exact section name.",
+                "suggested_next_action": "Run md_list for the document, then retry with an exact section id.",
             }
 
     elif name == "cortex":

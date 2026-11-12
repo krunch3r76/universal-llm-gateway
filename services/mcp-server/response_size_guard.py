@@ -346,7 +346,7 @@ def _adaptive_limit(
 
 
 def _summarize_markdown_sections(text: str, max_sections: int = 5) -> list[str]:
-    """Return up to *max_sections* markdown section paths from *text*."""
+    """Return up to *max_sections* markdown section ids from *text*."""
     if not text.strip():
         return []
     try:

@@ -18,7 +18,7 @@ STRUCTURE_BUDGET_BYTES: int = 16 * 1024
 STRUCTURE_MAX_SECTIONS: int = 200
 
 _SECTION_KEYS: frozenset[str] = frozenset(
-    {"heading", "level", "path", "line", "chars"}
+    {"id", "heading", "level", "line", "char_count"}
 )
 
 

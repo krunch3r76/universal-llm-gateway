@@ -124,7 +124,7 @@ Full guide: `markdown-navigation`; canonical tool reference: `universal-llm-gate
 
 When an `fs` (or other) result exceeds the response-size threshold **and** the payload is markdown-shaped, the size guard may return a **structure manifest** first — not only an opaque `rs_xxxx` stub:
 
-- `kind: "markdown_structure"` with `sections[]` (`heading` / `level` / `path` / `line` / `chars` — md_list-equivalent; may be capped → `structure_truncated`).
+- `kind: "markdown_structure"` with `sections[]` (`id` / `heading` / `level` / `line` / `char_count` — md_list-equivalent; may be capped → `structure_truncated`).
 - `selective_options` typically suggest `fs(md_list|md_read|read…)` against the durable `uri`/`path` when present.
 - `full_retrieve_last_resort`: `retrieve(id="rs_…")` — use only after section navigation fails or you truly need the whole blob.
 

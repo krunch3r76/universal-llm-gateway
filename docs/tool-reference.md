@@ -965,8 +965,8 @@ PDF, DOCX, ODT, and EML files are auto-converted to markdown for read ops
 
 | Op | Required args | Optional | Description |
 |---|---|---|---|
-| `md_list` | path | — | List sections (works on PDF/DOCX/ODT/EML too) |
-| `md_read` | path, section | — | Read section (works on PDF/DOCX/ODT/EML too) |
+| `md_list` | path | offset (descriptor cursor) | Manifest section descriptors (`id`, `parent_id`, `line`, `char_count`, `children`; 32 KiB page) |
+| `md_read` | path, section | — | Read by section `id` from `md_list` (`__preamble__` for pre-heading body); empty `section` returns manifest |
 | `md_replace` | path, section, content | — | Replace section **body** (text files only) |
 | `md_append` | path, section, content | — | Append to section **body** (text files only) |
 | `md_insert` | path, heading, level, position | section (anchor), content | Create a **new** section (text files only) |
