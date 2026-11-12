@@ -40,10 +40,25 @@ def grok_conversation_attributed(
         return False
     if not prior_generating:
         return True
-    return (
-        surface.get("has_active_chat") is True
-        and surface.get("generating") is False
-    )
+    return surface.get("has_active_chat") is True and surface.get("generating") is False
+
+
+def _foreign_active_agent(
+    active: str,
+    *,
+    expected_agent_id: str,
+    baseline_agent_id: str,
+    saw_expected_active: bool,
+) -> bool:
+    if not active:
+        return False
+    expected = (expected_agent_id or "").strip()
+    baseline = (baseline_agent_id or "").strip()
+    if active != expected and active != baseline:
+        return True
+    if saw_expected_active and active != expected:
+        return True
+    return False
 
 
 async def probe_grok_after_select(
@@ -51,6 +66,7 @@ async def probe_grok_after_select(
     *,
     endpoint: Any,
     expected_agent_id: str,
+    baseline_agent_id: str,
     prior_message_fp: str,
     prior_generating: bool,
 ) -> dict[str, Any]:
@@ -60,8 +76,13 @@ async def probe_grok_after_select(
         "slug": endpoint.slug,
         "title": endpoint.title or None,
     }
+    saw_expected_active = False
 
     async def _classify(surface: dict[str, Any]) -> dict[str, Any]:
+        nonlocal saw_expected_active
+        active = str(surface.get("active_agent_id") or "").strip()
+        if active == (expected_agent_id or "").strip():
+            saw_expected_active = True
         verdict = wake_decision(
             surface,
             thread=str(meta["thread"] or ""),
@@ -77,15 +98,37 @@ async def probe_grok_after_select(
         )
         return {"surface": surface, "verdict": verdict, "attributed": attributed}
 
-    first = await probe_surface(ws_url)
-    state = await _classify(first)
+    async def _probe_round() -> dict[str, Any] | None:
+        nonlocal saw_expected_active
+        surface = await probe_surface(ws_url)
+        active = str(surface.get("active_agent_id") or "").strip()
+        if _foreign_active_agent(
+            active,
+            expected_agent_id=expected_agent_id,
+            baseline_agent_id=baseline_agent_id,
+            saw_expected_active=saw_expected_active,
+        ):
+            state = await _classify(surface)
+            return {
+                **state,
+                "ok": False,
+                "stale_dom": True,
+                "code": "conversation_unconfirmed",
+                "foreign_agent_id": active,
+            }
+        return await _classify(surface)
+
+    state = await _probe_round()
+    if state.get("foreign_agent_id") is not None:
+        return state
     if state["attributed"] and state["verdict"].get("ok"):
         return {**state, "ok": True, "stale_dom": False}
 
     for _ in range(GROK_CONVERSATION_IDLE_ROUNDS):
         await asyncio.sleep(0.25)
-        nxt = await probe_surface(ws_url)
-        state = await _classify(nxt)
+        state = await _probe_round()
+        if state.get("foreign_agent_id") is not None:
+            return state
         if state["attributed"] and state["verdict"].get("ok"):
             return {**state, "ok": True, "stale_dom": False}
 

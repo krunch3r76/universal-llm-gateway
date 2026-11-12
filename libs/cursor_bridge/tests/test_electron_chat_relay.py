@@ -235,9 +235,10 @@ def _switch_lock_held(display: str) -> bool:
 
 @pytest.mark.asyncio
 async def test_read_grok_select_while_other_bot_streaming_attributes_with_real_wait(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
     ep = ElectronEndpoint(
         label="gc2",
         app="grok",
@@ -307,10 +308,149 @@ async def test_read_grok_select_while_other_bot_streaming_attributes_with_real_w
 
 
 @pytest.mark.asyncio
-async def test_read_grok_select_real_wait_stale_pane_unconfirmed(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_read_grok_peer_switch_restore_during_unlocked_wait_unconfirmed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        title="Bot Y",
+        agent_id="bot-y",
+    )
+    pages = [{"title": "Grok Bot", "web_socket_debugger_url": "ws://fake"}]
+    shared = "shared stale line"
+    pre = _raw_probe(
+        active_agent_id="bot-x",
+        active_title="Bot X",
+        titles=["Bot X", "Bot Y"],
+        recent_messages=[shared],
+        generating=False,
+        has_active_chat=True,
+        agent_ids={"bot-x": "Bot X", "bot-y": "Bot Y"},
+    )
+    in_lock = _raw_probe(
+        active_agent_id="bot-y",
+        active_title="Bot Y",
+        titles=["Bot X", "Bot Y"],
+        recent_messages=[shared],
+        generating=False,
+        has_active_chat=False,
+        agent_ids={"bot-x": "Bot X", "bot-y": "Bot Y"},
+    )
+    wait_y = dict(in_lock)
+    wait_z = _raw_probe(
+        active_agent_id="bot-z",
+        active_title="Bot Z",
+        titles=["Bot X", "Bot Y", "Bot Z"],
+        recent_messages=[shared],
+        generating=False,
+        has_active_chat=False,
+        agent_ids={"bot-x": "Bot X", "bot-y": "Bot Y", "bot-z": "Bot Z"},
+    )
+    misattrib = _raw_probe(
+        active_agent_id="bot-y",
+        active_title="Bot Y",
+        titles=["Bot X", "Bot Y"],
+        recent_messages=["z line"],
+        generating=False,
+        has_active_chat=True,
+        agent_ids={"bot-x": "Bot X", "bot-y": "Bot Y"},
+    )
+    probes = [dict(pre), dict(in_lock), dict(wait_y), dict(wait_z), dict(misattrib)]
+
+    async def _eval(_ws: str, expression: str, **_: Any) -> Any:
+        if "sand-message-prose" not in expression:
+            return {"labels": [], "items": []}
+        return probes.pop(0) if probes else dict(misattrib)
+
+    async def _rec_sleep(_delay: float) -> None:
+        return None
+
+    with (
+        patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
+        patch("cursor_bridge.chat_surface._evaluate_cdp_js", side_effect=_eval),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            new_callable=AsyncMock,
+            return_value={"ok": True, "currentAgentId": "bot-y"},
+        ),
+        patch(
+            "cursor_bridge.electron_chat_grok_wait.asyncio.sleep",
+            side_effect=_rec_sleep,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        snap = await read_endpoint_turn(ep, select=True)
+
+    assert snap["ok"] is False
+    assert snap["code"] == "conversation_unconfirmed"
+    assert "z line" not in (snap.get("recent_messages") or [])
+    assert snap.get("latest_message", "") != "z line"
+
+
+@pytest.mark.asyncio
+async def test_read_grok_in_lock_busy_guard_skips_cdp_select(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Break: concurrent steering while switch lock is held must not CDP-select."""
+    monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        title="Bot Y",
+        agent_id="bot-y",
+    )
+    pages = [{"title": "Grok Bot", "web_socket_debugger_url": "ws://fake"}]
+    pre = {
+        "state": "chat_list",
+        "active_title": "Bot X",
+        "active_agent_id": "bot-x",
+        "titles": ["Bot X", "Bot Y"],
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": ["idle"],
+    }
+    in_lock = {
+        **pre,
+        "composer_draft": "please hold",
+        "generating": True,
+    }
+    probes = [dict(pre), dict(in_lock)]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return probes.pop(0) if probes else dict(in_lock)
+
+    select_mock = AsyncMock(return_value={"ok": True, "currentAgentId": "bot-y"})
+
+    with (
+        patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface", side_effect=_fake_probe
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            select_mock,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        snap = await read_endpoint_turn(ep, select=True)
+
+    assert snap["ok"] is False
+    assert snap["reason"] == "composer_not_empty"
+    select_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_read_grok_select_real_wait_stale_pane_unconfirmed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
     ep = ElectronEndpoint(
         label="gc2",
         app="grok",
@@ -373,9 +513,10 @@ async def test_read_grok_select_real_wait_stale_pane_unconfirmed(
 
 @pytest.mark.asyncio
 async def test_display_switch_lock_not_held_during_probe_sleeps(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
     ep = ElectronEndpoint(
         label="gc2",
         app="grok",
@@ -446,9 +587,10 @@ async def test_display_switch_lock_not_held_during_probe_sleeps(
 
 @pytest.mark.asyncio
 async def test_reselect_reacquires_display_switch_lock(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
     ep = ElectronEndpoint(
         label="gc2",
         app="grok",

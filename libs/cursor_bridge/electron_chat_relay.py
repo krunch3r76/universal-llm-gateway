@@ -278,6 +278,7 @@ async def _resolve_and_select_endpoint(
                     "active_agent_id": verdict.get("active_agent_id"),
                     "titles": verdict.get("titles"),
                 }
+            baseline_agent = str(surface.get("active_agent_id") or "").strip()
             prior_fp = messages_fingerprint(surface) if app == "grok" else ""
             prior_generating = (
                 bool(surface.get("generating")) if app == "grok" else False
@@ -305,13 +306,14 @@ async def _resolve_and_select_endpoint(
                 ws_url,
                 endpoint=endpoint,
                 expected_agent_id=grok_agent,
+                baseline_agent_id=baseline_agent,
                 prior_message_fp=prior_fp,
                 prior_generating=prior_generating,
             )
             surface = grok_wait["surface"]
             verdict = grok_wait["verdict"]
             if grok_wait.get("stale_dom"):
-                return {
+                unconfirmed: dict[str, Any] = {
                     "ok": False,
                     "code": "conversation_unconfirmed",
                     "reason": "conversation DOM stale after select",
@@ -322,6 +324,10 @@ async def _resolve_and_select_endpoint(
                     "active_agent_id": verdict.get("active_agent_id"),
                     "stale_dom": True,
                 }
+                foreign = grok_wait.get("foreign_agent_id")
+                if foreign:
+                    unconfirmed["foreign_agent_id"] = foreign
+                return unconfirmed
             if not verdict.get("ok"):
                 async with display_switch_lock(disp):
                     try:
