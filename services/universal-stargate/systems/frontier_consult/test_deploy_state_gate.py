@@ -175,6 +175,24 @@ def test_dual_merge_disagreement_get_wins_and_emits_event(
     ]
 
 
+def test_identity_fails_when_ref_matches_but_sync_stale() -> None:
+    from datetime import UTC, datetime
+
+    change_ts = datetime(2026, 11, 11, 10, 0, 0, tzinfo=UTC)
+    stale_sync = datetime(2026, 11, 11, 9, 0, 0, tzinfo=UTC)
+    health = {
+        "deploy_mode": "source_synced",
+        "source_ref": f"git:{_SHA}",
+        "source_synced_at": stale_sync.isoformat().replace("+00:00", "Z"),
+    }
+    passed, _ = _identity_passes(
+        health,
+        source_ref=f"git:{_SHA}",
+        change_ts=change_ts,
+    )
+    assert passed is False
+
+
 def test_identity_passes_on_manage_fields_when_get_empty() -> None:
     from datetime import UTC, datetime
 
@@ -188,7 +206,6 @@ def test_identity_passes_on_manage_fields_when_get_empty() -> None:
         merged,
         source_ref=f"git:{_SHA}",
         change_ts=change_ts,
-        expected_tree_hash=None,
     )
     assert passed is True
 
@@ -206,7 +223,6 @@ def test_identity_fails_closed_when_stamp_unreadable_fields_absent() -> None:
         merged,
         source_ref=f"git:{_SHA}",
         change_ts=change_ts,
-        expected_tree_hash=None,
     )
     assert passed is False
     assert had_mode is True
@@ -352,3 +368,10 @@ def test_deploy_state_gate_dual_read_mismatch_event_factory() -> None:
         "manage_value": "b",
         "request_id": "rid-1",
     }
+    empty_rid = DeployStateGateDualReadMismatch(
+        producer="mcp",
+        field="source_synced_at",
+        get_value="a",
+        manage_value="b",
+    )
+    assert empty_rid.payload["request_id"] == ""

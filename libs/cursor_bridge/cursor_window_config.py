@@ -10,12 +10,12 @@ from __future__ import annotations
 from typing import Any
 
 from host_predicates.cursor_hosts import (
-    _row_for_gui_host,
-    config_path,
-    load_config,
+    all_gui_host_aliases as _all_gui_host_aliases,
 )
 from host_predicates.cursor_hosts import (
-    all_gui_host_aliases as _all_gui_host_aliases,
+    config_path,
+    load_config,
+    row_for_gui_host,
 )
 
 from cursor_bridge.cdp_gateway_forwarder import container_cdp_origin
@@ -38,7 +38,7 @@ def cdp_origin_for_gui_host(gui_host: str | None) -> str:
     the mcp container, ports 9338, 9339, and 19338 are rewritten to the docker
     gateway forwarder. The rewrite does not connect to those ports.
     """
-    row = _row_for_gui_host(gui_host)
+    row = row_for_gui_host(gui_host)
     if row:
         origin = str(row.get("cdp_origin") or _DEFAULT_ORIGIN)
     else:
@@ -51,7 +51,7 @@ def subscription_display_for_gui_host(gui_host: str | None) -> str:
 
     ``:8`` maps to ``8``. An unlisted host other than orion-node also returns ``8``.
     """
-    row = _row_for_gui_host(gui_host)
+    row = row_for_gui_host(gui_host)
     if row:
         return str(row.get("subscription_display") or "8")
     key = str(gui_host or "").strip().lstrip(":").lower()
@@ -65,7 +65,7 @@ def normalize_gui_host(gui_host: str | None) -> str:
 
     An unlisted host returns ``:8``, except orion-node which stays ``orion-node``.
     """
-    row = _row_for_gui_host(gui_host)
+    row = row_for_gui_host(gui_host)
     if row:
         return str(row.get("gui_host") or ":8")
     key = str(gui_host or "").strip().lstrip(":").lower()
@@ -76,7 +76,7 @@ def normalize_gui_host(gui_host: str | None) -> str:
 
 def is_configured_cursor_glass_host(gui_host: str | None) -> bool:
     """Whether ``gui_host`` is a row or alias in the tracked Glass window table."""
-    return _row_for_gui_host(gui_host) is not None
+    return row_for_gui_host(gui_host) is not None
 
 
 def unknown_gui_host_error(gui_host: str | None) -> dict[str, Any]:
@@ -86,7 +86,7 @@ def unknown_gui_host_error(gui_host: str | None) -> dict[str, Any]:
     """
     key = str(gui_host or "").strip() or ":8"
     if is_configured_cursor_glass_host(key):
-        row = _row_for_gui_host(key) or {}
+        row = row_for_gui_host(key) or {}
         return {
             "ok": True,
             "gui_host": str(row.get("gui_host") or key),
