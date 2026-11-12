@@ -269,7 +269,6 @@ class EdgeOpsJournal:
         return state
 
     async def expire(self, *, op_id: str, edge_id: str, lease_id: str) -> str | None:
-        """Record ``expired`` after the edge consumed a cancel directive."""
         expired = await self._in_store(
             lease_ops.expire_sync,
             op_id=op_id,
@@ -281,10 +280,7 @@ class EdgeOpsJournal:
             return None
         state, kind = expired
         if state == "expired":
-            journal_thread.emit(
-                self,
-                EdgeOpExpired(op_id=op_id, kind=kind, reason=REASON_DEADLINE),
-            )
+            journal_thread.emit(self, EdgeOpExpired(op_id=op_id, kind=kind, reason=REASON_DEADLINE))
         await self._waiter.notify(TRANSITION_CHANNEL)
         return state
 
