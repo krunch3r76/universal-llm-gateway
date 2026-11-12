@@ -12,6 +12,7 @@ from bus_compact_pointer import (
     compact_pointer_body,
     extract_verdict_line,
 )
+from bus_compact_pointer.pointer import MAX_BODY_CHARS
 from claude_bundles.cdp_model_endpoint import CdpGenerateResult
 from services.git_integration_worker.cursor_sdk_closeout_harvest import _fenced_spans
 from universal_logging import get_logger
@@ -20,6 +21,45 @@ logger = get_logger(__name__)
 
 BUS_MAX_BODY_CHARS = 64_000
 _POST_RETRY_SLEEP_S = 0.5
+_DEGRADED_SIDECAR_WARNING = (
+    "WARNING: sidecar write failed; reply delivered inline (no sidecar_ref/sha256)"
+)
+
+
+def degraded_sidecar_delivery_body(body: str) -> bool:
+    """True when ok=True delivery fell back after cortex sidecar write failure."""
+    return body.startswith(_DEGRADED_SIDECAR_WARNING)
+
+
+def build_cdp_degraded_inline_body(*, format_metadata: str, harvest: str) -> str:
+    """Inline ok=True body when compact sidecar persistence failed."""
+    meta = format_metadata.strip()
+    text = harvest if harvest else "_empty harvest_"
+    if meta:
+        return f"{_DEGRADED_SIDECAR_WARNING}\n{meta}\n\n{text}"
+    return f"{_DEGRADED_SIDECAR_WARNING}\n\n{text}"
+
+
+def _degraded_spill_brief(*, format_metadata: str) -> str:
+    meta = format_metadata.strip()
+    if meta:
+        return f"{_DEGRADED_SIDECAR_WARNING}\n{meta}"
+    return _DEGRADED_SIDECAR_WARNING
+
+
+def _bounded_degraded_fallback(full_body: str) -> str:
+    """Truncate degraded inline for allow_long_body after spill refusal."""
+    note = "\n… truncated spill fallback"
+    budget = BUS_MAX_BODY_CHARS - len(note)
+    if len(full_body) <= budget:
+        return full_body
+    dropped = len(full_body) - budget
+    note = (
+        f"\n… truncated {dropped} chars "
+        "(sidecar write failed; allow_long_body fallback)"
+    )
+    budget = BUS_MAX_BODY_CHARS - len(note)
+    return full_body[: max(0, budget)].rstrip() + note
 
 # Same shape as master_review_owed.CANONICAL_VERDICT_RE (binder contract).
 _CANONICAL_VERDICT_RE = re.compile(
@@ -231,7 +271,16 @@ async def build_cdp_success_delivery_body(
                 oversized=body_mode == "compact",
             )
             if sidecar is None:
-                return None
+                logger.warning(
+                    "CDP on-behalf sidecar write failed; delivering inline harvest: "
+                    "execution_id=%s thread=%s",
+                    result.execution_id,
+                    thread_id,
+                )
+                return build_cdp_degraded_inline_body(
+                    format_metadata=format_metadata,
+                    harvest=harvest,
+                )
             sidecar_uri = sidecar.uri
             sidecar_sha = sidecar.sha256
             map_source = store_content
@@ -281,6 +330,56 @@ async def build_cdp_success_delivery_body(
     return None
 
 
+async def _post_degraded_ok_body(
+    *,
+    thread_id: str,
+    to_agent: str,
+    subject: str,
+    full_body: str,
+    format_metadata: str,
+    request_id: str,
+    pointer_turn: int,
+):
+    from .cdp_generate_worker import post_cdp_turn
+
+    if len(full_body) <= MAX_BODY_CHARS:
+        kwargs: dict[str, object] = {}
+        return await post_cdp_turn(
+            thread_id=thread_id,
+            to_agent=to_agent,
+            subject=subject,
+            body=full_body,
+            request_id=request_id,
+            pointer_turn=pointer_turn,
+            **kwargs,
+        )
+
+    spill_body = _degraded_spill_brief(format_metadata=format_metadata)
+    spill = await post_cdp_turn(
+        thread_id=thread_id,
+        to_agent=to_agent,
+        subject=subject,
+        body=spill_body,
+        request_id=request_id,
+        pointer_turn=pointer_turn,
+        sidecar_content=full_body,
+    )
+    if spill.ok:
+        return spill
+    if spill.http_status == 413:
+        bounded = _bounded_degraded_fallback(full_body)
+        return await post_cdp_turn(
+            thread_id=thread_id,
+            to_agent=to_agent,
+            subject=subject,
+            body=bounded,
+            request_id=request_id,
+            pointer_turn=pointer_turn,
+            allow_long_body=True,
+        )
+    return spill
+
+
 async def deliver_cdp_result_turn(
     *,
     result: CdpGenerateResult,
@@ -312,6 +411,31 @@ async def deliver_cdp_result_turn(
             pointer_only=pointer_only,
             body_mode=body_mode,
         )
+        if body is not None and degraded_sidecar_delivery_body(body):
+            last_outcome = await _post_degraded_ok_body(
+                thread_id=thread_id,
+                to_agent=to_agent,
+                subject=subject,
+                full_body=body,
+                format_metadata=metadata,
+                request_id=request_id,
+                pointer_turn=pointer_turn,
+            )
+            if last_outcome.ok:
+                return True
+            await asyncio.sleep(_POST_RETRY_SLEEP_S)
+            last_outcome = await _post_degraded_ok_body(
+                thread_id=thread_id,
+                to_agent=to_agent,
+                subject=subject,
+                full_body=body,
+                format_metadata=metadata,
+                request_id=request_id,
+                pointer_turn=pointer_turn,
+            )
+            if last_outcome.ok:
+                return True
+            body = None
         if body is None:
             fail_subject = f"cdp DELIVERY FAILED — {result.execution_id[:8]}"
             fail_body = format_onbehalf_delivery_failed_body(result)
