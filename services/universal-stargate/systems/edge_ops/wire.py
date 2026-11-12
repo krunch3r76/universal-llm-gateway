@@ -4,6 +4,10 @@ Kept apart from the route handlers so the HTTP shape reads in one place. The
 field names follow the dispatch design's resource table; ``kinds`` replaces
 that table's ``displays``/``health`` pair because A1 leases by op kind and the
 edge opens no window.
+
+``lease_id`` travels on lease-bound POST bodies (``EventBody``, ``ResultBody``,
+``ReleaseBody``). The directives long-poll is a GET and carries ``lease_id`` as a
+query parameter on the route, not in these models.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ class EventBody(BaseModel):
     """``POST /api/v1/edge/ops/{id}/events`` — open type plus free payload."""
 
     type: str = Field(..., min_length=1)
+    lease_id: str = Field(..., min_length=1)
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -47,5 +52,12 @@ class ResultBody(BaseModel):
     infrastructure error.
     """
 
+    lease_id: str = Field(..., min_length=1)
     result: Any = None
     outcome: Literal["completed", "failed"] = "completed"
+
+
+class ReleaseBody(BaseModel):
+    """``POST /api/v1/edge/ops/{id}/release`` — end the lease without a result."""
+
+    lease_id: str = Field(..., min_length=1)

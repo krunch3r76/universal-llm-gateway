@@ -41,7 +41,9 @@ class EdgeConflictError(Exception):
         message: What was refused.
         code: The ``{"error": {code}}`` value when the envelope carried one,
             so a caller can tell ``edge_op_terminal`` from
-            ``edge_lease_mismatch`` without matching on message text.
+            ``edge_lease_mismatch`` (no lease for this edge) or
+            ``edge_lease_stale`` (superseded ``lease_id``) without matching on
+            message text.
     """
 
     def __init__(self, message: str, *, code: str | None = None) -> None:
@@ -63,6 +65,7 @@ class StargateEdgeClient(Protocol):
         self,
         *,
         op_id: str,
+        lease_id: str,
         event_type: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]: ...
@@ -71,11 +74,12 @@ class StargateEdgeClient(Protocol):
         self,
         *,
         op_id: str,
+        lease_id: str,
         result: Any,
         outcome: str,
     ) -> dict[str, Any]: ...
 
-    async def release(self, *, op_id: str) -> dict[str, Any]: ...
+    async def release(self, *, op_id: str, lease_id: str) -> dict[str, Any]: ...
 
 
 class HttpEdgeClient:
@@ -123,6 +127,7 @@ class HttpEdgeClient:
         self,
         *,
         op_id: str,
+        lease_id: str,
         event_type: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
@@ -130,7 +135,7 @@ class HttpEdgeClient:
         response = await self._request(
             "POST",
             f"{_EDGE_BASE_PATH}/ops/{op_id}/events",
-            json_body={"type": event_type, "payload": payload},
+            json_body={"type": event_type, "lease_id": lease_id, "payload": payload},
         )
         return self._decoded(response)
 
@@ -138,6 +143,7 @@ class HttpEdgeClient:
         self,
         *,
         op_id: str,
+        lease_id: str,
         result: Any,
         outcome: str,
     ) -> dict[str, Any]:
@@ -145,16 +151,16 @@ class HttpEdgeClient:
         response = await self._request(
             "POST",
             f"{_EDGE_BASE_PATH}/ops/{op_id}/result",
-            json_body={"result": result, "outcome": outcome},
+            json_body={"result": result, "outcome": outcome, "lease_id": lease_id},
         )
         return self._decoded(response)
 
-    async def release(self, *, op_id: str) -> dict[str, Any]:
+    async def release(self, *, op_id: str, lease_id: str) -> dict[str, Any]:
         """Hand the lease back without a result."""
         response = await self._request(
             "POST",
             f"{_EDGE_BASE_PATH}/ops/{op_id}/release",
-            json_body={},
+            json_body={"lease_id": lease_id},
         )
         return self._decoded(response)
 

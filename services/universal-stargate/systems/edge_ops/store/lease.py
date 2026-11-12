@@ -1,18 +1,4 @@
-"""Lease claim, renewal and terminal writes on the edge-op store.
-
-Edge-initiated only: every function here runs because the edge called a
-Stargate resource. Nothing in this module dials outward.
-
-The edge identity is checked on every write, so one edge cannot renew, start,
-finish or release another edge's op. A result or a release against an op that
-already reached a terminal state is a no-op returning the stored state — the
-substrate never retries, reopens or overwrites a completed op.
-
-Two ordering rules are enforced here, both on the ``started`` ack a ``never``
-handler treats as its permission to run: the op's result is refused until that
-ack has landed, and the ack itself is refused once the op is terminal. Between
-them, neither end can run work the caller was already told had expired.
-"""
+"""Lease claim, renewal and terminal writes on the edge-op store."""
 
 from __future__ import annotations
 
@@ -23,54 +9,21 @@ from typing import Any
 
 from ..model import (
     CODE_NOT_STARTED,
-    CODE_TERMINAL,
     TERMINAL_STATES,
     EdgeOpRefusedError,
     LeaseGrant,
     Outcome,
 )
+from .lease_events import append_event_sync
+from .lease_row import owned_row_sync, refuse_started_terminal_sync, row_after_sync
 from .schema import record_transition_sync
 
-
-def record_poll_sync(
-    connection: sqlite3.Connection,
-    *,
-    edge_id: str,
-    kinds: tuple[str, ...],
-    now: float,
-) -> None:
-    """Stamp this edge's presence. ``admit`` reads it for ``edge_unavailable``."""
-    connection.execute(
-        "INSERT INTO edge_polls (edge_id, last_poll_epoch, kinds_json) "
-        "VALUES (?, ?, ?) ON CONFLICT(edge_id) DO UPDATE SET "
-        "last_poll_epoch = excluded.last_poll_epoch, "
-        "kinds_json = excluded.kinds_json",
-        (edge_id, now, json.dumps(list(kinds))),
-    )
-    connection.commit()
-
-
-def edge_seen_since_sync(
-    connection: sqlite3.Connection,
-    since: float,
-    *,
-    kind: str,
-) -> bool:
-    """True when an edge serving *kind* has polled at or after *since*.
-
-    Presence is per kind, not per process. "Some edge polled" answers the
-    question ``admit`` is asking only while one edge serves every kind: the
-    plan names four and binding 2 contemplates a sibling-edge split, and the
-    moment kinds are split an unserved kind would queue into silence until its
-    deadline instead of failing fast with ``edge_unavailable``. The served
-    kinds are already on the poll row, so the filter costs one JSON decode per
-    present edge.
-    """
-    rows = connection.execute(
-        "SELECT kinds_json FROM edge_polls WHERE last_poll_epoch >= ?",
-        (since,),
-    ).fetchall()
-    return any(kind in json.loads(row["kinds_json"]) for row in rows)
+__all__ = [
+    "claim_lease_sync",
+    "finish_sync",
+    "release_sync",
+    "renew_and_start_sync",
+]
 
 
 def claim_lease_sync(
@@ -83,8 +36,8 @@ def claim_lease_sync(
 ) -> LeaseGrant | None:
     """Claim the oldest queued op whose kind this edge serves, or ``None``.
 
-    The claim is a guarded UPDATE on the selected row, so two edges polling
-    the same kind at once cannot both win it.
+    Raises:
+        EdgeOpRefusedError: not used; mismatched rows are skipped with ``None``.
     """
     if not kinds:
         return None
@@ -130,29 +83,12 @@ def claim_lease_sync(
     )
 
 
-def _owned_row_sync(
-    connection: sqlite3.Connection,
-    op_id: str,
-    edge_id: str,
-) -> sqlite3.Row | None:
-    """Return the op row when *edge_id* currently holds its lease.
-
-    Carries ``redelivery`` alongside ``state`` and ``kind``, because the
-    terminal write has to know whether this op's class permits a result
-    before ``started``.
-    """
-    return connection.execute(
-        "SELECT state, kind, redelivery FROM edge_ops "
-        "WHERE op_id = ? AND leased_by = ?",
-        (op_id, edge_id),
-    ).fetchone()
-
-
 def renew_and_start_sync(
     connection: sqlite3.Connection,
     *,
     op_id: str,
     edge_id: str,
+    lease_id: str,
     event_type: str,
     payload: dict[str, Any],
     now: float,
@@ -161,47 +97,41 @@ def renew_and_start_sync(
 ) -> tuple[str, int, str] | None:
     """Append one edge event, renew the lease, return ``(state, seq, kind)``.
 
-    ``None`` means this edge does not hold the op's lease. An event whose type
-    is *started_event_type* also moves ``leased`` to ``started``; the 2xx this
-    produces is what a ``never`` handler waits for before it runs. Posting
-    ``started`` twice on a live op renews the lease without changing state.
-
-    A ``started`` ack for an op that already reached a terminal state is
-    refused and nothing is written. That is the stalled-edge path: the fold
-    runs on every touch of the store, so a process suspended past both its
-    lease and the op's deadline finds the op already ``expired`` here, and
-    answering 2xx would hand it permission to run work the caller was told had
-    expired — the late paste binding 3 exists to prevent. A non-``started``
-    event on a terminal op is still appended: it narrates, it grants no
-    permission, and the reply names the terminal state.
+    Terminal ops still accept non-``started`` events: the returned ``state``
+    names the terminal outcome so the edge learns the op closed without
+    treating a 2xx as permission to run. Only ``started`` on a terminal op is
+    refused (``edge_op_terminal``).
 
     Raises:
-        EdgeOpRefusedError: 409 ``edge_op_terminal`` when a ``started`` event
-            arrives for an op in a terminal state.
+        EdgeOpRefusedError: ``edge_lease_stale`` when *lease_id* does not match,
+            or ``edge_op_terminal`` when *event_type* is ``started`` on a
+            terminal op.
     """
-    row = _owned_row_sync(connection, op_id, edge_id)
+    row = owned_row_sync(connection, op_id, edge_id, lease_id)
     if row is None:
         return None
     state = row["state"]
     kind = row["kind"]
     if state in TERMINAL_STATES:
         if event_type == started_event_type:
-            raise EdgeOpRefusedError(
-                409,
-                CODE_TERMINAL,
-                f"Edge op {op_id!r} is {state!r}: a terminal op cannot be "
-                "started, and its handler must not run.",
-            )
-        seq = _append_event_sync(connection, op_id, event_type, payload, now)
+            refuse_started_terminal_sync(connection, op_id, state)
+        seq = append_event_sync(connection, op_id, event_type, payload, now)
+        connection.commit()
         return state, seq, kind
 
     if event_type == started_event_type and state == "leased":
-        state = "started"
-        connection.execute(
+        updated = connection.execute(
             "UPDATE edge_ops SET state = 'started', started_at_epoch = ?, "
-            "lease_expires_epoch = ?, updated_at_epoch = ? WHERE op_id = ?",
-            (now, now + lease_ttl_s, now, op_id),
-        )
+            "lease_expires_epoch = ?, updated_at_epoch = ? "
+            "WHERE op_id = ? AND lease_id = ? AND state = 'leased'",
+            (now, now + lease_ttl_s, now, op_id, lease_id),
+        ).rowcount
+        if not updated:
+            fresh = row_after_sync(connection, op_id)
+            if fresh is not None and fresh["state"] in TERMINAL_STATES:
+                refuse_started_terminal_sync(connection, op_id, fresh["state"])
+            return None
+        state = "started"
         record_transition_sync(
             connection,
             op_id=op_id,
@@ -210,37 +140,24 @@ def renew_and_start_sync(
             at_epoch=now,
         )
     else:
-        connection.execute(
+        allowed = ("leased", "started") if state in {"leased", "started"} else (state,)
+        updated = connection.execute(
             "UPDATE edge_ops SET lease_expires_epoch = ?, updated_at_epoch = ? "
-            "WHERE op_id = ?",
-            (now + lease_ttl_s, now, op_id),
-        )
-    seq = _append_event_sync(connection, op_id, event_type, payload, now)
+            "WHERE op_id = ? AND lease_id = ? AND state IN "
+            f"({', '.join('?' for _ in allowed)})",
+            (now + lease_ttl_s, now, op_id, lease_id, *allowed),
+        ).rowcount
+        if not updated:
+            fresh = row_after_sync(connection, op_id)
+            if fresh is not None and fresh["state"] in TERMINAL_STATES:
+                if event_type == started_event_type:
+                    refuse_started_terminal_sync(connection, op_id, fresh["state"])
+                return fresh["state"], 0, fresh["kind"]
+            return None
+
+    seq = append_event_sync(connection, op_id, event_type, payload, now)
     connection.commit()
     return state, seq, kind
-
-
-def _append_event_sync(
-    connection: sqlite3.Connection,
-    op_id: str,
-    event_type: str,
-    payload: dict[str, Any],
-    now: float,
-) -> int:
-    """Append an open-typed edge event and return its sequence number."""
-    row = connection.execute(
-        "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM edge_op_events "
-        "WHERE op_id = ?",
-        (op_id,),
-    ).fetchone()
-    seq = int(row["next_seq"])
-    connection.execute(
-        "INSERT INTO edge_op_events (op_id, seq, type, payload_json, at_epoch) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (op_id, seq, event_type, json.dumps(payload, sort_keys=True), now),
-    )
-    connection.commit()
-    return seq
 
 
 def finish_sync(
@@ -248,30 +165,18 @@ def finish_sync(
     *,
     op_id: str,
     edge_id: str,
+    lease_id: str,
     outcome: Outcome,
     result: Any,
     now: float,
 ) -> tuple[str, str] | None:
     """Store the handler result verbatim and set the terminal state.
 
-    ``None`` means this edge does not hold the lease. An op already terminal
-    keeps its stored state and result untouched.
-
-    A ``never`` op must have posted ``started`` first. That 2xx is what its
-    handler waits for, so a result arriving while the op is still ``leased``
-    says the handler ran without the ack — and the lease-loss fold, seeing no
-    ``started``, would have re-leased work that had already happened. Such a
-    result is refused and nothing is written, so the op stays leased and the
-    same edge can still post ``started`` and then its result. A ``safe`` op
-    may result straight from ``leased``: a second delivery of a safe kind is
-    harmless, so its handler never has to wait for the ack and may send no
-    ``started`` at all.
-
     Raises:
-        EdgeOpRefusedError: 409 ``edge_not_started`` when a ``never`` op that
-            has not reached ``started`` posts a result.
+        EdgeOpRefusedError: ``edge_lease_stale`` or ``edge_not_started`` when
+            the op is not in a finishable state for this lease holder.
     """
-    row = _owned_row_sync(connection, op_id, edge_id)
+    row = owned_row_sync(connection, op_id, edge_id, lease_id)
     if row is None:
         return None
     state = row["state"]
@@ -284,11 +189,17 @@ def finish_sync(
             f"Edge op {op_id!r} is {state!r}: a redelivery=never op must post "
             "a 'started' event before its result.",
         )
-    connection.execute(
+    updated = connection.execute(
         "UPDATE edge_ops SET state = ?, result_json = ?, "
-        "lease_expires_epoch = NULL, updated_at_epoch = ? WHERE op_id = ?",
-        (outcome, json.dumps(result), now, op_id),
-    )
+        "lease_expires_epoch = NULL, updated_at_epoch = ? "
+        "WHERE op_id = ? AND lease_id = ? AND state = ?",
+        (outcome, json.dumps(result), now, op_id, lease_id, state),
+    ).rowcount
+    if not updated:
+        fresh = row_after_sync(connection, op_id)
+        if fresh is not None and fresh["state"] in TERMINAL_STATES:
+            return fresh["state"], fresh["kind"]
+        return None
     record_transition_sync(
         connection,
         op_id=op_id,
@@ -305,34 +216,41 @@ def release_sync(
     *,
     op_id: str,
     edge_id: str,
+    lease_id: str,
     now: float,
 ) -> tuple[str, str] | None:
     """Hand a leased op back to the queue, or mark a started one ``unknown``.
 
-    ``None`` means this edge does not hold the lease. A started op cannot be
-    re-run, so releasing it records ``unknown`` rather than requeueing.
+    Raises:
+        EdgeOpRefusedError: ``edge_lease_stale`` when *lease_id* does not match.
     """
-    row = _owned_row_sync(connection, op_id, edge_id)
+    row = owned_row_sync(connection, op_id, edge_id, lease_id)
     if row is None:
         return None
     state = row["state"]
     if state in TERMINAL_STATES:
         return state, row["kind"]
     if state == "started":
-        connection.execute(
+        updated = connection.execute(
             "UPDATE edge_ops SET state = 'unknown', lease_expires_epoch = NULL, "
-            "updated_at_epoch = ? WHERE op_id = ?",
-            (now, op_id),
-        )
-        new_state = "unknown"
+            "updated_at_epoch = ? WHERE op_id = ? AND lease_id = ? "
+            "AND state = 'started'",
+            (now, op_id, lease_id),
+        ).rowcount
+        new_state = "unknown" if updated else state
     else:
-        connection.execute(
+        updated = connection.execute(
             "UPDATE edge_ops SET state = 'queued', leased_by = NULL, "
             "lease_id = NULL, lease_expires_epoch = NULL, updated_at_epoch = ? "
-            "WHERE op_id = ?",
-            (now, op_id),
-        )
-        new_state = "queued"
+            "WHERE op_id = ? AND lease_id = ? AND state = 'leased'",
+            (now, op_id, lease_id),
+        ).rowcount
+        new_state = "queued" if updated else state
+    if not updated:
+        fresh = row_after_sync(connection, op_id)
+        if fresh is not None and fresh["state"] in TERMINAL_STATES:
+            return fresh["state"], fresh["kind"]
+        return None
     record_transition_sync(
         connection,
         op_id=op_id,
@@ -342,31 +260,3 @@ def release_sync(
     )
     connection.commit()
     return new_state, row["kind"]
-
-
-def directives_after_sync(
-    connection: sqlite3.Connection,
-    *,
-    op_id: str,
-    after: int,
-) -> list[dict[str, Any]]:
-    """Return stored directives with ``seq`` greater than *after*.
-
-    A1 writes no directives: the table exists so the edge's long-poll is a
-    real read against the authority store rather than a hardcoded empty list,
-    and so the cancel producer lands without a schema change.
-    """
-    rows = connection.execute(
-        "SELECT seq, type, payload_json, at_epoch FROM edge_op_directives "
-        "WHERE op_id = ? AND seq > ? ORDER BY seq ASC",
-        (op_id, after),
-    ).fetchall()
-    return [
-        {
-            "seq": int(row["seq"]),
-            "type": row["type"],
-            "payload": json.loads(row["payload_json"]),
-            "at_epoch": row["at_epoch"],
-        }
-        for row in rows
-    ]

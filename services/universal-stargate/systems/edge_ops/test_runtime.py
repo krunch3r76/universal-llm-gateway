@@ -84,10 +84,18 @@ async def _admit_lease_and_finish(journal: EdgeOpsJournal) -> str:
     grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
     assert grant is not None
     await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", event_type="started"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="started",
     )
     await leasing.post_result(
-        journal, op_id=op_id, edge_id="edge-a", result={"ok": True}
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        result={"ok": True},
     )
     await asyncio.sleep(0)
     return op_id

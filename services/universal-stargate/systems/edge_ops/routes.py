@@ -9,6 +9,9 @@ Each handler is a wrapper: validate, call one service function, render. The
 error envelope is the canonical ``{"error": {code, message}}`` for
 ``/api/v1/*`` — never ``HTTPException(detail=...)``. Every route refuses with
 ``edge_ops_disabled`` while ``EDGE_OPS_ENABLED`` is off, which is the default.
+
+Lease-bound POST bodies carry ``lease_id`` in JSON; ``GET …/directives`` takes
+``lease_id`` as a query parameter (see ``wire.py``).
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from .model import (
     EdgeOpRefusedError,
 )
 from .runtime import journal_for
-from .wire import AdmitBody, EventBody, LeaseBody, ResultBody
+from .wire import AdmitBody, EventBody, LeaseBody, ReleaseBody, ResultBody
 
 router = APIRouter(prefix="/edge", tags=["edge-ops"])
 
@@ -168,6 +171,7 @@ async def post_op_event(
             journal_for(request),
             op_id=op_id,
             edge_id=edge_id,
+            lease_id=body.lease_id,
             event_type=body.type,
             payload=body.payload,
         )
@@ -192,6 +196,7 @@ async def post_op_result(
             journal_for(request),
             op_id=op_id,
             edge_id=edge_id,
+            lease_id=body.lease_id,
             result=body.result,
             outcome=body.outcome,
         )
@@ -201,7 +206,11 @@ async def post_op_result(
 
 
 @router.post("/ops/{op_id}/release")
-async def release_op(op_id: str, request: Request) -> JSONResponse:
+async def release_op(
+    op_id: str,
+    body: ReleaseBody,
+    request: Request,
+) -> JSONResponse:
     """Give the lease back without a result."""
     refused = _gate()
     if refused is not None:
@@ -209,7 +218,10 @@ async def release_op(op_id: str, request: Request) -> JSONResponse:
     try:
         edge_id = await require_edge_identity(request)
         released = await leasing.release(
-            journal_for(request), op_id=op_id, edge_id=edge_id
+            journal_for(request),
+            op_id=op_id,
+            edge_id=edge_id,
+            lease_id=body.lease_id,
         )
     except EdgeOpRefusedError as error:
         return _refusal_response(error)
@@ -220,13 +232,15 @@ async def release_op(op_id: str, request: Request) -> JSONResponse:
 async def get_op_directives(
     op_id: str,
     request: Request,
+    lease_id: str = Query(..., min_length=1),
     after: int = Query(0, ge=0),
     wait: float = Query(config.LONG_POLL_SECONDS, ge=0.0),
 ) -> Response:
     """Long-poll for server-to-edge directives. 204 when none arrive.
 
     This is the only path from Stargate to the edge, and the edge opens it.
-    A1 ships no directive producer, so the hold elapses and answers 204.
+    Fold-on-touch may enqueue a ``cancel`` directive for a started op past its
+    deadline; the edge consumes those on this long-poll (A2 wires the client).
     Only the op's lease holder may attach: another configured edge is refused
     with 409, the same answer an unknown op id gets.
     """
@@ -239,6 +253,7 @@ async def get_op_directives(
             journal_for(request),
             op_id=op_id,
             edge_id=edge_id,
+            lease_id=lease_id,
             after=after,
             wait_s=wait,
         )

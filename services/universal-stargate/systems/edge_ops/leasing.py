@@ -1,14 +1,4 @@
-"""Edge-facing edge-op service functions: lease, events, result, release.
-
-Every one of these runs because the edge called a Stargate resource on its own
-connection. Stargate holds the lease and directive requests open for up to 60 s
-and then answers empty, so the edge re-issues; it never dials the edge, and
-there is no heartbeat routine — each posted event renews the lease.
-
-The waits here are idle bounds on the absence of progress, not completion
-deadlines: a lease long-poll that finds nothing returns nothing, and the edge
-asks again.
-"""
+"""Edge-facing edge-op service functions: lease, events, result, release."""
 
 from __future__ import annotations
 
@@ -18,6 +8,7 @@ from typing import Any
 from . import config
 from .model import (
     CODE_LEASE_MISMATCH,
+    CODE_LEASE_STALE,
     EdgeOpRefusedError,
     LeaseGrant,
     Outcome,
@@ -33,14 +24,7 @@ async def lease(
     kinds: tuple[str, ...],
     wait_s: float | None = None,
 ) -> LeaseGrant | None:
-    """Long-poll for the next queued op this edge serves.
-
-    Records the edge's presence first — that stamp is what lets ``admit`` fail
-    fast with ``edge_unavailable`` — then claims the oldest queued op of a
-    served kind, parking on the queue channel until one arrives or the hold
-    elapses. ``None`` means the hold elapsed with nothing to do and the edge
-    should re-issue the request.
-    """
+    """Long-poll for the next queued op this edge serves."""
     budget = config.clamp_long_poll_seconds(wait_s)
     await journal.record_poll(edge_id=edge_id, kinds=kinds)
     hold_until = time.monotonic() + budget
@@ -60,25 +44,21 @@ async def post_event(
     *,
     op_id: str,
     edge_id: str,
+    lease_id: str,
     event_type: str,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Record one open-typed edge event and renew the lease.
-
-    The event type is a free string and the payload free JSON. The single
-    reserved type is ``started``: it moves a leased op to ``started``, and its
-    2xx is what a ``never`` kind waits for before running its handler, so a
-    lease lost before that ack can be re-leased without duplicating work.
-
-    Raises:
-        EdgeOpRefusedError: 409 when this edge does not hold the op's lease.
-    """
-    outcome = await journal.post_event(
-        op_id=op_id,
-        edge_id=edge_id,
-        event_type=event_type,
-        payload=payload or {},
-    )
+    """Record one open-typed edge event and renew the lease."""
+    try:
+        outcome = await journal.post_event(
+            op_id=op_id,
+            edge_id=edge_id,
+            lease_id=lease_id,
+            event_type=event_type,
+            payload=payload or {},
+        )
+    except EdgeOpRefusedError:
+        raise
     if outcome is None:
         raise _lease_mismatch(op_id, edge_id)
     state, seq = outcome
@@ -90,25 +70,21 @@ async def post_result(
     *,
     op_id: str,
     edge_id: str,
+    lease_id: str,
     result: Any,
     outcome: Outcome = "completed",
 ) -> dict[str, Any]:
-    """Store the handler result verbatim and close the op.
-
-    The substrate does not read the result: ``outcome="completed"`` is the
-    terminal state even when the handler answered ``{"ok": false}``, and
-    ``outcome="failed"`` is for an exception or an infrastructure error. An op
-    that is already terminal keeps its stored result; it is never re-run.
-
-    Raises:
-        EdgeOpRefusedError: 409 when this edge does not hold the op's lease.
-    """
-    state = await journal.post_result(
-        op_id=op_id,
-        edge_id=edge_id,
-        outcome=outcome,
-        result=result,
-    )
+    """Store the handler result verbatim and close the op."""
+    try:
+        state = await journal.post_result(
+            op_id=op_id,
+            edge_id=edge_id,
+            lease_id=lease_id,
+            outcome=outcome,
+            result=result,
+        )
+    except EdgeOpRefusedError:
+        raise
     if state is None:
         raise _lease_mismatch(op_id, edge_id)
     return {"op_id": op_id, "status": state}
@@ -119,16 +95,13 @@ async def release(
     *,
     op_id: str,
     edge_id: str,
+    lease_id: str,
 ) -> dict[str, Any]:
-    """Give a lease back without a result.
-
-    A still-leased op returns to the queue. A started op cannot be re-run, so
-    releasing it records ``unknown``.
-
-    Raises:
-        EdgeOpRefusedError: 409 when this edge does not hold the op's lease.
-    """
-    state = await journal.release(op_id=op_id, edge_id=edge_id)
+    """Give a lease back without a result."""
+    try:
+        state = await journal.release(op_id=op_id, edge_id=edge_id, lease_id=lease_id)
+    except EdgeOpRefusedError:
+        raise
     if state is None:
         raise _lease_mismatch(op_id, edge_id)
     return {"op_id": op_id, "status": state}
@@ -139,28 +112,20 @@ async def directives(
     *,
     op_id: str,
     edge_id: str,
+    lease_id: str,
     after: int = 0,
     wait_s: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Long-poll for server-to-edge directives above sequence *after*.
-
-    This is how Stargate reaches the edge without opening a connection to it:
-    the edge holds one of these open per live op and Stargate answers into it.
-    A1 ships no directive producer, so the list is empty until the cancel and
-    nudge writers land; the read itself is already against the authority store.
-
-    Only the lease holder may read an op's stream. Being a configured edge is
-    not enough: directives will carry cancel and nudge payloads, and a stream
-    any edge could attach to would leak them the moment a producer lands. An
-    unknown op id refuses the same way a wrong edge does, so the refusal says
-    nothing about which ops exist.
-
-    Raises:
-        EdgeOpRefusedError: 409 when *edge_id* does not hold the op's lease.
-    """
+    """Long-poll for server-to-edge directives above sequence *after*."""
     record = await journal.get(op_id)
     if record is None or record.leased_by != edge_id:
         raise _lease_mismatch(op_id, edge_id)
+    if record.lease_id != lease_id:
+        raise EdgeOpRefusedError(
+            409,
+            CODE_LEASE_STALE,
+            f"Edge op {op_id!r}: lease {lease_id!r} is stale for edge {edge_id!r}.",
+        )
     budget = config.clamp_long_poll_seconds(wait_s)
     hold_until = time.monotonic() + budget
     while True:

@@ -140,6 +140,7 @@ async def test_await_result_returns_the_handler_dict_verbatim(
     await journal.post_result(
         op_id=op_id,
         edge_id="edge-a",
+        lease_id=grant.lease_id,
         outcome="completed",
         result={"ok": False, "code": "window_unavailable", "detail": "no page"},
     )

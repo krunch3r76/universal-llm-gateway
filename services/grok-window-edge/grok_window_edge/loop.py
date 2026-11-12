@@ -104,11 +104,12 @@ class EdgeLoop:
         nothing to retry.
         """
         op_id = str(grant.get("op_id"))
+        lease_id = str(grant.get("lease_id"))
         kind = str(grant.get("kind"))
-        if not await self._acknowledge(grant, op_id, kind):
+        if not await self._acknowledge(grant, op_id, lease_id, kind):
             return
         try:
-            await self._dispatch(grant, op_id, kind)
+            await self._dispatch(grant, op_id, lease_id, kind)
         except EdgeConflictError as exc:
             logger.warning(
                 "Stargate refused a write for %s (%s), dropping the op: %s",
@@ -121,6 +122,7 @@ class EdgeLoop:
         self,
         grant: dict[str, Any],
         op_id: str,
+        lease_id: str,
         kind: str,
     ) -> None:
         """Run the registered handler, or report the kind as unsupported."""
@@ -128,6 +130,7 @@ class EdgeLoop:
         if handler is None:
             await self._client.post_result(
                 op_id=op_id,
+                lease_id=lease_id,
                 result={
                     "ok": False,
                     "code": CODE_KIND_UNSUPPORTED,
@@ -136,12 +139,13 @@ class EdgeLoop:
                 outcome="failed",
             )
             return
-        await self._report(handler, grant, op_id, kind)
+        await self._report(handler, grant, op_id, lease_id, kind)
 
     async def _acknowledge(
         self,
         grant: dict[str, Any],
         op_id: str,
+        lease_id: str,
         kind: str,
     ) -> bool:
         """Post ``started`` and read the answer. False means do not run.
@@ -159,7 +163,10 @@ class EdgeLoop:
         redelivery = str(grant.get("redelivery") or "never")
         try:
             accepted = await self._client.post_event(
-                op_id=op_id, event_type=STARTED_EVENT_TYPE, payload={"kind": kind}
+                op_id=op_id,
+                lease_id=lease_id,
+                event_type=STARTED_EVENT_TYPE,
+                payload={"kind": kind},
             )
         except EdgeConflictError as exc:
             logger.warning(
@@ -202,6 +209,7 @@ class EdgeLoop:
         handler: Handler,
         grant: dict[str, Any],
         op_id: str,
+        lease_id: str,
         kind: str,
     ) -> None:
         """Run the handler and post its result verbatim, or a failure."""
@@ -212,6 +220,7 @@ class EdgeLoop:
             logger.exception("edge handler for %s (%s) raised", op_id, kind)
             await self._client.post_result(
                 op_id=op_id,
+                lease_id=lease_id,
                 result={
                     "ok": False,
                     "code": CODE_HANDLER_EXCEPTION,
@@ -220,4 +229,6 @@ class EdgeLoop:
                 outcome="failed",
             )
             return
-        await self._client.post_result(op_id=op_id, result=result, outcome="completed")
+        await self._client.post_result(
+            op_id=op_id, lease_id=lease_id, result=result, outcome="completed"
+        )
