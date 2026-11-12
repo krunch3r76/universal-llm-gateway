@@ -28,7 +28,10 @@ def grok_conversation_attributed(
     prior_message_fp: str,
     prior_generating: bool,
 ) -> bool:
-    """True when sidebar selection and message pane belong to ``expected_agent_id``."""
+    """Heuristic: ``has_active_chat`` only means a composer is present, not pane binding.
+
+      With no pane-owner signal, prose first seen while the baseline marker is active
+    is refused once the expected marker is required — fail-closed attribution."""
     expected = (expected_agent_id or "").strip()
     active = str(surface.get("active_agent_id") or "").strip()
     if not expected or active != expected:
@@ -70,7 +73,11 @@ async def probe_grok_after_select(
     prior_message_fp: str,
     prior_generating: bool,
 ) -> dict[str, Any]:
-    """Re-probe until the conversation DOM matches ``expected_agent_id`` or idles out."""
+    """Heuristic wait: re-probe until attribution or idle rounds exhaust.
+
+    ``has_active_chat`` signals a composer, not which agent owns the pane; without a
+    pane-owner signal, new prose that first appeared under the baseline agent id is
+    treated as unconfirmed for the expected agent (fail-closed)."""
     meta = {
         "thread": endpoint.thread,
         "slug": endpoint.slug,

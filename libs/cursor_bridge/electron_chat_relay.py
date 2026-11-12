@@ -246,6 +246,7 @@ async def _resolve_and_select_endpoint(
         click_res: dict[str, Any] = {"clicked": False}
         prior_fp = ""
         prior_generating = False
+        baseline_agent = ""
         grok_agent = str(endpoint.agent_id or "").strip()
         async with display_switch_lock(disp):
             try:
