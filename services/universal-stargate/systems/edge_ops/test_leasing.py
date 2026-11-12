@@ -52,12 +52,20 @@ async def test_lease_started_result_round_trip(journal: EdgeOpsJournal) -> None:
     assert grant.redelivery == "safe"
 
     started = await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="started"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="started",
     )
     assert started["status"] == "started"
 
     closed = await leasing.post_result(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, result={"ok": True, "pong": True}
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        result={"ok": True, "pong": True},
     )
     assert closed["status"] == "completed"
 
@@ -131,10 +139,18 @@ async def test_a_completed_op_is_never_reopened(journal: EdgeOpsJournal) -> None
     op_id = await _queued(journal)
     grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
     await leasing.post_result(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, result={"ok": True}
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        result={"ok": True},
     )
     again = await leasing.post_result(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, result={"ok": False}
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        result={"ok": False},
     )
     assert again["status"] == "completed"
     record = await journal.get(op_id)
@@ -148,7 +164,11 @@ async def test_a_write_from_another_edge_is_refused(journal: EdgeOpsJournal) -> 
     grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
     with pytest.raises(EdgeOpRefusedError) as refusal:
         await leasing.post_event(
-            journal, op_id=op_id, edge_id="edge-b", lease_id=grant.lease_id, event_type="started"
+            journal,
+            op_id=op_id,
+            edge_id="edge-b",
+            lease_id=grant.lease_id,
+            event_type="started",
         )
     assert refusal.value.code == CODE_LEASE_MISMATCH
 
@@ -162,7 +182,11 @@ async def test_each_event_renews_the_lease(
     grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
     clock.advance(LEASE_TTL_SECONDS - 1.0)
     await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="progress"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="progress",
     )
     clock.advance(LEASE_TTL_SECONDS - 1.0)
     record = await journal.get(op_id)
@@ -202,7 +226,11 @@ async def test_lease_lost_after_started_ends_unknown_and_never_re_runs(
     op_id = await _queued(journal, kind=kind, key=f"k-{kind}")
     grant = await leasing.lease(journal, edge_id="edge-a", kinds=(kind,), wait_s=0.0)
     await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="started"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="started",
     )
     clock.advance(LEASE_TTL_SECONDS + 1.0)
 
@@ -239,7 +267,11 @@ async def test_releasing_a_started_op_records_unknown_instead(
     op_id = await _queued(journal)
     grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
     await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="started"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="started",
     )
     released = await leasing.release(
         journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id
@@ -276,7 +308,9 @@ async def test_directives_refuse_everyone_but_the_lease_holder(
     grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
     for target, edge in ((op_id, "edge-b"), ("edgeop-missing", "edge-a")):
         with pytest.raises(EdgeOpRefusedError) as refusal:
-            await leasing.directives(journal, op_id=target, edge_id=edge, lease_id=grant.lease_id, wait_s=0.0)
+            await leasing.directives(
+                journal, op_id=target, edge_id=edge, lease_id=grant.lease_id, wait_s=0.0
+            )
         assert refusal.value.status_code == 409
         assert refusal.value.code == CODE_LEASE_MISMATCH
 
@@ -289,10 +323,18 @@ async def test_lifecycle_events_fire_for_each_transition(
     op_id = await _queued(journal)
     grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
     await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="started"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="started",
     )
     await leasing.post_result(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, result={"ok": True}
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        result={"ok": True},
     )
     await asyncio.sleep(0)
     signals = set(getattr(event_bus, "signals", []))
@@ -318,7 +360,11 @@ async def test_a_never_kind_result_before_started_is_refused(
 
     with pytest.raises(EdgeOpRefusedError) as refusal:
         await leasing.post_result(
-            journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, result={"ok": True}
+            journal,
+            op_id=op_id,
+            edge_id="edge-a",
+            lease_id=grant.lease_id,
+            result={"ok": True},
         )
     assert refusal.value.code == CODE_NOT_STARTED
     assert refusal.value.status_code == 409
@@ -335,12 +381,22 @@ async def test_a_never_kind_completes_once_started_has_landed(
     journal: EdgeOpsJournal,
 ) -> None:
     op_id = await _queued(journal, kind=NEVER_KIND, key="k-never")
-    grant = await leasing.lease(journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0)
+    grant = await leasing.lease(
+        journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0
+    )
     await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="started"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="started",
     )
     closed = await leasing.post_result(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, result={"ok": True}
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        result={"ok": True},
     )
     assert closed["status"] == "completed"
 
@@ -356,16 +412,30 @@ async def test_a_refused_never_kind_result_leaves_the_op_finishable(
 ) -> None:
     """The refusal writes nothing, so the same edge can start and then finish."""
     op_id = await _queued(journal, kind=NEVER_KIND, key="k-never")
-    grant = await leasing.lease(journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0)
+    grant = await leasing.lease(
+        journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0
+    )
     with pytest.raises(EdgeOpRefusedError):
         await leasing.post_result(
-            journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, result={"ok": False}
+            journal,
+            op_id=op_id,
+            edge_id="edge-a",
+            lease_id=grant.lease_id,
+            result={"ok": False},
         )
     await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="started"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="started",
     )
     closed = await leasing.post_result(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, result={"ok": True}
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        result={"ok": True},
     )
     assert closed["status"] == "completed"
 
@@ -381,7 +451,11 @@ async def test_a_safe_kind_may_result_straight_from_leased(
     assert grant.redelivery == "safe"
 
     closed = await leasing.post_result(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, result={"ok": True, "pong": True}
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        result={"ok": True, "pong": True},
     )
     assert closed["status"] == "completed"
 
@@ -411,7 +485,11 @@ async def test_a_started_ack_on_an_expired_op_is_refused(
 
     with pytest.raises(EdgeOpRefusedError) as refusal:
         await leasing.post_event(
-            journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="started"
+            journal,
+            op_id=op_id,
+            edge_id="edge-a",
+            lease_id=grant.lease_id,
+            event_type="started",
         )
     assert refusal.value.status_code == 409
     assert refusal.value.code == CODE_TERMINAL
@@ -438,11 +516,17 @@ async def test_the_expiry_fold_still_publishes_when_the_ack_is_refused(
     authority has already answered.
     """
     op_id = await _queued(journal, kind=NEVER_KIND, key="k-never", deadline_s=5.0)
-    grant = await leasing.lease(journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0)
+    grant = await leasing.lease(
+        journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0
+    )
     clock.advance(LEASE_TTL_SECONDS + 1.0)
     with pytest.raises(EdgeOpRefusedError):
         await leasing.post_event(
-            journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="started"
+            journal,
+            op_id=op_id,
+            edge_id="edge-a",
+            lease_id=grant.lease_id,
+            event_type="started",
         )
     await asyncio.sleep(0)
     assert "edge.op.expired" in set(getattr(event_bus, "signals", []))
@@ -455,15 +539,25 @@ async def test_posting_started_twice_on_a_live_op_renews_the_lease(
 ) -> None:
     """The ack stays idempotent on a live op: same state, lease pushed out."""
     op_id = await _queued(journal, kind=NEVER_KIND, key="k-never")
-    grant = await leasing.lease(journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0)
+    grant = await leasing.lease(
+        journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0
+    )
     first = await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="started"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="started",
     )
     assert first["status"] == "started"
 
     clock.advance(LEASE_TTL_SECONDS - 1.0)
     again = await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="started"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="started",
     )
     assert again["status"] == "started"
     assert again["seq"] == first["seq"] + 1
@@ -485,9 +579,15 @@ async def test_a_progress_event_on_a_terminal_op_still_records(
     closed op learns it closed without being handed a 2xx that means ``run``.
     """
     op_id = await _queued(journal, kind=NEVER_KIND, key="k-never", deadline_s=5.0)
-    grant = await leasing.lease(journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0)
+    grant = await leasing.lease(
+        journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0
+    )
     clock.advance(LEASE_TTL_SECONDS + 1.0)
     noted = await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="progress"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="progress",
     )
     assert noted["status"] == "expired"

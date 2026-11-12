@@ -41,7 +41,11 @@ async def test_a_restarted_journal_sees_the_same_states(
     )
     grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
     await leasing.post_result(
-        journal, op_id=queued, edge_id="edge-a", lease_id=grant.lease_id, result={"ok": True, "first": True}
+        journal,
+        op_id=queued,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        result={"ok": True, "first": True},
     )
 
     restarted = _reopened(journal.path, clock)
@@ -63,7 +67,10 @@ async def test_a_restarted_journal_requeues_a_lease_lost_before_started(
     op_id = await admission.admit(
         journal, kind="ping", op="ping", args={}, idempotency_key="k1"
     )
-    grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
+    assert (
+        await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
+        is not None
+    )
 
     clock.advance(LEASE_TTL_SECONDS + 1.0)
     restarted = _reopened(journal.path, clock)
@@ -89,7 +96,11 @@ async def test_a_restarted_journal_marks_a_lease_lost_after_started_unknown(
     )
     grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
     await leasing.post_event(
-        journal, op_id=op_id, edge_id="edge-a", lease_id=grant.lease_id, event_type="started"
+        journal,
+        op_id=op_id,
+        edge_id="edge-a",
+        lease_id=grant.lease_id,
+        event_type="started",
     )
 
     clock.advance(LEASE_TTL_SECONDS + 1.0)

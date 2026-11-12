@@ -41,7 +41,8 @@ class EdgeConflictError(Exception):
         message: What was refused.
         code: The ``{"error": {code}}`` value when the envelope carried one,
             so a caller can tell ``edge_op_terminal`` from
-            ``edge_lease_mismatch`` or ``edge_lease_stale`` without matching on
+            ``edge_lease_mismatch`` (no lease for this edge) or
+            ``edge_lease_stale`` (superseded ``lease_id``) without matching on
             message text.
     """
 

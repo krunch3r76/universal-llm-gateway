@@ -57,7 +57,11 @@ def test_every_route_refuses_while_the_flag_is_off(
         ("post", "/edge/leases", {"kinds": ["ping"], "wait_s": 0}),
         ("get", "/edge/ops/edgeop-x", None),
         ("get", "/edge/ops/edgeop-x/result", None),
-        ("post", "/edge/ops/edgeop-x/events", {"type": "started", "lease_id": "lease-x"}),
+        (
+            "post",
+            "/edge/ops/edgeop-x/events",
+            {"type": "started", "lease_id": "lease-x"},
+        ),
         ("post", "/edge/ops/edgeop-x/result", {"result": {}, "lease_id": "lease-x"}),
         ("post", "/edge/ops/edgeop-x/release", {"lease_id": "lease-x"}),
         (

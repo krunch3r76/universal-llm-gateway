@@ -22,6 +22,7 @@ def lease_key(grant: LeaseGrant | None) -> str:
     assert grant is not None
     return grant.lease_id
 
+
 LEASE_TTL_SECONDS = 30.0
 
 # The redelivery=never fixture kind. Any kind absent from ``KIND_REDELIVERY``

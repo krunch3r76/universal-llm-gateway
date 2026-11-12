@@ -8,6 +8,7 @@ from typing import Any
 from . import config
 from .model import (
     CODE_LEASE_MISMATCH,
+    CODE_LEASE_STALE,
     EdgeOpRefusedError,
     LeaseGrant,
     Outcome,
@@ -117,8 +118,14 @@ async def directives(
 ) -> list[dict[str, Any]]:
     """Long-poll for server-to-edge directives above sequence *after*."""
     record = await journal.get(op_id)
-    if record is None or record.leased_by != edge_id or record.lease_id != lease_id:
+    if record is None or record.leased_by != edge_id:
         raise _lease_mismatch(op_id, edge_id)
+    if record.lease_id != lease_id:
+        raise EdgeOpRefusedError(
+            409,
+            CODE_LEASE_STALE,
+            f"Edge op {op_id!r}: lease {lease_id!r} is stale for edge {edge_id!r}.",
+        )
     budget = config.clamp_long_poll_seconds(wait_s)
     hold_until = time.monotonic() + budget
     while True:

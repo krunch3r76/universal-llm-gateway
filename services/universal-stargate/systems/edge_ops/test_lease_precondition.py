@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
 from systems.edge_ops import admission, leasing
 from systems.edge_ops.model import (
     CODE_LEASE_STALE,
@@ -27,7 +28,9 @@ async def test_stale_lease_id_is_refused_for_every_write(
     assert grant is not None
     stale_id = grant.lease_id
     clock.advance(LEASE_TTL_SECONDS + 1.0)
-    regrant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
+    regrant = await leasing.lease(
+        journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0
+    )
     assert regrant is not None
     assert regrant.op_id == op_id
     assert regrant.lease_id != stale_id
@@ -72,8 +75,16 @@ async def test_stale_lease_id_is_refused_for_every_write(
     assert refusal.value.code == CODE_LEASE_STALE
 
     with pytest.raises(EdgeOpRefusedError) as refusal:
-        await leasing.release(
-            journal, op_id=op_id, edge_id="edge-a", lease_id=stale_id
+        await leasing.release(journal, op_id=op_id, edge_id="edge-a", lease_id=stale_id)
+    assert refusal.value.code == CODE_LEASE_STALE
+
+    with pytest.raises(EdgeOpRefusedError) as refusal:
+        await leasing.directives(
+            journal,
+            op_id=op_id,
+            edge_id="edge-a",
+            lease_id=stale_id,
+            wait_s=0.0,
         )
     assert refusal.value.code == CODE_LEASE_STALE
 

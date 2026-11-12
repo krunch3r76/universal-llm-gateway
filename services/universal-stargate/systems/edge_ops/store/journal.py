@@ -36,6 +36,8 @@ from ..waiter import QUEUED_CHANNEL, TRANSITION_CHANNEL
 from . import journal_thread
 from . import lease as lease_ops
 from .admission import admit_sync, fetch_sync
+from .directives_io import directives_after_sync
+from .presence import edge_seen_since_sync, record_poll_sync
 from .schema import initialize_schema_sync
 
 
@@ -128,11 +130,11 @@ class EdgeOpsJournal:
 
     async def edge_seen_recently(self, *, kind: str) -> bool:
         since = self.now() - config.edge_presence_window_seconds()
-        return await self._in_store(lease_ops.edge_seen_since_sync, since, kind=kind)
+        return await self._in_store(edge_seen_since_sync, since, kind=kind)
 
     async def record_poll(self, *, edge_id: str, kinds: tuple[str, ...]) -> None:
         await self._in_store(
-            lease_ops.record_poll_sync,
+            record_poll_sync,
             edge_id=edge_id,
             kinds=kinds,
             now=self.now(),
@@ -242,9 +244,7 @@ class EdgeOpsJournal:
         state, kind = finished
         if state in {"completed", "failed"}:
             factory = EdgeOpFailed if state == "failed" else EdgeOpCompleted
-            journal_thread.emit(
-                self, factory(op_id=op_id, kind=kind, edge_id=edge_id)
-            )
+            journal_thread.emit(self, factory(op_id=op_id, kind=kind, edge_id=edge_id))
         await self._waiter.notify(TRANSITION_CHANNEL)
         return state
 
@@ -273,7 +273,7 @@ class EdgeOpsJournal:
 
     async def directives_after(self, *, op_id: str, after: int) -> list[dict[str, Any]]:
         return await self._in_store(
-            lease_ops.directives_after_sync,
+            directives_after_sync,
             op_id=op_id,
             after=after,
         )

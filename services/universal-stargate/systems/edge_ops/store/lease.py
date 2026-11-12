@@ -16,17 +16,12 @@ from ..model import (
     LeaseGrant,
     Outcome,
 )
-from .directives_io import directives_after_sync
 from .lease_events import append_event_sync
-from .presence import edge_seen_since_sync, record_poll_sync
 from .schema import record_transition_sync
 
 __all__ = [
     "claim_lease_sync",
-    "directives_after_sync",
-    "edge_seen_since_sync",
     "finish_sync",
-    "record_poll_sync",
     "release_sync",
     "renew_and_start_sync",
 ]
@@ -144,7 +139,13 @@ def renew_and_start_sync(
     lease_ttl_s: float,
     started_event_type: str,
 ) -> tuple[str, int, str] | None:
-    """Append one edge event, renew the lease, return ``(state, seq, kind)``."""
+    """Append one edge event, renew the lease, return ``(state, seq, kind)``.
+
+    Terminal ops still accept non-``started`` events: the returned ``state``
+    names the terminal outcome so the edge learns the op closed without
+    treating a 2xx as permission to run. Only ``started`` on a terminal op is
+    refused (``edge_op_terminal``).
+    """
     row = _owned_row_sync(connection, op_id, edge_id, lease_id)
     if row is None:
         return None
