@@ -1436,8 +1436,6 @@ async def test_probe_a5_empty_pane_generating_without_active_chat_ok() -> None:
         generating=True,
         has_active_chat=False,
     )
-    probes = [dict(streaming_empty)]
-
     async def _fake_probe(_ws: str) -> dict[str, Any]:
         return dict(streaming_empty)
 
