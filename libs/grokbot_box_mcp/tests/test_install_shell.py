@@ -197,6 +197,10 @@ def test_print_paste_bootstrap_double_install_offline(tmp_path: Path) -> None:
         env=env,
     )
     assert bootstrap.returncode == 0, bootstrap.stderr
+    wrote = (
+        f"grokbot-box-mcp-install: wrote {home}/.local/bin/grokbot-box-mcp-install.sh"
+    )
+    assert wrote in bootstrap.stderr, bootstrap.stderr
 
     installer = home / ".local" / "bin" / "grokbot-box-mcp-install.sh"
     launcher = home / ".local" / "bin" / "grokbot-mcp-remote-launcher.sh"
@@ -316,28 +320,62 @@ def test_header_write_exit_trap_cleans_temp_on_mv_failure(tmp_path: Path) -> Non
 
 
 @pytest.mark.offline
-def test_install_self_candidate_strips_login_shell_argv0() -> None:
-    """N11: -bash argv0 must not drive dirname-based SELF resolution."""
-    script = _INSTALL.read_text(encoding="utf-8")
-    assert '[[ "${_SELF_CAND}" == -* ]]' in script
-    assert '_SELF_CAND="${_SELF_CAND#-}"' in script
-    proc = subprocess.run(
-        [
-            "bash",
-            "-c",
-            r"""
-            _SELF_CAND=-bash
-            if [[ "${_SELF_CAND}" == -* ]]; then _SELF_CAND="${_SELF_CAND#-}"; fi
-            if [[ -n "${_SELF_CAND}" && "${_SELF_CAND}" != bash && "${_SELF_CAND}" != /bin/bash ]]; then
-              echo would_dirname
-            else
-              echo skip_dirname
-            fi
-            """,
-        ],
+def test_install_self_candidate_strips_login_shell_argv0(tmp_path: Path) -> None:
+    """N11/N13: -bash argv0 must not break SELF resolution on the real install script."""
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+    with _INSTALL.open("rb") as script:
+        proc = subprocess.run(
+            ["bash", "-c", "exec -a -bash bash -s -- --skip-mcp-remote"],
+            stdin=script,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "ok launcher=" in proc.stdout
+
+
+@pytest.mark.offline
+def test_print_paste_blob_bin_is_file_exits_nonzero_without_wrote(
+    tmp_path: Path,
+) -> None:
+    """N12: bootstrap subshell failure must not emit a bogus wrote line or rc 0."""
+    home = tmp_path / "home"
+    home.mkdir()
+    bin_path = home / ".local" / "bin"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.write_text("not-a-directory\n", encoding="utf-8")
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+    print_proc = subprocess.run(
+        ["bash", str(_INSTALL), "--print"],
         capture_output=True,
         text=True,
         check=False,
+        cwd=str(_REPO_ROOT / "scripts"),
+        env={
+            **env,
+            "GROKBOT_LAUNCHER_SRC": str(
+                _REPO_ROOT / "scripts" / "grokbot-mcp-remote-launcher.sh"
+            ),
+        },
     )
-    assert proc.returncode == 0, proc.stderr
-    assert "skip_dirname" in proc.stdout
+    assert print_proc.returncode == 0, print_proc.stderr
+    bootstrap = subprocess.run(
+        ["bash", "-s"],
+        input=print_proc.stdout,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert bootstrap.returncode != 0, bootstrap.stderr + bootstrap.stdout
+    assert "wrote" not in bootstrap.stderr
+    assert "wrote" not in bootstrap.stdout

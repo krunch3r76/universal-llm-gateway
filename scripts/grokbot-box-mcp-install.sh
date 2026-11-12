@@ -121,8 +121,7 @@ if launcher.strip():
 {marker_l}
 chmod 755 "${{LAUNCHER}}"
 """
-out += ")\n"
-out += 'echo "grokbot-box-mcp-install: wrote ${INSTALLER}" >&2\n'
+out += ') && echo "grokbot-box-mcp-install: wrote ${HOME}/.local/bin/grokbot-box-mcp-install.sh" >&2\n'
 sys.stdout.write(out)
 PY
     rm -f "${inst_tmp}" "${lch_tmp}"
