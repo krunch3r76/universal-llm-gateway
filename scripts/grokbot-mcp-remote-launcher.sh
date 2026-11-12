@@ -48,33 +48,26 @@ if [[ -n "${GROKBOT_MCP_REMOTE_VERSION:-}" && "${GROKBOT_MCP_REMOTE_VERSION}" !=
   exit 2
 fi
 
-MCP_REMOTE_CANDIDATES=(
-  "${HOME}/.local/share/ulg-mcp-remote/${MCP_REMOTE_PIN}/node_modules/.bin/mcp-remote"
-  "${HOME}/.local/bin/mcp-remote"
-)
+INSTALL_ROOT="${HOME}/.local/share/ulg-mcp-remote/${MCP_REMOTE_PIN}"
+MCP_BIN="${INSTALL_ROOT}/node_modules/.bin/mcp-remote"
+PKG_JSON="${INSTALL_ROOT}/node_modules/mcp-remote/package.json"
 
 _mcp_remote_version_ok() {
-  local bin="$1"
-  local pkg_root
-  pkg_root="$(cd "$(dirname "${bin}")/.." && pwd)"
-  if [[ -f "${pkg_root}/package.json" ]]; then
-    local ver
-    ver="$(grep -E '"version"[[:space:]]*:' "${pkg_root}/package.json" | head -1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
-    [[ "${ver}" == "${MCP_REMOTE_PIN}" ]]
-    return
+  if [[ ! -x "${MCP_BIN}" || ! -f "${PKG_JSON}" ]]; then
+    return 1
   fi
-  return 1
+  local ver=""
+  if command -v node >/dev/null 2>&1; then
+    ver="$(NODE_OPTIONS='' node -p "require('${PKG_JSON}').version" 2>/dev/null || true)"
+  fi
+  if [[ -z "${ver}" ]]; then
+    ver="$(grep -E '"version"[[:space:]]*:' "${PKG_JSON}" | head -1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+  fi
+  # (node parse runs with empty NODE_OPTIONS so proxyshim preload cannot break the pin check)
+  [[ -n "${ver}" && "${ver}" == "${MCP_REMOTE_PIN}" ]]
 }
 
-MCP_BIN=""
-for cand in "${MCP_REMOTE_CANDIDATES[@]}"; do
-  if [[ -x "${cand}" ]] && _mcp_remote_version_ok "${cand}"; then
-    MCP_BIN="${cand}"
-    break
-  fi
-done
-
-if [[ -z "${MCP_BIN}" ]]; then
+if ! _mcp_remote_version_ok; then
   echo "grokbot-mcp-remote-launcher: mcp-remote @${MCP_REMOTE_PIN} not installed or wrong version in box" >&2
   echo "Install: grokbot-box-mcp-install.sh (no npx over proxy)." >&2
   exit 2

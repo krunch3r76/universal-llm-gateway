@@ -6,6 +6,7 @@ from grokbot_box_mcp.connectors import (
 )
 from grokbot_box_mcp.headers import (
     BOX_HEADER_CANDIDATES,
+    HostHeaderRefusedError,
     box_launcher_path,
     host_primary_header_path,
     resolve_box_header_path,
@@ -16,6 +17,7 @@ from grokbot_box_mcp.window_units import GrokWindowProfile, load_window_profile
 
 __all__ = [
     "BOX_HEADER_CANDIDATES",
+    "HostHeaderRefusedError",
     "GrokWindowProfile",
     "box_launcher_path",
     "connector_launcher_invocation",

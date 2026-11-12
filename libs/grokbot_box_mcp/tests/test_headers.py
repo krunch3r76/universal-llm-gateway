@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from grokbot_box_mcp.headers import (
     BOX_HEADER_CANDIDATES,
+    HostHeaderRefusedError,
     format_header_file_body,
     host_primary_header_path,
     resolve_box_header_path,
@@ -63,3 +64,36 @@ def test_write_host_header_seed_mode_and_body(
     assert path == host_primary_header_path(udd, home=home)
     assert path.read_text(encoding="utf-8") == format_header_file_body("tok-abc")
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@pytest.mark.offline
+def test_write_host_header_refuses_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    udd = home / ".gateway" / "grok-io-gc2"
+    gateway = home / ".gateway" / "vortex-mcp-headers"
+    gateway.parent.mkdir(parents=True)
+    gateway.write_text(format_header_file_body("existing-token"), encoding="utf-8")
+    with pytest.raises(HostHeaderRefusedError):
+        write_host_header_seed(udd, "new-token", home=home, sand_fallback=False)
+    assert gateway.read_text(encoding="utf-8") == format_header_file_body("existing-token")
+
+
+@pytest.mark.offline
+def test_write_host_header_force_creates_bak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    udd = home / ".gateway" / "grok-io-gc2"
+    gateway = home / ".gateway" / "vortex-mcp-headers"
+    gateway.parent.mkdir(parents=True)
+    gateway.write_text(format_header_file_body("old"), encoding="utf-8")
+    write_host_header_seed(udd, "new", home=home, sand_fallback=False, force=True)
+    bak = gateway.with_name(gateway.name + ".bak")
+    assert bak.is_file()
+    assert gateway.read_text(encoding="utf-8") == format_header_file_body("new")

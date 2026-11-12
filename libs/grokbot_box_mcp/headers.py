@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import os
+import shutil
 from collections.abc import Callable
 from pathlib import Path
+
+
+class HostHeaderRefusedError(RuntimeError):
+    """Host header path exists with different content and force was not set."""
 
 # Proven on gc1 healthy sand: box opens /home/box/.gateway/vortex-mcp-headers first.
 BOX_HEADER_CANDIDATES: tuple[str, ...] = (
@@ -79,10 +84,36 @@ def write_secure_text(path: Path, body: str, *, mode: int = 0o600) -> Path:
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
     fd = os.open(path, flags, mode)
     try:
-        os.write(fd, body.encode("utf-8"))
+        data = body.encode("utf-8")
+        os.write(fd, data)
+        os.fchmod(fd, mode)
     finally:
         os.close(fd)
     return path
+
+
+def _write_header_guarded(
+    path: Path,
+    body: str,
+    *,
+    mode: int = 0o600,
+    force: bool = False,
+) -> tuple[Path, bool]:
+    """Write header at ``path`` if absent or identical; refuse overwrite unless ``force``."""
+    encoded = body.encode("utf-8")
+    if path.is_file():
+        existing = path.read_bytes()
+        if existing == encoded:
+            return path, False
+        if not force:
+            raise HostHeaderRefusedError(
+                f"refusing to overwrite existing host header at {path} "
+                "(not byte-identical; pass force=True or --force)"
+            )
+        bak = path.with_name(path.name + ".bak")
+        shutil.copy2(path, bak)
+    write_secure_text(path, body, mode=mode)
+    return path, True
 
 
 def write_host_header_seed(
@@ -92,14 +123,16 @@ def write_host_header_seed(
     home: Path | None = None,
     mode: int = 0o600,
     sand_fallback: bool = True,
+    force: bool = False,
 ) -> Path:
     """Write header to host ``~/.gateway``; optional sand-data copy as fallback."""
     home = home or Path.home()
     primary = host_primary_header_path(user_data_dir, home=home)
-    write_secure_text(primary, format_header_file_body(token), mode=mode)
+    body = format_header_file_body(token)
+    _write_header_guarded(primary, body, mode=mode, force=force)
     if sand_fallback:
         sand = host_sand_header_path(user_data_dir)
-        write_secure_text(sand, format_header_file_body(token), mode=mode)
+        _write_header_guarded(sand, body, mode=mode, force=force)
     return primary
 
 

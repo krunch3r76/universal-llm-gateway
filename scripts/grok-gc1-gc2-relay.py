@@ -32,7 +32,7 @@ from io_agent_grok_window import provision_browser_for_profile, systemd_grok_bun
 _SYSTEMD_USER_DIR = Path.home() / ".config/systemd/user"
 
 
-def _provision_gc2(*, start: bool, seed_mcp: bool = True) -> dict[str, object]:
+def _provision_gc2(*, start: bool, seed_mcp: bool = False) -> dict[str, object]:
     _SYSTEMD_USER_DIR.mkdir(parents=True, exist_ok=True)
     profile = load_window_profile("gc2")
     profile.user_data_dir.mkdir(parents=True, exist_ok=True)
@@ -41,7 +41,7 @@ def _provision_gc2(*, start: bool, seed_mcp: bool = True) -> dict[str, object]:
     mcp: dict[str, object] | None = None
     if seed_mcp:
         try:
-            mcp = provision_box_mcp_artifacts(profile)
+            mcp = provision_box_mcp_artifacts(profile, skip_header=True)
         except (RuntimeError, FileNotFoundError) as exc:
             mcp = {"ok": False, "error": str(exc)}
     written: list[str] = []
@@ -79,9 +79,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Enable and start the systemd user units immediately",
     )
     prov.add_argument(
-        "--no-seed-mcp",
+        "--seed-mcp",
         action="store_true",
-        help="Skip sand-data MCP launcher/header seed (token or launcher-only failures)",
+        help="Install host sand-data launcher/install scripts only (no host header seed)",
     )
 
     rd = sub.add_parser(
@@ -152,7 +152,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _build_parser().parse_args()
     if args.cmd == "provision-gc2":
-        out = _provision_gc2(start=bool(args.start), seed_mcp=not args.no_seed_mcp)
+        out = _provision_gc2(start=bool(args.start), seed_mcp=bool(args.seed_mcp))
         print(json.dumps(out, indent=2))
         return 0
     if args.cmd == "read":

@@ -46,7 +46,10 @@ def _cmd_mcp(args: argparse.Namespace) -> dict[str, object]:
     profile = load_window_profile(args.slot)
     if args.skip_header:
         return provision_box_mcp_artifacts(profile, skip_header=True)
-    return provision_window_mcp(args.slot)
+    return provision_box_mcp_artifacts(
+        profile,
+        force_header=bool(args.force),
+    )
 
 
 def _cmd_units(args: argparse.Namespace) -> dict[str, object]:
@@ -64,6 +67,9 @@ def _cmd_units(args: argparse.Namespace) -> dict[str, object]:
         _SYSTEMD_USER.mkdir(parents=True, exist_ok=True)
         for name, body in units.items():
             path = _SYSTEMD_USER / name
+            if path.is_file() and path.read_text(encoding="utf-8") != body:
+                bak = path.with_suffix(path.suffix + ".bak")
+                bak.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
             path.write_text(body, encoding="utf-8")
             written.append(str(path))
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
@@ -92,6 +98,11 @@ def main() -> int:
     mcp.add_argument("--slot", required=True, choices=["gc1", "gc2", "9", "10"])
     mcp.add_argument(
         "--skip-header", action="store_true", help="Launcher only (token missing)"
+    )
+    mcp.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite host ~/.gateway/vortex-mcp-headers when content differs",
     )
 
     units = sub.add_parser(

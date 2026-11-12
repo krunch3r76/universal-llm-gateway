@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -89,3 +90,45 @@ def test_launcher_rejects_version_override(tmp_path: Path) -> None:
     )
     assert proc.returncode == 2
     assert "GROKBOT_MCP_REMOTE_VERSION" in proc.stderr
+
+
+@pytest.mark.offline
+def test_launcher_happy_path_stub_mcp_remote(tmp_path: Path) -> None:
+    pin_root = tmp_path / ".local" / "share" / "ulg-mcp-remote" / "0.8.6"
+    pkg_dir = pin_root / "node_modules" / "mcp-remote"
+    pkg_dir.mkdir(parents=True)
+    (pkg_dir / "package.json").write_text(
+        '{"name":"mcp-remote","version":"0.8.6"}', encoding="utf-8"
+    )
+    bin_dir = pin_root / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    stub = bin_dir / "mcp-remote"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "NODE_OPTIONS=${NODE_OPTIONS}"\n'
+        'printf "%s\\n" "$@"\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+
+    fake_root = tmp_path / "boxroot"
+    header = fake_root / ".gateway" / "vortex-mcp-headers"
+    header.parent.mkdir(parents=True)
+    bearer = "x" * 24
+    header.write_text(f"Authorization: Bearer {bearer}\n", encoding="utf-8")
+
+    launcher = _hermetic_launcher(tmp_path)
+    env = {"HOME": str(tmp_path), "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    proc = subprocess.run(
+        ["bash", str(launcher), "https://mcp.k-1.me/mcp/code/"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "--transport" in proc.stdout
+    assert "http-only" in proc.stdout
+    assert "--header-file" in proc.stdout
+    assert str(header) in proc.stdout
+    assert "--require /home/box/.proxyshim/preload.cjs" in proc.stdout

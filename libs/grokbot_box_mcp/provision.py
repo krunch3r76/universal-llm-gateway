@@ -33,6 +33,7 @@ def provision_box_mcp_artifacts(
     *,
     token: str | None = None,
     skip_header: bool = False,
+    force_header: bool = False,
     home: Path | None = None,
 ) -> dict[str, object]:
     """Host: seed ~/.gateway header (box-proven path) + sand-data launcher fallback."""
@@ -55,7 +56,9 @@ def provision_box_mcp_artifacts(
             token, token_source = resolve_mcp_token_for_provision()
         else:
             token_source = "arg:token"
-        header = write_host_header_seed(profile.user_data_dir, token, home=home)
+        header = write_host_header_seed(
+            profile.user_data_dir, token, home=home, force=force_header
+        )
         header_path = str(header)
         sand_header = str(host_sand_header_path(profile.user_data_dir))
 
@@ -74,8 +77,13 @@ def provision_box_mcp_artifacts(
         "token_source": token_source if header_path else "",
         "connectors": meta,
         "host_step_note": (
-            "Write ~/.gateway/vortex-mcp-headers on io (maps to /home/box/.gateway/...); "
-            "in-box: sand-data/bin/grokbot-box-mcp-install.sh --header-stdin"
+            "inferred: host ~/.gateway is copied at box provision only; not live-mapped "
+            "(observed findmnt). Box-side: paste scripts/grokbot-box-mcp-install.sh --print "
+            "into the Grok Bot Shell, then --prompt or pipe --header-stdin; do not rely on "
+            "host sand-data/bin sync."
+        ),
+        "box_install_paste_hint": (
+            "bash -s < <(curl …) or paste output of: grokbot-box-mcp-install.sh --print"
         ),
     }
 
