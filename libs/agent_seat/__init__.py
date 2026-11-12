@@ -22,7 +22,7 @@ Public surface (stable):
 ``NativeLoopResult`` / ``NativeToolCall`` — dataclasses
 ``NATIVE_PATHS``            — provider → native endpoint path map
 
-``execute_tool(name, args)`` — async dispatcher for local tools + live MCP tools
+``execute_tool(name, args)`` — async dispatcher for in-process tools only (C2)
 ``get_mcp_tool_definitions()`` — in-process client tool defs (no MCP HTTP dial)
 ``resolve_tool_definitions(names)`` — resolve in-process registry tool names
 """

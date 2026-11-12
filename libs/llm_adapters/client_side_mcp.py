@@ -10,9 +10,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_seat.tools import IN_PROCESS_CLIENT_TOOL_NAMES
-
 from llm_adapters.core import FrontierRequest
+
+# In-process client tool loop — no MCP HTTP dial (C2). Canonical list lives here
+# so ``llm_adapters`` does not import ``agent_seat`` (import-graph hygiene).
+IN_PROCESS_CLIENT_TOOL_NAMES: frozenset[str] = frozenset({"cortex", "agent_bus"})
+
+# Harvest nominates loaders that import this module (file-grain; package CONSUMERS
+# on ``llm_adapters/__init__.py`` covers the rest).
+CONSUMERS: tuple[str, ...] = ("cloud_proxy", "gateway", "mcp", "stargate")
 
 _MCP_HTTP_REFUSAL_MESSAGE = (
     "Client-side mcp_tool_loop cannot include MCP-server tools without "

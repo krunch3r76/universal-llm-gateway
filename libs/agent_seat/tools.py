@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from llm_adapters.client_side_mcp import IN_PROCESS_CLIENT_TOOL_NAMES
+
 
 def _fn(
     name: str,
@@ -235,10 +237,6 @@ TEAM_TOOL_DEFINITIONS: list[dict[str, Any]] = [
 # is the superset — do NOT concatenate TOOL_DEFINITIONS (duplicate cortex).
 STATIC_TOOL_FALLBACK: list[dict[str, Any]] = TEAM_TOOL_DEFINITIONS
 
-# Client-side Stargate loop — no MCP HTTP (C2).
-IN_PROCESS_CLIENT_TOOL_NAMES: frozenset[str] = frozenset({"cortex", "agent_bus"})
-
-
 def in_process_client_tool_definitions() -> list[dict[str, Any]]:
     """OpenAI-shaped tool defs Stargate may attach without HTTP-dialing MCP."""
     return list(STATIC_TOOL_FALLBACK)
@@ -257,13 +255,6 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         "definition": _AGENT_BUS_TOOL_DEFINITION,
         "executor": "agent_bus_dispatch",
     },
-    # Safe alias — executor remaps to MCP "web_search" (see executor.py).
-    # ¬use "web_search" directly in frontier dispatches: collides with
-    # Claude's and Gemini's native search tool name.
-    "brave_search": {
-        "definition": BRAVE_SEARCH_TOOL_DEFINITION,
-        "executor": "brave_search",
-    },
 }
 
 
@@ -279,6 +270,9 @@ def resolve_tools(
     executors: list[str] = []
     unknown: list[str] = []
     for name in names:
+        if name not in IN_PROCESS_CLIENT_TOOL_NAMES:
+            unknown.append(name)
+            continue
         entry = TOOL_REGISTRY.get(name)
         if entry is None:
             unknown.append(name)
