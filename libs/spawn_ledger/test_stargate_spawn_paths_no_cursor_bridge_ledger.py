@@ -63,6 +63,27 @@ def _importlib_string_literals(tree: ast.AST) -> list[str]:
     return literals
 
 
+def _dunder_import_string_literals(tree: ast.AST) -> list[str]:
+    literals: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        is_dunder = isinstance(func, ast.Name) and func.id == "__import__"
+        is_importlib = (
+            isinstance(func, ast.Attribute)
+            and func.attr == "__import__"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "importlib"
+        )
+        if not (is_dunder or is_importlib):
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            literals.append(first.value)
+    return literals
+
+
 def _ledger_hits_in_tree(rel: Path, tree: ast.AST) -> list[str]:
     hits: list[str] = []
     rel_s = str(rel)
@@ -91,6 +112,11 @@ def _ledger_hits_in_tree(rel: Path, tree: ast.AST) -> list[str]:
             lit.startswith("cursor_bridge") and "spawn_endpoint_house_ledger" in lit
         ):
             hits.append(f"{rel_s}:importlib {lit}")
+    for lit in _dunder_import_string_literals(tree):
+        if lit == _CURSOR_BRIDGE_LEDGER_MODULE or (
+            lit.startswith("cursor_bridge") and "spawn_endpoint_house_ledger" in lit
+        ):
+            hits.append(f"{rel_s}:__import__ {lit}")
     return hits
 
 
@@ -130,3 +156,21 @@ def test_stargate_spawn_ledger_paths_import_spawn_ledger(rel_path: str) -> None:
     text = path.read_text(encoding="utf-8")
     assert _ledger_hits_in_file(path) == [], rel_path
     assert "spawn_ledger" in text, rel_path
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "__import__('cursor_bridge.spawn_endpoint_house_ledger')\n",
+        "import importlib\nimportlib.__import__('cursor_bridge.spawn_endpoint_house_ledger')\n",
+    ],
+    ids=["bare_dunder_import", "importlib_dunder_import"],
+)
+def test_guard_fixture_catches_dynamic_cursor_bridge_ledger_import(
+    snippet: str,
+) -> None:
+    tree = ast.parse(snippet, filename="fixture_dynamic_import.py")
+    hits = _ledger_hits_in_tree(Path("fixture_dynamic_import.py"), tree)
+    assert hits, snippet
+    assert any("spawn_endpoint_house_ledger" in h for h in hits)

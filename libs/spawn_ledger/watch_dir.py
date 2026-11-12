@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+
+from ulg_paths.repo_root import ulg_repo_root
 
 
 def repo_root() -> Path:
-    """ULG checkout root — honors container ``PROJECT_ROOT=/data/project`` mounts."""
-    project_root = Path(os.environ.get("PROJECT_ROOT", "")).expanduser()
-    if project_root.is_dir():
-        if (project_root / "libs" / "spawn_ledger").is_dir():
-            return project_root
-        nested = project_root / "universal-llm-gateway"
-        if nested.is_dir() and (nested / "libs" / "spawn_ledger").is_dir():
-            return nested
-    return Path(__file__).resolve().parents[2]
+    """ULG checkout root — same authority as ``bus_watch.fable_lock`` (see ``ulg_paths``)."""
+    return ulg_repo_root(libs_anchor=Path(__file__))
 
 
 WATCH_DIR = repo_root() / "tmp" / "watchers"
