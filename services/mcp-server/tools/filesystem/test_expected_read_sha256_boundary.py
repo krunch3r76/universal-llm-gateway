@@ -489,6 +489,34 @@ def test_bare_key_after_lane_style_path() -> None:
         expected={"notes/doc.md": "a" * 64},
         path="universal-llm-gateway/notes/doc.md",
         sandbox="workspaces",
+        workspaces_target_repo="universal-llm-gateway",
     )
     assert err is None
     assert digest == "a" * 64
+
+
+def test_repo_qualified_path_keys_without_bound_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools.filesystem import _expected_read_sha256_boundary as boundary_mod
+
+    monkeypatch.setattr(
+        boundary_mod,
+        "_known_workspaces_repo_names",
+        lambda: {"universal-llm-gateway"},
+    )
+    path = "universal-llm-gateway/notes/doc.md"
+    digest = "a" * 64
+    for key in (
+        "notes/doc.md",
+        "universal-llm-gateway/notes/doc.md",
+        "workspaces://universal-llm-gateway/notes/doc.md",
+    ):
+        resolved, err = coerce_expected_read_sha256_at_fs_boundary(
+            op="read",
+            expected={key: digest},
+            path=path,
+            sandbox="workspaces",
+        )
+        assert err is None, (key, err)
+        assert resolved == digest
