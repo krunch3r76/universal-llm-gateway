@@ -1,6 +1,6 @@
 """Package re-exports for async-dispatch tracker and frontier-dispatch event factories.
 
-Re-exports all 27 @event_factory symbols so callers using
+Re-exports all 29 @event_factory symbols so callers using
 ``from ..events.dispatch import X`` or
 ``from systems.pipeline.core.events.dispatch import X``
 require no import-path changes after the package-shadow split.
@@ -44,6 +44,7 @@ from .frontier_lifecycle import (
     PipelineFrontierDispatchStarted,
 )
 from .frontier_mcp import (
+    PipelineFrontierDispatchClientMcpRegistryBound,
     PipelineFrontierDispatchRemoteMcpEnabled,
     PipelineFrontierDispatchRemoteMcpMisconfigured,
 )
@@ -89,6 +90,7 @@ __all__ = [
     # Frontier remote MCP
     "PipelineFrontierDispatchRemoteMcpEnabled",
     "PipelineFrontierDispatchRemoteMcpMisconfigured",
+    "PipelineFrontierDispatchClientMcpRegistryBound",
     # Frontier anomaly
     "PipelineFrontierDispatchOutputShort",
     "PipelineFrontierDispatchTerminationShadow",

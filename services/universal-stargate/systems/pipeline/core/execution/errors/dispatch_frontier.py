@@ -153,6 +153,34 @@ class EmptyCompletionError(PipelineError):
 
 
 @dataclass
+class ClientSideMcpHttpRefusedError(PipelineError):
+    """Raised when ``mcp_tool_loop=True`` would execute MCP-server tools via HTTP.
+
+    Stargate never HTTP-dials MCP on the client-side loop (browser-resource C2).
+    Offending tools must use ``remote_mcp`` (provider connector) or be removed.
+    """
+
+    model: str
+    provider: str
+    offending_tools: list[str]
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
+
+    def to_dict(self) -> dict:
+        return {
+            "error_type": "ClientSideMcpHttpRefusedError",
+            "code": "client_side_mcp_http_refused",
+            "retryable": self.retryable,
+            "model": self.model,
+            "provider": self.provider,
+            "offending_tools": self.offending_tools,
+            "message": self.message,
+        }
+
+
+@dataclass
 class CapabilityKnobRejectedError(PipelineError):
     """Raised at the ``gen_params`` boundary when ``resolve_dispatch`` rejects a knob.
 
