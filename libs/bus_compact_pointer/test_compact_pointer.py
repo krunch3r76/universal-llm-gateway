@@ -141,21 +141,23 @@ def test_c4_section_tail_recount_after_truncation() -> None:
     big = "\n".join(f"## section {i}\n\ncontent\n" for i in range(80))
     rows, hidden = build_section_map(big, max_rows=12)
     assert hidden == 68
+    pad = "x" * 400
     body = compact_pointer_body(
         verdict="PARTIAL",
         sidecar_uri="cortex://notes/x.md",
         sidecar_sha256="d" * 64,
         section_map=rows,
-        context_lines=[],
+        context_lines=[pad, pad, pad],
         section_tail="+68 more (md_list notes/x.md)",
         section_map_source_rows=len(rows) + hidden,
-        max_chars=600,
+        max_chars=320,
     )
-    assert len(body) <= 600
+    assert len(body) <= 320
     section_rows = [ln for ln in body.splitlines() if ln.startswith("| section ")]
+    assert len(section_rows) < len(rows)
     dropped = 68 + len(rows) - len(section_rows)
-    if dropped > 0 and section_rows:
-        assert f"+{dropped} more" in body
+    assert dropped > 0
+    assert f"+{dropped} more" in body
 
 
 def test_c8_extract_verdict_line_allows_leading_whitespace() -> None:

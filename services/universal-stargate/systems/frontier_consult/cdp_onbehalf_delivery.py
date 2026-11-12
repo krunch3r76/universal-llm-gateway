@@ -165,10 +165,21 @@ async def write_cdp_harvest_sidecar(
             sidecar_result.get("error"),
         )
         return None
+    sha = sidecar_result.get("sha256")
+    uri = sidecar_result.get("uri")
+    body_chars = sidecar_result.get("body_chars")
+    if not sha or not uri or body_chars is None:
+        logger.error(
+            "CDP on-behalf sidecar write incomplete: execution_id=%s thread=%s keys=%s",
+            result.execution_id,
+            thread_id,
+            sorted(sidecar_result.keys()),
+        )
+        return None
     return SidecarResult(
-        uri=sidecar_result["uri"],
-        sha256=sidecar_result["sha256"],
-        body_chars=sidecar_result["body_chars"],
+        uri=str(uri),
+        sha256=str(sha),
+        body_chars=int(body_chars),
     )
 
 
@@ -210,7 +221,7 @@ async def build_cdp_success_delivery_body(
         if result.archive_uri and result.content_proof_sha256:
             sidecar_uri = result.archive_uri
             sidecar_sha = result.content_proof_sha256
-            map_source = ""
+            map_source = store_content
         else:
             sidecar = await write_cdp_harvest_sidecar(
                 result=result,
@@ -335,7 +346,8 @@ async def deliver_cdp_result_turn(
     else:
         body = format_cdp_result_body(result)
 
-    allow_long = body_mode == "inline" and len(body) > 1500
+    compact_pointer = "sidecar_ref:" in body
+    allow_long = not compact_pointer and len(body) > 1500
     post_extra = {"allow_long_body": True} if allow_long else {}
     last_outcome = await post_cdp_turn(
         thread_id=thread_id,

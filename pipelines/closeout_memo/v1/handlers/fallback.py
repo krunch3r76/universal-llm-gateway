@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any, override
 
-from closeout_memo.bus_pointer import compact_overflow_bus_body
 from closeout_memo.events import emit_closeout_memo
 from closeout_memo.models import CloseoutMemoRequest
 from systems.pipeline.core.handlers.builtin import BaseHandler
@@ -58,17 +57,16 @@ class CloseoutMemoFallbackHandler(BaseHandler):
                 memo_model = CloseoutMemoRequest.model_validate(
                     json.loads(row["payload_json"])
                 )
-        body = (
-            compact_overflow_bus_body(
+        posted = (
+            await _transport.post_overflow_pointer(
+                wake_lane=wake_lane,
+                subject=subject,
                 memo=memo_model,
-                overflow_markdown=raw,
+                overflow=raw,
                 coalesced_count=len(memo_ids),
             )
-            if memo_model and raw
-            else raw
-        )
-        posted = await _transport.post_bus_turn(
-            wake_lane=wake_lane, subject=subject, body=body
+            if raw.strip()
+            else False
         )
         # Phone page retired: undelivered memos are interagent (bus → wake
         # lane). harvest_no_target / untracked Maestro tab is a separate

@@ -12,6 +12,8 @@ from closeout_memo.models import CloseoutMemoRequest
 
 pytestmark = pytest.mark.offline
 
+_SPILL = "cortex://notes/system/threads/23222-overflow.md"
+
 
 def _memo() -> CloseoutMemoRequest:
     return CloseoutMemoRequest(
@@ -30,17 +32,21 @@ def _memo() -> CloseoutMemoRequest:
 
 def test_compact_overflow_bus_body_section_map() -> None:
     overflow = "## summary\n\nDone.\n## tests\n\npytest ok\n"
-    body = compact_overflow_bus_body(memo=_memo(), overflow_markdown=overflow)
+    body = compact_overflow_bus_body(
+        memo=_memo(), overflow_markdown=overflow, spill_uri=_SPILL
+    )
     assert len(body) <= 2000
     assert "sha256:" in body
-    assert "agent-bus:23222#closeout-overflow" in body
+    assert _SPILL in body
     assert "cortex://notes/closeout/h.md" not in body
     assert "## sections" in body
 
 
 def test_compact_overflow_sha256_matches_overflow_without_sidecar_load() -> None:
     overflow = "<closeout_memo v=\"1\">\nlane: x\n</closeout_memo>\n"
-    body = compact_overflow_bus_body(memo=_memo(), overflow_markdown=overflow)
+    body = compact_overflow_bus_body(
+        memo=_memo(), overflow_markdown=overflow, spill_uri=_SPILL
+    )
     digest = hashlib.sha256(overflow.encode("utf-8")).hexdigest()
     match = re.search(r"sha256: `([0-9a-f]{64})`", body)
     assert match is not None
@@ -53,18 +59,21 @@ def test_c6_coalesced_multi_memo_sha_matches_overflow_ref() -> None:
         memo=_memo(),
         overflow_markdown=overflow,
         coalesced_count=3,
+        spill_uri=_SPILL,
     )
     digest = hashlib.sha256(overflow.encode("utf-8")).hexdigest()
     match = re.search(r"sha256: `([0-9a-f]{64})`", body)
     assert match is not None
     assert match.group(1) == digest
     assert "cortex://notes/closeout/h.md" not in body
-    assert "agent-bus:23222#closeout-overflow" in body
+    assert _SPILL in body
 
 
 def test_w1_no_cortex_cite_without_sidecar_markdown() -> None:
     overflow = "overflow-only"
-    body = compact_overflow_bus_body(memo=_memo(), overflow_markdown=overflow)
+    body = compact_overflow_bus_body(
+        memo=_memo(), overflow_markdown=overflow, spill_uri=_SPILL
+    )
     assert "cortex://notes/closeout/h.md" not in body
     digest = hashlib.sha256(overflow.encode("utf-8")).hexdigest()
     match = re.search(r"sha256: `([0-9a-f]{64})`", body)
