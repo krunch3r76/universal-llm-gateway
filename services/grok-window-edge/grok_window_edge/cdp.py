@@ -34,6 +34,15 @@ def assert_cdp_origin_allowed(origin: str) -> None:
         CdpPortRefusedError: when the URL port is missing, hard-denied, or not
             allowlisted.
     """
+    from cursor_bridge.cdp_pages import (
+        CdpWebSocketRefusedError,
+        assert_loopback_cdp_http_origin,
+    )
+
+    try:
+        assert_loopback_cdp_http_origin(origin)
+    except CdpWebSocketRefusedError as exc:
+        raise CdpPortRefusedError(str(exc)) from exc
     parsed = urlparse(origin.strip())
     port = parsed.port
     if port is None:

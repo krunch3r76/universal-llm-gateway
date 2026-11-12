@@ -45,11 +45,19 @@ def _apply_edge_finish(op: str, envelope: dict[str, Any]) -> dict[str, Any]:
         return finish_wake_tab(envelope)
     if op == "rename_tab":
         from cursor_bridge.bridge_glass_relay import finish_rename_tab
+        from cursor_bridge.tab_ready_rehandshake import tab_ready_instruction
 
         thread = envelope.get("thread")
-        if thread is None and isinstance(envelope.get("args"), dict):
-            thread = envelope["args"].get("thread")
-        return finish_rename_tab(envelope, thread=str(thread) if thread else None)
+        args = envelope.get("args") if isinstance(envelope.get("args"), dict) else {}
+        if thread is None and isinstance(args, dict):
+            thread = args.get("thread")
+        finished = finish_rename_tab(envelope, thread=str(thread) if thread else None)
+        # Legacy relay_rename_tab uses the requested title, not CDP echo (line 210).
+        if finished.get("ok"):
+            requested = str(args.get("title") or "").strip()
+            if requested:
+                finished["tab_ready_instruction"] = tab_ready_instruction(requested)
+        return finished
     return envelope
 
 

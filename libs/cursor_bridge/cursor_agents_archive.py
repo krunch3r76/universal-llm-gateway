@@ -195,7 +195,21 @@ def _cursor_agents_ws_url(
     page = _hop.pick_chat_page(pages, surface="cursor")
     if page is None:
         return None, {"ok": False, "reason": "no_page", "pages": len(pages)}
-    return page["web_socket_debugger_url"], None
+    ws_url = page["web_socket_debugger_url"]
+    from cursor_bridge.cdp_pages import (
+        CdpWebSocketRefusedError,
+        assert_web_socket_debugger_url_allowed,
+    )
+
+    try:
+        assert_web_socket_debugger_url_allowed(ws_url, http_origin=debug_url)
+    except CdpWebSocketRefusedError as exc:
+        return None, {
+            "ok": False,
+            "reason": "cdp_port_refused",
+            "detail": str(exc),
+        }
+    return ws_url, None
 
 
 def archive_cursor_agents_tab(

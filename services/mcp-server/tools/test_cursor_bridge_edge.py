@@ -107,6 +107,26 @@ def test_shim_does_not_import_systems() -> None:
     assert "from systems" not in text
 
 
+def test_finish_rename_tab_uses_requested_title_not_cdp_echo() -> None:
+    from cursor_bridge.tab_ready_rehandshake import tab_ready_instruction
+
+    envelope = {
+        "ok": True,
+        "op": "rename_tab",
+        "agent_id": "aid",
+        "new_title": "cdp-echo-title",
+        "args": {"title": "operator-requested-title", "gui_host": ":8"},
+    }
+    with patch(
+        "cursor_bridge.bridge_glass_relay.finish_rename_tab",
+        return_value=dict(envelope),
+    ):
+        out = _cursor_bridge_edge._apply_edge_finish("rename_tab", envelope)
+    assert out["tab_ready_instruction"] == tab_ready_instruction(
+        "operator-requested-title"
+    )
+
+
 def test_flag_on_wake_uses_admit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EDGE_OPS_ENABLED", "true")
     monkeypatch.setenv("EDGE_GLASS_WAKE_RENAME_ENABLED", "true")

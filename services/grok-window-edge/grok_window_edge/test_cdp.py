@@ -7,6 +7,7 @@ import pytest
 from grok_window_edge import cdp
 from grok_window_edge.cdp import (
     CdpPortRefusedError,
+    assert_cdp_origin_allowed,
     assert_display_allowed,
     assert_profile_dir_allowed,
     cdp_endpoint,
@@ -17,6 +18,11 @@ from grok_window_edge.config import CDP_PORT_ALLOWLIST, DENIED_PORTS
 def test_a_9341_dial_raises() -> None:
     with pytest.raises(CdpPortRefusedError):
         cdp_endpoint(9341)
+
+
+def test_non_loopback_http_origin_refused() -> None:
+    with pytest.raises(CdpPortRefusedError, match="not loopback"):
+        assert_cdp_origin_allowed("http://192.168.0.3:9339")
 
 
 @pytest.mark.parametrize("port", [9339, 9340])

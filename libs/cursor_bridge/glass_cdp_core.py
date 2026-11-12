@@ -105,6 +105,25 @@ def wake_tab_cdp(
             "paste_attempted": False,
         }
     ws_url = page["web_socket_debugger_url"]
+    from cursor_bridge.cdp_pages import (
+        CdpWebSocketRefusedError,
+        assert_web_socket_debugger_url_allowed,
+    )
+
+    try:
+        assert_web_socket_debugger_url_allowed(
+            ws_url, http_origin=str(target["origin"])
+        )
+    except CdpWebSocketRefusedError as exc:
+        return {
+            "ok": False,
+            "error": "cdp_port_refused",
+            "detail": str(exc),
+            "op": "wake_tab",
+            "gui_host": gui_host,
+            "agent_id": aid,
+            "paste_attempted": False,
+        }
     try:
         paste_res = asyncio.run(_paste_cursor_services(ws_url, body, agent_id=aid))
     except (TimeoutError, RuntimeError, OSError) as exc:
