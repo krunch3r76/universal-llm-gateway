@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from grokbot_box_mcp.headers import (
+    HTTPS_PROXY_BOX,
     MCP_REMOTE_PINNED_VERSION,
+    PROXYSHIM_NODE_REQUIRE,
     box_launcher_path,
-    mcp_remote_env_defaults,
 )
 
 CODE_MCP_URL = "https://mcp.k-1.me/mcp/code/"
@@ -25,12 +26,11 @@ def default_connector_command(surface: str = "code") -> str:
 
 def connector_metadata() -> dict[str, object]:
     """Provisioning summary for operators (no secrets)."""
-    env = mcp_remote_env_defaults()
     return {
         "mcp_remote_version": MCP_REMOTE_PINNED_VERSION,
         "launcher_path_box": box_launcher_path(),
         "code_command": default_connector_command("code"),
         "life_command": default_connector_command("life"),
-        "https_proxy": env["HTTPS_PROXY"],
-        "node_options": env["NODE_OPTIONS"],
+        "https_proxy": HTTPS_PROXY_BOX,
+        "node_options": PROXYSHIM_NODE_REQUIRE,
     }

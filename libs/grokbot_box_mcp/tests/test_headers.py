@@ -32,6 +32,19 @@ def test_resolve_prefers_first_existing_candidate() -> None:
 
 
 @pytest.mark.offline
+def test_primary_host_header_is_operator_gateway(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    udd = home / ".gateway" / "grok-io-gc2"
+    path = write_host_header_seed(udd, "tok", home=home, sand_fallback=False)
+    assert path == home / ".gateway" / "vortex-mcp-headers"
+    assert path.read_text(encoding="utf-8") == format_header_file_body("tok")
+
+
+@pytest.mark.offline
 def test_resolve_returns_none_with_full_audit_trail() -> None:
     chosen, checked = resolve_box_header_path(exists=lambda _p: False)
     assert chosen is None
@@ -39,9 +52,14 @@ def test_resolve_returns_none_with_full_audit_trail() -> None:
 
 
 @pytest.mark.offline
-def test_write_host_header_seed_mode_and_body(tmp_path: Path) -> None:
-    udd = tmp_path / "grok-io-gc2"
-    path = write_host_header_seed(udd, "tok-abc")
-    assert path == host_primary_header_path(udd)
+def test_write_host_header_seed_mode_and_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    udd = home / ".gateway" / "grok-io-gc2"
+    path = write_host_header_seed(udd, "tok-abc", home=home, sand_fallback=False)
+    assert path == host_primary_header_path(udd, home=home)
     assert path.read_text(encoding="utf-8") == format_header_file_body("tok-abc")
     assert stat.S_IMODE(path.stat().st_mode) == 0o600

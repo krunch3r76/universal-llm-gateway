@@ -32,7 +32,11 @@ class GrokWindowProfile:
 
     @property
     def grok_unit(self) -> str:
-        return "io-agent-grok.service" if self.slot == "gc1" else f"io-agent-grok-{self.slot}.service"
+        return (
+            "io-agent-grok.service"
+            if self.slot == "gc1"
+            else f"io-agent-grok-{self.slot}.service"
+        )
 
     @property
     def portal_unit(self) -> str | None:

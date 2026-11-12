@@ -11,16 +11,21 @@ from grokbot_box_mcp.window_units import load_window_profile
 
 
 @pytest.mark.offline
-def test_provision_installs_launcher_and_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_provision_installs_launcher_and_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     profile = load_window_profile("gc2", home=home)
     profile.user_data_dir.mkdir(parents=True)
-    out = provision_box_mcp_artifacts(profile, token="seed-token")
+    out = provision_box_mcp_artifacts(profile, token="seed-token", home=home)
     launcher = Path(out["launcher_host_path"])
     header = Path(out["header_host_path"])
     assert launcher.is_file()
     assert launcher.stat().st_mode & stat.S_IXUSR
     assert header.is_file()
+    assert header == home / ".gateway" / "vortex-mcp-headers"
     assert "Bearer seed-token" in header.read_text(encoding="utf-8")
+    sand = Path(out["header_host_sand_fallback"])
+    assert sand.is_file()

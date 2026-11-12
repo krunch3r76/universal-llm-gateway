@@ -7,12 +7,13 @@ from grokbot_box_mcp.connectors import (
     connector_launcher_invocation,
     default_connector_command,
 )
+from grokbot_box_mcp.headers import box_launcher_path
 
 
 @pytest.mark.offline
 def test_default_connector_uses_sand_data_launcher() -> None:
     cmd = default_connector_command("code")
-    assert cmd.startswith("/home/box/sand-data/bin/grokbot-mcp-remote-launcher.sh")
+    assert cmd.startswith(box_launcher_path())
     assert "mcp.k-1.me/mcp/code/" in cmd
 
 

@@ -513,7 +513,7 @@ def declared_services_for_lib(lib_name: str) -> tuple[str, ...]:
 
 
 UNSERVED_LIBS: frozenset[str] = frozenset(
-    {"foo", "box_isolated_chrome", "execution_conformance"}
+    {"foo", "box_isolated_chrome", "execution_conformance", "grokbot_box_mcp"}
 )
 """Top-level ``libs/`` names explicitly classified as needing no manage restart.
 

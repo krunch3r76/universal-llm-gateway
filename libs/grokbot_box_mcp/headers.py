@@ -6,31 +6,48 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
-# Order matches Grok sand path rewrite: sand-data mount is what mcp-remote opens.
+# Proven on gc1 healthy sand: box opens /home/box/.gateway/vortex-mcp-headers first.
 BOX_HEADER_CANDIDATES: tuple[str, ...] = (
-    "/home/box/sand-data/vortex-mcp-headers",
     "/home/box/.gateway/vortex-mcp-headers",
+    "/home/box/sand-data/vortex-mcp-headers",
     "/home/box/.vortex-mcp-headers",
 )
 
+BOX_GATEWAY_HEADER_NAME = "vortex-mcp-headers"
+
 BOX_LAUNCHER_BASENAME = "grokbot-mcp-remote-launcher.sh"
+BOX_LAUNCHER_BOX_PATH = f"/home/box/.local/bin/{BOX_LAUNCHER_BASENAME}"
 BOX_LAUNCHER_SAND_PATH = f"/home/box/sand-data/bin/{BOX_LAUNCHER_BASENAME}"
 
 MCP_REMOTE_PINNED_VERSION = "0.8.6"
+HTTPS_PROXY_BOX = "http://127.0.0.1:8791"
+PROXYSHIM_NODE_REQUIRE = "--require /home/box/.proxyshim/preload.cjs"
 
 
-def host_primary_header_path(user_data_dir: Path) -> Path:
-    """Host path that syncs to ``/home/box/sand-data/vortex-mcp-headers`` in the box."""
-    return user_data_dir / "sand-data" / "vortex-mcp-headers"
+def host_operator_gateway_header_path(home: Path | None = None) -> Path:
+    """Host path that maps to ``/home/box/.gateway/vortex-mcp-headers`` (gc1-proven)."""
+    home = home or Path.home()
+    return home / ".gateway" / BOX_GATEWAY_HEADER_NAME
+
+
+def host_sand_header_path(user_data_dir: Path) -> Path:
+    """Fallback host sand-data seed (not synced on all windows; gc2 observed miss)."""
+    return user_data_dir / "sand-data" / BOX_GATEWAY_HEADER_NAME
+
+
+def host_primary_header_path(user_data_dir: Path, *, home: Path | None = None) -> Path:
+    """Primary provision target: operator ``~/.gateway`` (not profile sand-data)."""
+    _ = user_data_dir
+    return host_operator_gateway_header_path(home)
 
 
 def host_launcher_install_path(user_data_dir: Path) -> Path:
-    """Host path for the box launcher (synced under sand-data/bin)."""
+    """Host sand-data/bin copy (fallback path inside the box)."""
     return user_data_dir / "sand-data" / "bin" / BOX_LAUNCHER_BASENAME
 
 
 def box_launcher_path() -> str:
-    return BOX_LAUNCHER_SAND_PATH
+    return BOX_LAUNCHER_BOX_PATH
 
 
 def resolve_box_header_path(
@@ -56,18 +73,34 @@ def format_header_file_body(token: str) -> str:
     return f"Authorization: Bearer {token}\n"
 
 
+def write_secure_text(path: Path, body: str, *, mode: int = 0o600) -> Path:
+    """Create ``path`` with explicit mode (no world-readable window)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(path, flags, mode)
+    try:
+        os.write(fd, body.encode("utf-8"))
+    finally:
+        os.close(fd)
+    return path
+
+
 def write_host_header_seed(
     user_data_dir: Path,
     token: str,
     *,
+    home: Path | None = None,
     mode: int = 0o600,
+    sand_fallback: bool = True,
 ) -> Path:
-    """Write the header file into the profile sand-data tree (synced into the box)."""
-    path = host_primary_header_path(user_data_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(format_header_file_body(token), encoding="utf-8")
-    path.chmod(mode)
-    return path
+    """Write header to host ``~/.gateway``; optional sand-data copy as fallback."""
+    home = home or Path.home()
+    primary = host_primary_header_path(user_data_dir, home=home)
+    write_secure_text(primary, format_header_file_body(token), mode=mode)
+    if sand_fallback:
+        sand = host_sand_header_path(user_data_dir)
+        write_secure_text(sand, format_header_file_body(token), mode=mode)
+    return primary
 
 
 def resolve_mcp_token_for_provision() -> tuple[str, str]:
@@ -89,10 +122,17 @@ def resolve_mcp_token_for_provision() -> tuple[str, str]:
     return token, source
 
 
+def append_proxyshim_node_options(existing: str | None) -> str:
+    """Ensure proxyshim preload is present; never drop an existing NODE_OPTIONS value."""
+    if not existing or not existing.strip():
+        return PROXYSHIM_NODE_REQUIRE
+    if PROXYSHIM_NODE_REQUIRE in existing:
+        return existing
+    return f"{existing} {PROXYSHIM_NODE_REQUIRE}"
+
+
 def mcp_remote_env_defaults() -> dict[str, str]:
     return {
-        "HTTPS_PROXY": os.environ.get("HTTPS_PROXY", "http://127.0.0.1:8791"),
-        "NODE_OPTIONS": os.environ.get(
-            "NODE_OPTIONS", "--require /home/box/.proxyshim/preload.cjs"
-        ),
+        "HTTPS_PROXY": HTTPS_PROXY_BOX,
+        "NODE_OPTIONS": PROXYSHIM_NODE_REQUIRE,
     }

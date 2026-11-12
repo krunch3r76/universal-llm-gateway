@@ -50,7 +50,10 @@ def provision_gc2_browser_config(*, home: Path | None = None) -> dict[str, objec
         "bin_dir": str(bin_dir),
         "open_url": str(open_url),
         "mimeapps": str(mimeapps),
-        "applications": [str(apps / "grok-bot-gc2.desktop"), str(apps / "gc2-browser-wrapper.desktop")],
+        "applications": [
+            str(apps / "grok-bot-gc2.desktop"),
+            str(apps / "gc2-browser-wrapper.desktop"),
+        ],
     }
 
 

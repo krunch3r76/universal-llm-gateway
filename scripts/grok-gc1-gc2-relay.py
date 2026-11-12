@@ -42,7 +42,7 @@ def _provision_gc2(*, start: bool, seed_mcp: bool = True) -> dict[str, object]:
     if seed_mcp:
         try:
             mcp = provision_box_mcp_artifacts(profile)
-        except RuntimeError as exc:
+        except (RuntimeError, FileNotFoundError) as exc:
             mcp = {"ok": False, "error": str(exc)}
     written: list[str] = []
     for name, body in units.items():
@@ -69,15 +69,24 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    prov = sub.add_parser("provision-gc2", help="Write and optionally start gc2 (:10 / :9340) systemd user units")
-    prov.add_argument("--start", action="store_true", help="Enable and start the systemd user units immediately")
+    prov = sub.add_parser(
+        "provision-gc2",
+        help="Write and optionally start gc2 (:10 / :9340) systemd user units",
+    )
+    prov.add_argument(
+        "--start",
+        action="store_true",
+        help="Enable and start the systemd user units immediately",
+    )
     prov.add_argument(
         "--no-seed-mcp",
         action="store_true",
         help="Skip sand-data MCP launcher/header seed (token or launcher-only failures)",
     )
 
-    rd = sub.add_parser("read", help="Select sidebar agent and read latest settled prose")
+    rd = sub.add_parser(
+        "read", help="Select sidebar agent and read latest settled prose"
+    )
     rd.add_argument("--label", default="gc1")
     rd.add_argument("--app", default="grok")
     rd.add_argument("--display", default="9")
@@ -85,7 +94,9 @@ def _build_parser() -> argparse.ArgumentParser:
     rd.add_argument("--agent-id", default="")
     rd.add_argument("--no-select", action="store_true")
 
-    ps = sub.add_parser("paste", help="Select sidebar agent and paste + submit a message")
+    ps = sub.add_parser(
+        "paste", help="Select sidebar agent and paste + submit a message"
+    )
     ps.add_argument("--label", default="gc1")
     ps.add_argument("--app", default="grok")
     ps.add_argument("--display", default="9")
@@ -94,7 +105,9 @@ def _build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--message", required=True)
     ps.add_argument("--no-select", action="store_true")
 
-    rl = sub.add_parser("relay", help="Run repeatable 1-to-1 Electron paste/read relay (gc1 <-> gc2)")
+    rl = sub.add_parser(
+        "relay", help="Run repeatable 1-to-1 Electron paste/read relay (gc1 <-> gc2)"
+    )
     rl.add_argument("--left-label", default="gc1")
     rl.add_argument("--left-app", default="grok")
     rl.add_argument("--left-display", default="9")
@@ -117,9 +130,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "set-routing",
         help="Set default grok-bot window and insyncerator window",
     )
-    route.add_argument("--default", required=True, help=":9 or :10 for grok-bot / impresario")
-    route.add_argument("--insyncerator", required=True, help=":9 or :10 for insyncerator")
-    route.add_argument("--updated-by", default="", help="Seat or agent writing the state")
+    route.add_argument(
+        "--default", required=True, help=":9 or :10 for grok-bot / impresario"
+    )
+    route.add_argument(
+        "--insyncerator", required=True, help=":9 or :10 for insyncerator"
+    )
+    route.add_argument(
+        "--updated-by", default="", help="Seat or agent writing the state"
+    )
 
     promo = sub.add_parser(
         "promote",
