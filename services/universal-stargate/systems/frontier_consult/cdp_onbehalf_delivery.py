@@ -20,6 +20,43 @@ logger = get_logger(__name__)
 
 BUS_MAX_BODY_CHARS = 64_000
 _POST_RETRY_SLEEP_S = 0.5
+_DEGRADED_SIDECAR_WARNING = (
+    "WARNING: sidecar write failed; reply delivered inline (no sidecar_ref/sha256)"
+)
+
+
+def degraded_sidecar_delivery_body(body: str) -> bool:
+    """True when ok=True delivery fell back after cortex sidecar write failure."""
+    return body.startswith(_DEGRADED_SIDECAR_WARNING)
+
+
+def build_cdp_degraded_inline_body(*, format_metadata: str, harvest: str) -> str:
+    """Inline ok=True body when compact sidecar persistence failed."""
+    meta = format_metadata.strip()
+    text = harvest if harvest else "_empty harvest_"
+    if meta:
+        return f"{_DEGRADED_SIDECAR_WARNING}\n{meta}\n\n{text}"
+    return f"{_DEGRADED_SIDECAR_WARNING}\n\n{text}"
+
+
+def _bounded_degraded_fallback(full_body: str) -> str:
+    """Truncate degraded inline for allow_long_body after spill refusal."""
+    if len(full_body) <= BUS_MAX_BODY_CHARS:
+        return full_body
+    trimmed = full_body[:BUS_MAX_BODY_CHARS].rstrip()
+    for _ in range(32):
+        dropped = len(full_body) - len(trimmed)
+        note = (
+            f"\n… truncated {dropped} chars "
+            "(sidecar write failed; allow_long_body fallback)"
+        )
+        candidate = trimmed + note
+        if len(candidate) <= BUS_MAX_BODY_CHARS:
+            return candidate
+        over = len(candidate) - BUS_MAX_BODY_CHARS
+        trimmed = full_body[: max(0, len(trimmed) - over)].rstrip()
+    return full_body[: max(0, BUS_MAX_BODY_CHARS - 80)].rstrip() + note
+
 
 # Same shape as master_review_owed.CANONICAL_VERDICT_RE (binder contract).
 _CANONICAL_VERDICT_RE = re.compile(
@@ -47,10 +84,7 @@ def collapse_identical_unfenced_canonical_verdicts(harvest: str) -> str:
         ):
             offset += len(line)
             continue
-        if (
-            not in_fence
-            and _CANONICAL_VERDICT_RE.fullmatch(stripped) is not None
-        ):
+        if not in_fence and _CANONICAL_VERDICT_RE.fullmatch(stripped) is not None:
             seen.add(stripped)
         kept.append(line)
         offset += len(line)
@@ -146,17 +180,26 @@ async def write_cdp_harvest_sidecar(
     """Persist harvest to cortex thread sidecar before pointer post."""
     from systems.pipeline.core.handlers.thread_persistence.events import cx_async
 
-    sidecar_result = await cx_async(
-        "thread_sidecar_write",
-        {
-            "thread": thread_id,
-            "subject": subject,
-            "content": content,
-            "from_agent": "web-anthropic",
-            "execution_id": result.execution_id,
-            "oversized": oversized,
-        },
-    )
+    try:
+        sidecar_result = await cx_async(
+            "thread_sidecar_write",
+            {
+                "thread": thread_id,
+                "subject": subject,
+                "content": content,
+                "from_agent": "web-anthropic",
+                "execution_id": result.execution_id,
+                "oversized": oversized,
+            },
+        )
+    except Exception as exc:
+        logger.error(
+            "CDP on-behalf sidecar write failed: execution_id=%s thread=%s error=%s",
+            result.execution_id,
+            thread_id,
+            exc,
+        )
+        return None
     if "error" in sidecar_result:
         logger.error(
             "CDP on-behalf sidecar write failed: execution_id=%s thread=%s error=%s",
@@ -192,11 +235,11 @@ async def build_cdp_success_delivery_body(
     pointer_only: bool = False,
     body_mode: BodyMode = "compact",
 ) -> str | None:
-    """Build ok=True delivery body; None when oversized sidecar write failed.
+    """Build ok=True delivery body; degraded inline when sidecar write failed.
 
-  ``body_mode=compact`` (default) always sidecars harvest and posts a compact
-    pointer. ``inline`` preserves legacy inline harvest up to ``BUS_MAX_BODY_CHARS``.
-    ``pointer_only`` keeps the legacy minimal pointer (no section map / summary).
+    ``body_mode=compact`` (default) always sidecars harvest and posts a compact
+      pointer. ``inline`` preserves legacy inline harvest up to ``BUS_MAX_BODY_CHARS``.
+      ``pointer_only`` keeps the legacy minimal pointer (no section map / summary).
     """
     if pointer_only and body_mode == "compact":
         body_mode = "pointer_only"
@@ -231,7 +274,16 @@ async def build_cdp_success_delivery_body(
                 oversized=body_mode == "compact",
             )
             if sidecar is None:
-                return None
+                logger.warning(
+                    "CDP on-behalf sidecar write failed; delivering inline harvest: "
+                    "execution_id=%s thread=%s",
+                    result.execution_id,
+                    thread_id,
+                )
+                return build_cdp_degraded_inline_body(
+                    format_metadata=format_metadata,
+                    harvest=harvest,
+                )
             sidecar_uri = sidecar.uri
             sidecar_sha = sidecar.sha256
             map_source = store_content
@@ -249,9 +301,7 @@ async def build_cdp_success_delivery_body(
                 format_metadata=format_metadata,
             )
 
-        section_map, hidden = (
-            build_section_map(map_source) if map_source else ([], 0)
-        )
+        section_map, hidden = build_section_map(map_source) if map_source else ([], 0)
         original_rows = len(section_map) + hidden
         tail: str | None = None
         if hidden:
@@ -279,6 +329,41 @@ async def build_cdp_success_delivery_body(
         return pointer
 
     return None
+
+
+async def _post_degraded_ok_body(
+    *,
+    thread_id: str,
+    to_agent: str,
+    subject: str,
+    full_body: str,
+    request_id: str,
+    pointer_turn: int,
+    enable_bounded_fallback: bool = True,
+):
+    """Post degraded ok=True body; bus auto-spill handles bodies > brief limit."""
+    from .cdp_generate_worker import post_cdp_turn
+
+    primary = await post_cdp_turn(
+        thread_id=thread_id,
+        to_agent=to_agent,
+        subject=subject,
+        body=full_body,
+        request_id=request_id,
+        pointer_turn=pointer_turn,
+    )
+    if primary.ok or not enable_bounded_fallback:
+        return primary
+    bounded = _bounded_degraded_fallback(full_body)
+    return await post_cdp_turn(
+        thread_id=thread_id,
+        to_agent=to_agent,
+        subject=subject,
+        body=bounded,
+        request_id=request_id,
+        pointer_turn=pointer_turn,
+        allow_long_body=True,
+    )
 
 
 async def deliver_cdp_result_turn(
@@ -312,6 +397,31 @@ async def deliver_cdp_result_turn(
             pointer_only=pointer_only,
             body_mode=body_mode,
         )
+        if body is not None and degraded_sidecar_delivery_body(body):
+            last_outcome = await _post_degraded_ok_body(
+                thread_id=thread_id,
+                to_agent=to_agent,
+                subject=subject,
+                full_body=body,
+                request_id=request_id,
+                pointer_turn=pointer_turn,
+                enable_bounded_fallback=True,
+            )
+            if last_outcome.ok:
+                return True
+            await asyncio.sleep(_POST_RETRY_SLEEP_S)
+            last_outcome = await _post_degraded_ok_body(
+                thread_id=thread_id,
+                to_agent=to_agent,
+                subject=subject,
+                full_body=body,
+                request_id=request_id,
+                pointer_turn=pointer_turn,
+                enable_bounded_fallback=False,
+            )
+            if last_outcome.ok:
+                return True
+            body = None
         if body is None:
             fail_subject = f"cdp DELIVERY FAILED — {result.execution_id[:8]}"
             fail_body = format_onbehalf_delivery_failed_body(result)
