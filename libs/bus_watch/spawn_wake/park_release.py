@@ -27,22 +27,20 @@ def arm_hop_park_release(body: dict[str, Any], work_key: str) -> bool:
         return False
     reuse = str(body.get("reuse_thread") or "").strip() or None
     try:
-        conn = _connect()
+        cm = _connect()
     except RuntimeError:
         return False
-    try:
+    with cm as conn:
         parks = open_parks(
             conn,
             work_key=key,
             thread_id=reuse,
             kinds=frozenset({"budget"}),
         )
-        if not parks:
-            return False
-        if any(p.reason != PARK_REASON_MISSION_CAP for p in parks):
-            return False
-    finally:
-        conn.close()
+    if not parks:
+        return False
+    if any(p.reason != PARK_REASON_MISSION_CAP for p in parks):
+        return False
     opts = dict(body.get("generation_options") or {})
     opts["hop_park_release"] = True
     body["generation_options"] = opts

@@ -97,12 +97,12 @@ class SubmittedIdResolution:
 
 
 def execution_id_candidates(execution_id: str) -> list[dict[str, Any]]:
-    conn = CursorDispatchLedger.instance()._connect()
-    cur = conn.execute(
-        "SELECT rowid AS _rowid, * FROM cursor_sdk_dispatches WHERE execution_id=?",
-        (execution_id,),
-    )
-    return [{k: row[k] for k in row.keys()} for row in cur.fetchall()]
+    with CursorDispatchLedger.instance()._connect() as conn:
+        cur = conn.execute(
+            "SELECT rowid AS _rowid, * FROM cursor_sdk_dispatches WHERE execution_id=?",
+            (execution_id,),
+        )
+        return [{k: row[k] for k in row.keys()} for row in cur.fetchall()]
 
 
 def _lineage_head(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:

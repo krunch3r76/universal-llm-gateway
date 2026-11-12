@@ -131,7 +131,7 @@ def test_sqlite_locked_retries_like_ledger(tmp_path: Path) -> None:
     from services.git_integration_worker import cursor_dispatch_ledger as cdl
 
     assert "timeout=30.0" in Path(cdl.__file__).read_text(encoding="utf-8")
-    conn = cdl._connect(tmp_path / "probe.db")
+    conn = cdl._open_ledger_connection(tmp_path / "probe.db")
     conn.close()
 
 

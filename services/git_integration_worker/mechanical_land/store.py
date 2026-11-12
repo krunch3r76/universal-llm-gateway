@@ -19,7 +19,9 @@ from universal_logging import get_logger
 
 from mechanical_land.fold import fold
 from mechanical_land.schema import JournalEntry, JournalForkRefused
-from services.git_integration_worker.cursor_dispatch_ledger import _connect
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    _open_ledger_connection,
+)
 from services.git_integration_worker.mechanical_land.migrations.migration_007_mechanical_land import (
     ensure_mechanical_land_schema,
 )
@@ -197,7 +199,7 @@ class MechanicalLandStore:
         self._post_admit = post_admit_fn or post_stargate_team_dispatch
 
     def _connect(self) -> sqlite3.Connection:
-        conn = _connect(self._db_path)
+        conn = _open_ledger_connection(self._db_path)
         ensure_mechanical_land_schema(conn)
         conn.commit()
         return conn

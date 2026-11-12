@@ -10,6 +10,7 @@ a lost row degrades to Phase-1 loud-failure (thread_dispatch_links + agent-bus r
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -317,12 +318,11 @@ def _ledger_path() -> Path:
     return resolve_cursor_sdk_dispatch_ledger_path()
 
 
-def _connect(path: Path | None = None) -> sqlite3.Connection:
+def _open_ledger_connection(path: Path | None = None) -> sqlite3.Connection:
     """Open ledger DB; retry WAL pragma under concurrent first-open races.
 
-    Fresh DBs hit ``PRAGMA journal_mode=WAL`` from many threads at once during
-    Lane-B concurrent mint (F-A5); SQLite can raise ``database is locked``
-    before the connect busy-timeout absorbs it (assertion:26528).
+    Caller must ``close()`` the connection. Prefer ``with _connect() as conn`` so
+    commit/rollback/close run deterministically.
     """
     db_path = path or _ledger_path()
     last_err: sqlite3.OperationalError | None = None
@@ -342,6 +342,20 @@ def _connect(path: Path | None = None) -> sqlite3.Connection:
             time.sleep(0.02 * (attempt + 1))
     assert last_err is not None
     raise last_err
+
+
+@contextlib.contextmanager
+def _connect(path: Path | None = None):
+    """Commit on success, roll back on error, always close."""
+    conn = _open_ledger_connection(path)
+    try:
+        yield conn
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 _STEER_DELIVERY_ACTIVE_STATUSES = (
@@ -1666,7 +1680,7 @@ class CursorDispatchLedger:
                 "WHERE status = 'parked_waiting'"
             )
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self):
         return _connect(self._db_path)
 
     @classmethod

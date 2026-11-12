@@ -738,12 +738,12 @@ def _is_canonical_uuid(value: str) -> bool:
 
 
 def _dispatch_id_for_execution_id(execution_id: str) -> str | None:
-    conn = CursorDispatchLedger.instance()._connect()
-    rows = conn.execute(
-        "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE execution_id=? "
-        "ORDER BY started_at DESC",
-        (execution_id,),
-    ).fetchall()
+    with CursorDispatchLedger.instance()._connect() as conn:
+        rows = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE execution_id=? "
+            "ORDER BY started_at DESC",
+            (execution_id,),
+        ).fetchall()
     if not rows:
         return None
     return str(rows[0]["dispatch_id"])
