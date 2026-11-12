@@ -611,6 +611,15 @@ def stage_cdp_prompt_with_skills(
             raise CdpStagingError(exc.reason, code=exc.code) from exc
         if substrate_notice_warrants(purpose=purpose):
             merged = ensure_substrate_notice(merged)
+        if not mission:
+            from claude_bundles.sealed_cdp_prefix import ensure_review_delivery_footer
+
+            merged = ensure_review_delivery_footer(
+                merged,
+                purpose,
+                author_body=author_for_gate,
+                contract=contract,
+            )
     except KeyError as exc:
         raise CdpStagingError(
             f"unknown skill in skills=: {exc.args[0] if exc.args else exc}",
