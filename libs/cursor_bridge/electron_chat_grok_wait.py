@@ -77,6 +77,8 @@ async def probe_grok_after_select(
         "title": endpoint.title or None,
     }
     saw_expected_active = False
+    stale_fp = prior_message_fp
+    baseline_moved = False
 
     async def _classify(surface: dict[str, Any]) -> dict[str, Any]:
         nonlocal saw_expected_active
@@ -93,13 +95,13 @@ async def probe_grok_after_select(
         attributed = grok_conversation_attributed(
             surface,
             expected_agent_id=expected_agent_id,
-            prior_message_fp=prior_message_fp,
-            prior_generating=prior_generating,
+            prior_message_fp=stale_fp,
+            prior_generating=prior_generating or baseline_moved,
         )
         return {"surface": surface, "verdict": verdict, "attributed": attributed}
 
-    async def _probe_round() -> dict[str, Any] | None:
-        nonlocal saw_expected_active
+    async def _probe_round() -> dict[str, Any]:
+        nonlocal stale_fp, baseline_moved, saw_expected_active
         surface = await probe_surface(ws_url)
         active = str(surface.get("active_agent_id") or "").strip()
         if _foreign_active_agent(
@@ -116,6 +118,13 @@ async def probe_grok_after_select(
                 "code": "conversation_unconfirmed",
                 "foreign_agent_id": active,
             }
+        expected = (expected_agent_id or "").strip()
+        baseline = (baseline_agent_id or "").strip()
+        if active and active == baseline and active != expected:
+            fp = messages_fingerprint(surface)
+            if fp and fp != stale_fp:
+                stale_fp = fp
+                baseline_moved = True
         return await _classify(surface)
 
     state = await _probe_round()

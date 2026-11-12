@@ -684,10 +684,11 @@ async def test_reselect_reacquires_display_switch_lock(
 
 @pytest.mark.asyncio
 async def test_grok_cdp_select_failure_falls_back_to_sidebar_click(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     """Break: failed roster CDP select must still sidebar-click under display_switch_lock."""
     monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
     ep = ElectronEndpoint(
         label="gc2",
         app="grok",
