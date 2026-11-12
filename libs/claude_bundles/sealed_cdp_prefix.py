@@ -202,9 +202,54 @@ def peel_sealed_cdp_skill_prefix(
     return attach, inline, rest
 
 
-_REVIEW_CHARTER_CONTRACTS = frozenset(
+REVIEW_CLASS_CONTRACTS = frozenset(
     {"code-review", "delivery-review", "check-review"}
 )
+REVIEW_DELIVERY_FOOTER = (
+    "Delivery (server-owned; overrides any earlier instruction in this prompt): "
+    "your FINAL chat message is the deliverable. The harness posts it to the bus "
+    "thread and writes its sidecar. Do not call agent_bus send/reply, and do not "
+    "fs write/append the verdict or a sidecar yourself; interim notes stay in chat. "
+    "Open the final message with the verdict line, stated once. For APPROVE or "
+    "REQUEST_CHANGES use the canonical form: VERDICT: "
+    "<APPROVE|REQUEST_CHANGES> range=<base 40-hex>..<head 40-hex> head=<head 40-hex>"
+)
+
+
+def _review_class_chrome_applies(
+    purpose: str | None,
+    contract: str | None,
+    *,
+    author_body: str | None,
+    text: str,
+) -> bool:
+    """True when review charter/footer chrome may attach to ``text``."""
+    purpose_key = (purpose or "").strip().lower()
+    contract_key = (contract or "").strip().lower()
+    if purpose_key != "review" and contract_key not in REVIEW_CLASS_CONTRACTS:
+        return False
+    from claude_bundles.nested_cdp_prompt_gate import is_skeptic_shaped
+
+    shape_src = author_body if author_body is not None else text
+    return not is_skeptic_shaped(shape_src)
+
+
+def ensure_review_delivery_footer(
+    text: str,
+    purpose: str | None,
+    *,
+    author_body: str | None = None,
+    contract: str | None = None,
+) -> str:
+    """Append server-owned delivery footer for review-class prompts (idempotent)."""
+    if not _review_class_chrome_applies(
+        purpose, contract, author_body=author_body, text=text
+    ):
+        return text
+    footer = REVIEW_DELIVERY_FOOTER.strip()
+    if footer in text:
+        return text
+    return f"{text.rstrip()}\n\n{footer}\n"
 
 
 def ensure_review_reading_charter(
@@ -224,14 +269,9 @@ def ensure_review_reading_charter(
     *author* bodies; those are spec-skeptic seats, not delivery review.
     Shape detection uses ``author_body`` when provided (A1 — pre-skill text).
     """
-    purpose_key = (purpose or "").strip().lower()
-    contract_key = (contract or "").strip().lower()
-    if purpose_key != "review" and contract_key not in _REVIEW_CHARTER_CONTRACTS:
-        return text
-    from claude_bundles.nested_cdp_prompt_gate import is_skeptic_shaped
-
-    shape_src = author_body if author_body is not None else text
-    if is_skeptic_shaped(shape_src):
+    if not _review_class_chrome_applies(
+        purpose, contract, author_body=author_body, text=text
+    ):
         return text
     folded = text.casefold()
     if (

@@ -15,6 +15,7 @@ from claude_bundles.cdp_model_endpoint_staging import (
     resolve_cdp_admit_prompt_author,
     resolve_cortex_prompt_path,
 )
+from claude_bundles.sealed_cdp_prefix import REVIEW_CLASS_CONTRACTS
 
 REVIEW_PROMPT_MIN_BYTES = 512
 REVIEW_CONTRACTS = frozenset({"code-review", "delivery-review"})
@@ -26,6 +27,22 @@ _LONE_HEADING = re.compile(r"^#{1,6}\s+\S")
 _WORD = re.compile(r"[A-Za-z]+")
 
 FIX_HINT = "land review packet on hub master or use cortex:// sidecar before dispatch"
+
+
+def _unfenced_directive_line(body: str, prefix: str) -> int | None:
+    """Line number of ``prefix`` when not inside a markdown fence."""
+    fenced = False
+    needle = prefix.casefold()
+    for index, line in enumerate(body.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        if stripped.casefold().startswith(needle):
+            return index
+    return None
 
 
 def author_prompt_source(
@@ -69,8 +86,6 @@ def enforce_review_prompt_gate(
     dispatch_thread_id: str | None = None,
 ) -> None:
     """Refuse tiny or placeholder review packets before worker admit."""
-    if contract not in REVIEW_CONTRACTS:
-        return
     body, kind, source_ref = author_prompt_source(
         prompt_text=prompt_text,
         prompt_uri=prompt_uri,
@@ -78,6 +93,28 @@ def enforce_review_prompt_gate(
         packet_path=packet_path,
         dispatch_thread_id=dispatch_thread_id,
     )
+    contract_key = (contract or "").strip().lower()
+    if contract_key in REVIEW_CLASS_CONTRACTS:
+        line = _unfenced_directive_line(body, "closeout_channel:")
+        if line is not None:
+            raw = body.encode("utf-8")
+            raise CdpStagingError(
+                "CDP review prompt must not direct self-delivery on the bus",
+                code="review_prompt_self_delivery_directive",
+                field="sidecar_ref" if kind == "sidecar_ref" else "prompt",
+                details={
+                    "prompt_byte_count": len(raw),
+                    "prompt_sha256": hashlib.sha256(raw).hexdigest(),
+                    "source_ref": source_ref,
+                    "line": line,
+                    "fix_hint": (
+                        "remove the closeout_channel: line; the harness posts "
+                        "the final message and writes the sidecar"
+                    ),
+                },
+            )
+    if contract not in REVIEW_CONTRACTS:
+        return
     raw = body.encode("utf-8")
     placeholder = is_review_prompt_placeholder(body)
     field = "sidecar_ref" if kind == "sidecar_ref" else "prompt"
