@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from bus_watch.lru_dict import LruDict
+
 
 @dataclass(frozen=True)
 class RunLine:
@@ -126,17 +128,29 @@ def conversation_tail(dispatch_id: str, after: int) -> dict[str, Any]:
     }
 
 
-_TERMINAL_DISPATCH = frozenset(
-    {"completed", "failed", "cancelled", "timeout", "orphaned", "claimed"}
-)
+_BUS_TAIL_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _OPEN_BUS_TAIL_TTL_S = 2.0
-_BusTailCacheEntry = tuple[float, dict[str, Any], bool]
-_bus_tail_cache: dict[tuple[str, int], _BusTailCacheEntry] = {}
+_BUS_TAIL_CACHE_MAX = 256
+_BusTailCacheEntry = tuple[float, dict[str, Any], bool, str | None]
+
+_bus_tail_cache: LruDict[tuple[str, int], _BusTailCacheEntry] = LruDict(
+    _BUS_TAIL_CACHE_MAX
+)
 
 
 def clear_conversation_tail_bus_cache() -> None:
     """Test hook — drop cached bus-backed conversation tails."""
     _bus_tail_cache.clear()
+
+
+def _bus_tail_cache_get(key: tuple[str, int]) -> _BusTailCacheEntry | None:
+    return _bus_tail_cache.get(key)
+
+
+def _bus_tail_cache_store(
+    key: tuple[str, int], entry: _BusTailCacheEntry
+) -> None:
+    _bus_tail_cache[key] = entry
 
 
 def _ledger_row(dispatch_id: str) -> tuple[str | None, str | None]:
@@ -233,20 +247,31 @@ def _fetch_bus_turns(thread_id: str, after_turn: int) -> list[dict]:
     return _bus_turns_sqlite(thread_id, after_turn)
 
 
+def _dispatch_tail_frozen(status: str | None, *, thread_id: str) -> bool:
+    if status and status in _BUS_TAIL_TERMINAL_STATUSES:
+        return True
+    return _thread_closed_sqlite(thread_id)
+
+
 def _bus_conversation_tail(dispatch_id: str, after_turn: int) -> dict[str, Any] | None:
+    cache_key = (dispatch_id, after_turn)
+    cached = _bus_tail_cache_get(cache_key)
+    if cached is not None:
+        cached_at, payload, was_frozen, cached_status = cached
+        if was_frozen:
+            return payload
+
     thread_id, status = _ledger_row(dispatch_id)
     if not thread_id:
         return None
-    cache_key = (dispatch_id, after_turn)
-    frozen = (
-        (status in _TERMINAL_DISPATCH)
-        if status
-        else False
-    ) or _thread_closed_sqlite(thread_id)
-    cached = _bus_tail_cache.get(cache_key)
+
     if cached is not None:
-        cached_at, payload, was_frozen = cached
-        if was_frozen or (time.monotonic() - cached_at) < _OPEN_BUS_TAIL_TTL_S:
+        cached_at, payload, was_frozen, cached_status = cached
+        if (
+            not was_frozen
+            and cached_status == status
+            and (time.monotonic() - cached_at) < _OPEN_BUS_TAIL_TTL_S
+        ):
             return payload
 
     turns = _fetch_bus_turns(thread_id, after_turn)
@@ -285,8 +310,10 @@ def _bus_conversation_tail(dispatch_id: str, after_turn: int) -> dict[str, Any] 
         "eof": eof,
         "source": "agent-bus.turns",
     }
-    store_frozen = frozen or eof
-    _bus_tail_cache[cache_key] = (time.monotonic(), payload, store_frozen)
+    store_frozen = _dispatch_tail_frozen(status, thread_id=thread_id)
+    _bus_tail_cache_store(
+        cache_key, (time.monotonic(), payload, store_frozen, status)
+    )
     return payload
 
 

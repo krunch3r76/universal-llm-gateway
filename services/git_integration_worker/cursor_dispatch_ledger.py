@@ -51,15 +51,27 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True)
 class NestChildrenIndex:
-    """One watchdog-pass map of parent dispatch id → nested child ids."""
+    """One watchdog-pass map of parent dispatch id → nested child ids.
+
+    Merges indexed ``nest_under`` column edges with legacy JSON-only rows so
+    results match :meth:`CursorDispatchLedger.list_nested_children`.
+    """
 
     by_parent: dict[str, list[str]]
     status_by_id: dict[str, str]
 
 
-_nest_children_index: ContextVar[NestChildrenIndex | None] = ContextVar(
-    "nest_children_index", default=None
+_nest_children_index: ContextVar[tuple[str, NestChildrenIndex] | None] = (
+    ContextVar("nest_children_index", default=None)
 )
+
+_NEST_INDEX_PREFILTER = (
+    "SELECT dispatch_id, nest_under, record_json, status, rowid "
+    "FROM cursor_sdk_dispatches "
+    "WHERE (COALESCE(nest_under, '') != '' OR record_json LIKE ?) "
+    "ORDER BY rowid DESC"
+)
+_NEST_JSON_LIKE = '%"nest_under"%'
 
 
 def clear_nested_children_cache() -> None:
@@ -67,35 +79,92 @@ def clear_nested_children_cache() -> None:
     _nest_children_index.set(None)
 
 
+def _conn_db_path(conn: sqlite3.Connection) -> str:
+    row = conn.execute("PRAGMA database_list").fetchone()
+    if row is None or not row[2]:
+        return str(_ledger_path().resolve())
+    return str(Path(row[2]).resolve())
+
+
+def _parent_nest_from_row(row: sqlite3.Row) -> tuple[str, str]:
+    """Return ``(dispatch_id, parent_id)`` when this row nests under a parent."""
+    dispatch_id = str(row["dispatch_id"])
+    parent = str(row["nest_under"] or "").strip()
+    if parent:
+        return dispatch_id, parent
+    try:
+        data = json.loads(row["record_json"] or "{}")
+    except json.JSONDecodeError:
+        return dispatch_id, ""
+    if not isinstance(data, dict):
+        return dispatch_id, ""
+    parent = str(data.get("nest_under") or "").strip()
+    return dispatch_id, parent
+
+
+def _merge_child_id(child_ids: list[str], dispatch_id: str, *, parent: str) -> None:
+    if not dispatch_id or dispatch_id == parent or dispatch_id in child_ids:
+        return
+    child_ids.append(dispatch_id)
+
+
+def _nested_children_uncached(conn: sqlite3.Connection, *, parent: str) -> list[str]:
+    """Column + legacy JSON children; newest ``rowid`` first (no truncation)."""
+    child_ids: list[str] = []
+    try:
+        rows = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE nest_under=? "
+            "ORDER BY rowid DESC",
+            (parent,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    for row in rows:
+        _merge_child_id(child_ids, str(row["dispatch_id"]), parent=parent)
+
+    try:
+        legacy_rows = conn.execute(
+            "SELECT dispatch_id, record_json FROM cursor_sdk_dispatches "
+            "WHERE record_json LIKE ? "
+            "ORDER BY rowid DESC",
+            (_NEST_JSON_LIKE,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        legacy_rows = []
+    for row in legacy_rows:
+        dispatch_id = str(row["dispatch_id"])
+        try:
+            data = json.loads(row["record_json"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(data, dict)
+            and str(data.get("nest_under") or "").strip() == parent
+        ):
+            _merge_child_id(child_ids, dispatch_id, parent=parent)
+    return child_ids
+
+
 def build_nest_children_index(conn: sqlite3.Connection) -> NestChildrenIndex:
-    """Single table read for all nest_under edges (indexed column + legacy JSON)."""
+    """Single prefiltered table read for nest edges (column + legacy JSON)."""
     by_parent: dict[str, list[str]] = {}
     status_by_id: dict[str, str] = {}
-    rows = conn.execute(
-        "SELECT dispatch_id, nest_under, record_json, status FROM cursor_sdk_dispatches"
-    ).fetchall()
+    rows = conn.execute(_NEST_INDEX_PREFILTER, (_NEST_JSON_LIKE,)).fetchall()
     for row in rows:
-        dispatch_id = str(row["dispatch_id"])
+        dispatch_id, parent = _parent_nest_from_row(row)
         status_by_id[dispatch_id] = str(row["status"] or "")
-        parent = str(row["nest_under"] or "").strip()
-        if not parent:
-            try:
-                data = json.loads(row["record_json"] or "{}")
-            except json.JSONDecodeError:
-                data = None
-            if isinstance(data, dict):
-                parent = str(data.get("nest_under") or "").strip()
         if not parent or parent == dispatch_id:
             continue
-        by_parent.setdefault(parent, []).append(dispatch_id)
+        _merge_child_id(by_parent.setdefault(parent, []), dispatch_id, parent=parent)
     return NestChildrenIndex(by_parent=by_parent, status_by_id=status_by_id)
 
 
 @contextmanager
 def nest_children_watchdog_pass(conn: sqlite3.Connection):
     """Scope one nest index to nested-witness work inside a watchdog tick."""
+    db_path = _conn_db_path(conn)
     index = build_nest_children_index(conn)
-    token = _nest_children_index.set(index)
+    token = _nest_children_index.set((db_path, index))
     try:
         yield index
     finally:
@@ -1733,9 +1802,17 @@ class CursorDispatchLedger:
                 "ON cursor_sdk_dispatches(source_repo, status) "
                 "WHERE status = 'parked_waiting'"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_nest_under "
+                "ON cursor_sdk_dispatches(nest_under) "
+                "WHERE nest_under IS NOT NULL AND nest_under != ''"
+            )
 
     def _connect(self):
         return _connect(self._db_path)
+
+    def _resolved_db_path(self) -> str:
+        return str(Path(self._db_path).resolve())
 
     @classmethod
     def instance(cls) -> CursorDispatchLedger:
@@ -2519,56 +2596,27 @@ class CursorDispatchLedger:
             )
 
     def list_nested_children(self, *, parent_dispatch_id: str) -> list[str]:
-        """Return dispatch ids admitted with ``nest_under=parent_dispatch_id``.
+        """Return dispatch ids nesting under ``parent_dispatch_id``.
 
-        When a watchdog pass installs :func:`nest_children_watchdog_pass`, reads
-        come from that pass's in-memory index (one table scan per pass). Otherwise
-        uses the indexed ``nest_under`` column with a legacy JSON fallback scan.
+        Merges the indexed ``nest_under`` column with legacy JSON-only rows
+        (superset of either path alone). Completed/terminal parents still list
+        children — required for ``hop_owed`` / SF1 nested witness.
+
+        When :func:`nest_children_watchdog_pass` is active **for this ledger db**,
+        reads use that pass's in-memory index (one prefiltered scan per pass).
         """
         parent = str(parent_dispatch_id or "").strip()
         if not parent:
             return []
 
-        index = _nest_children_index.get()
-        if index is not None:
-            return list(index.by_parent.get(parent, []))
+        scoped = _nest_children_index.get()
+        if scoped is not None:
+            db_path, index = scoped
+            if db_path == self._resolved_db_path():
+                return list(index.by_parent.get(parent, []))
 
-        child_ids: list[str] = []
         with self._connect() as conn:
-            try:
-                rows = conn.execute(
-                    "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE nest_under=?",
-                    (parent,),
-                ).fetchall()
-                child_ids = [
-                    str(row["dispatch_id"])
-                    for row in rows
-                    if str(row["dispatch_id"]) != parent
-                ]
-            except sqlite3.OperationalError:
-                child_ids = []
-
-            if not child_ids:
-                legacy_rows = conn.execute(
-                    "SELECT dispatch_id, record_json FROM cursor_sdk_dispatches "
-                    "WHERE record_json LIKE ?",
-                    ('%"nest_under"%',),
-                ).fetchall()
-                for row in legacy_rows:
-                    dispatch_id = str(row["dispatch_id"])
-                    if dispatch_id == parent:
-                        continue
-                    try:
-                        data = json.loads(row["record_json"] or "{}")
-                    except json.JSONDecodeError:
-                        continue
-                    if (
-                        isinstance(data, dict)
-                        and data.get("nest_under") == parent
-                    ):
-                        child_ids.append(dispatch_id)
-
-        return child_ids
+            return _nested_children_uncached(conn, parent=parent)
 
     def _nest_under_from_row(self, row: Any) -> str | None:
         nested = str(row["nest_under"] or "").strip()

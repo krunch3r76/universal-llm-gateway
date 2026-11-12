@@ -485,7 +485,7 @@ def open_await_rows() -> list[ParkRow]:
             "record_json, source_repo FROM cursor_sdk_dispatches "
             "WHERE park_kind=? AND park_resumed_by IS NULL "
             "AND status IN ('completed','failed','cancelled') "
-            "AND (record_json IS NULL OR record_json NOT LIKE '%\"expired_at\"%') "
+            "AND json_extract(record_json, '$.park.expired_at') IS NULL "
             "ORDER BY parked_at ASC, rowid ASC",
             (PARK_KIND_AWAIT_REPLY,),
         ).fetchall()
@@ -938,6 +938,14 @@ async def _resume_await_parked_loop(
 ) -> None:
     from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
 
+    turns_tick_cache: dict[tuple[str, int], list[dict[str, Any]]] = {}
+
+    def bus_turns_fn_tick(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
+        key = (thread_id, after_turn)
+        if key not in turns_tick_cache:
+            turns_tick_cache[key] = bus_turns_fn(thread_id, after_turn)
+        return turns_tick_cache[key]
+
     for row in open_await_rows():
         if parent_dispatch_id is not None and row.dispatch_id != parent_dispatch_id:
             continue
@@ -956,7 +964,7 @@ async def _resume_await_parked_loop(
 
         awaited = _awaited_from_row(row)
         hits, fetch_failed = await _snapshot_replies(
-            awaited, bus_turns_fn=bus_turns_fn
+            awaited, bus_turns_fn=bus_turns_fn_tick
         )
         reply_list = [hits.get(g.execution_id) for g in awaited]
         all_landed = bool(awaited) and all(h is not None for h in reply_list)

@@ -37,13 +37,15 @@ from bus_watch.ide_budget_exclude import (
     budget_exclude_path,
     pin_retired_resume_transcript,
 )
+from bus_watch.lru_dict import LruDict
 
 IDE_BUDGET_SOURCE = "ide.transcript"
 _FileSig = tuple[float, int]
 _MatchRow = tuple[int, float, str]
-_first_line_cache: dict[tuple[str, str], dict[str, tuple[_FileSig, _MatchRow | None]]] = (
-    {}
-)
+_FIRST_LINE_CACHE_MAX = 1024
+_first_line_cache: LruDict[
+    tuple[str, str], dict[str, tuple[_FileSig, _MatchRow | None]]
+] = LruDict(_FIRST_LINE_CACHE_MAX)
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _TOOL_CATEGORY_RE = re.compile(r"tool", re.I)
 _TIP_CP_RE = re.compile(r"tip_cp=(\d+)(?!\d)")
@@ -110,7 +112,8 @@ def first_line_matches(
         # proof needs ``first_line_matches_land`` with an explicit root_id.
         return []
     key = (str(transcripts_dir.resolve()), needle)
-    per_file = dict(_first_line_cache.get(key, {}))
+    existing = _first_line_cache.get(key)
+    per_file = dict(existing or {})
     rows: list[_MatchRow] = []
     seen_tids: set[str] = set()
     for path in transcripts_dir.glob("*/*.jsonl"):

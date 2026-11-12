@@ -183,3 +183,153 @@ def test_open_tail_refetch_after_ttl(
     second = conversation_tail("tail-open-test", 0)
     assert first["source"] == second["source"] == "agent-bus.turns"
     assert fetch_calls == 2
+
+
+def test_frozen_tail_repeat_skips_ledger_and_bus(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clear_conversation_tail_bus_cache()
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_supersede.live_run_for_dispatch",
+        lambda _d: None,
+    )
+    db = tmp_path / "bus.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE turns (turn_number INT, from_agent TEXT, to_agent TEXT, "
+        "subject TEXT, body TEXT, thread TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO turns VALUES (1,'synthesizer','ide','reply','body','77')"
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db))
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "")
+
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    led = CursorDispatchLedger.instance()
+    with led._connect() as lconn:
+        lconn.execute(
+            "INSERT OR REPLACE INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, resolved_model, status, "
+            "message_present, read_only, record_json) "
+            "VALUES ('frozen-tail', 'fp', '77', 'anthropic/claude', 'completed', "
+            "0, 0, '{}')"
+        )
+        lconn.commit()
+
+    ledger_calls = 0
+
+    def counting_ledger(dispatch_id: str):
+        nonlocal ledger_calls
+        ledger_calls += 1
+        return ("77", "completed")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_run_lines._ledger_row",
+        counting_ledger,
+    )
+    bus_fetches = 0
+
+    def guarded_fetch(thread_id: str, after_turn: int):
+        nonlocal bus_fetches
+        bus_fetches += 1
+        return [
+            {
+                "turn_number": 1,
+                "from_agent": "a",
+                "subject": "s",
+                "body": "once",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_run_lines._fetch_bus_turns",
+        guarded_fetch,
+    )
+
+    first = conversation_tail("frozen-tail", 0)
+    second = conversation_tail("frozen-tail", 0)
+    assert bus_fetches == 1
+    assert first == second
+    assert ledger_calls == 1
+
+
+def test_admitted_then_running_refetches_tail(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clear_conversation_tail_bus_cache()
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_supersede.live_run_for_dispatch",
+        lambda _d: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_run_lines._OPEN_BUS_TAIL_TTL_S",
+        999.0,
+    )
+
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    led = CursorDispatchLedger.instance()
+    with led._connect() as lconn:
+        lconn.execute(
+            "INSERT OR REPLACE INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, resolved_model, status, "
+            "message_present, read_only, record_json) "
+            "VALUES ('admit-run', 'fp', '55', 'anthropic/claude', 'admitted', "
+            "0, 0, '{}')"
+        )
+        lconn.commit()
+
+    bodies = ["first-body", "second-body"]
+    fetch_calls = 0
+
+    def counting_fetch(thread_id: str, after_turn: int):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return [
+            {
+                "turn_number": 1,
+                "from_agent": "a",
+                "subject": "s",
+                "body": bodies[min(fetch_calls - 1, 1)],
+            }
+        ]
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_run_lines._fetch_bus_turns",
+        counting_fetch,
+    )
+
+    conversation_tail("admit-run", 0)
+    with led._connect() as lconn:
+        lconn.execute(
+            "UPDATE cursor_sdk_dispatches SET status='running' WHERE dispatch_id='admit-run'"
+        )
+        lconn.commit()
+    payload = conversation_tail("admit-run", 0)
+    assert fetch_calls == 2
+    assert "second-body" in payload["lines"][0]["text"]
+
+
+def test_bus_tail_cache_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    import services.git_integration_worker.cursor_sdk_run_lines as rlines
+
+    monkeypatch.setattr(rlines, "_BUS_TAIL_CACHE_MAX", 4)
+    rlines._bus_tail_cache = rlines.LruDict(4)
+    rlines.clear_conversation_tail_bus_cache()
+
+    for i in range(6):
+        key = (f"d-{i}", 0)
+        rlines._bus_tail_cache_store(
+            key,
+            (0.0, {"lines": [], "cursor": 0, "eof": True, "source": "x"}, True, "completed"),
+        )
+    assert len(rlines._bus_tail_cache) == 4

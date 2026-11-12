@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from pathlib import Path
 from unittest.mock import patch
@@ -127,12 +128,25 @@ def test_bus_down_lane_thread_unavailable_no_admit() -> None:
 
 
 def test_sqlite_locked_retries_like_ledger(tmp_path: Path) -> None:
-    """Store uses ledger _connect with timeout=30 (observed in cursor_dispatch_ledger)."""
+    """Store uses ledger open with timeout=30 (see cursor_dispatch_ledger._open)."""
     from services.git_integration_worker import cursor_dispatch_ledger as cdl
 
     assert "timeout=30.0" in Path(cdl.__file__).read_text(encoding="utf-8")
     conn = cdl._open_ledger_connection(tmp_path / "probe.db")
     conn.close()
+
+
+def test_mechanical_land_connect_closes(tmp_path: Path) -> None:
+    """MechanicalLandStore._connect is a context manager that always closes."""
+    db = tmp_path / "ml.db"
+    store = MechanicalLandStore(db_path=db)
+    with store._connect() as conn:  # noqa: SLF001
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mechanical_land_runs "
+            "(run_id TEXT PRIMARY KEY, status TEXT)"
+        )
+    with pytest.raises(sqlite3.ProgrammingError):
+        conn.execute("SELECT 1")
 
 
 def test_idempotency_key_returns_same_run() -> None:

@@ -49,6 +49,18 @@ def test_first_line_cache_matches_uncached_and_avoids_reread(tmp_path: Path) -> 
     assert open_calls == 2
 
 
+def test_first_line_cache_lru_bounds_keys(tmp_path: Path, monkeypatch) -> None:
+    import bus_watch.ide_budget as ib
+
+    monkeypatch.setattr(ib, "_FIRST_LINE_CACHE_MAX", 2)
+    ib._first_line_cache = ib.LruDict(2)
+    clear_first_line_matches_cache()
+    for i in range(4):
+        _write(tmp_path, f"tid{i}", first_user=f"resume {i}", mtime=float(i))
+        first_line_matches(f"resume {i}", tmp_path)
+    assert len(ib._first_line_cache) == 2
+
+
 def test_first_line_cache_sees_new_subdir_without_top_dir_touch(tmp_path: Path) -> None:
     clear_first_line_matches_cache()
     _write(tmp_path, "a", first_user="resume 77", mtime=1.0)
