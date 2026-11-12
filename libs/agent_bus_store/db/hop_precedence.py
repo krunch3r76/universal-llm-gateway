@@ -19,12 +19,11 @@ _BODY_FIELD_RE = re.compile(
 
 
 def is_checkpoint_turn_subject(subject: str) -> bool:
-    return subject.strip().upper().startswith("CHECKPOINT")
+    return subject.strip().upper().startswith("CHECKPOINT|")
 
 
 def is_hop_turn_subject(subject: str) -> bool:
-    upper = subject.strip().upper()
-    return upper.startswith("HOP|") or upper.startswith("HOP")
+    return subject.strip().upper().startswith("HOP|")
 
 
 def parse_turn_body_fields(body: str) -> dict[str, str]:
@@ -95,8 +94,9 @@ def classify_turn_as_lifecycle_event(
 
 def _checkpoints_from_turns(conn: sqlite3.Connection, thread_id: str) -> dict[str, Any]:
     rows = conn.execute(
-        "SELECT id, body FROM turns WHERE thread = ? "
-        "AND UPPER(TRIM(subject)) LIKE 'CHECKPOINT%'",
+        "SELECT id, body, turn_number FROM turns WHERE thread = ? "
+        "AND UPPER(TRIM(subject)) LIKE 'CHECKPOINT|%' "
+        "ORDER BY turn_number ASC, id ASC",
         (thread_id,),
     ).fetchall()
     checkpoints: dict[str, Any] = {}
@@ -161,9 +161,15 @@ def _upsert_hop_row(
             checkpoint_turn_id, checkpoint_read_sha256, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(thread_id, hop_turn_id) DO UPDATE SET
-            work_key = excluded.work_key,
-            required_checkpoint_uri = excluded.required_checkpoint_uri,
-            required_read_sha256 = excluded.required_read_sha256,
+            work_key = COALESCE(excluded.work_key, hop_precedence_state.work_key),
+            required_checkpoint_uri = COALESCE(
+                excluded.required_checkpoint_uri,
+                hop_precedence_state.required_checkpoint_uri
+            ),
+            required_read_sha256 = COALESCE(
+                excluded.required_read_sha256,
+                hop_precedence_state.required_read_sha256
+            ),
             hop_status = excluded.hop_status,
             held_reason = excluded.held_reason,
             checkpoint_turn_id = excluded.checkpoint_turn_id,
@@ -233,7 +239,7 @@ def apply_hop_precedence_on_turn_send(
                     _upsert_hop_row(
                         conn,
                         thread_id=thread_id,
-                        work_key=work_key,
+                        work_key=None,
                         hop=hop,
                         updated_at=updated_at,
                     )

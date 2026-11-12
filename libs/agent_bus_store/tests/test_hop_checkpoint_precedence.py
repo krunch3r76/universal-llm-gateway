@@ -15,6 +15,8 @@ from agent_bus_store.db.lifecycle_fold import (
     empty_hop_fold_state,
     fold_hop_precedence,
 )
+from agent_bus_store.server import create_app
+from fastapi.testclient import TestClient
 
 _URI = "cortex://notes/system/threads/example-cp.md"
 _PIN = "abc123deadbeef" * 4  # 64 hex chars
@@ -40,6 +42,44 @@ def _single_hop_row(thread: str) -> dict:
         rows = get_hop_precedence(conn, thread_id=thread)
     assert len(rows) == 1
     return rows[0]
+
+
+def test_checkpoint_seal_preserves_hop_work_key(bus_db) -> None:
+    """F1: ready flip via CHECKPOINT must not NULL out the hop row's work_key."""
+    work_key = "friction:43744"
+    insert_turn(
+        thread="99010",
+        from_agent="cursor",
+        to_agent="web-anthropic",
+        subject="HOP|liaison",
+        body=_hop_body() + f"work_key: {work_key}\n",
+    )
+    with connect() as conn:
+        rows = get_hop_precedence(conn, work_key=work_key)
+    assert len(rows) == 1
+    assert rows[0]["hop_status"] == HOP_STATUS_PENDING
+
+    insert_turn(
+        thread="99010",
+        from_agent="cursor",
+        to_agent="web-anthropic",
+        subject="CHECKPOINT|wave",
+        body=_cp_body(),
+    )
+    with connect() as conn:
+        by_key = get_hop_precedence(conn, work_key=work_key)
+    assert len(by_key) == 1
+    assert by_key[0]["hop_status"] == HOP_STATUS_READY
+    assert by_key[0]["work_key"] == work_key
+
+    app = create_app()
+    client = TestClient(app)
+    response = client.get("/lifecycle/hop-precedence", params={"work_key": work_key})
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["hop_status"] == HOP_STATUS_READY
+    assert items[0]["work_key"] == work_key
 
 
 def test_hop_before_checkpoint_pending_then_ready(bus_db) -> None:
@@ -120,23 +160,37 @@ def test_hop_without_ref_checkpoint_ref_missing(bus_db) -> None:
     assert row["held_reason"] == HELD_CHECKPOINT_REF_MISSING
 
 
-def test_turn_number_order_irrelevant(bus_db) -> None:
-    """HOP at turn 5 before CHECKPOINT at turn 3 still resolves when CP posts later."""
-    for n, subj, body in (
-        (1, "NOTICE|boot", "boot"),
-        (2, "HOP|early", _hop_body()),
-        (3, "CHECKPOINT|seal", _cp_body()),
-    ):
-        del n
-        insert_turn(
-            thread="99005",
-            from_agent="cursor",
-            to_agent="web-anthropic",
-            subject=subj,
-            body=body,
-        )
-    row = _single_hop_row("99005")
-    assert row["hop_status"] == HOP_STATUS_READY
+def test_hope_subject_does_not_classify_as_hop(bus_db) -> None:
+    insert_turn(
+        thread="99005",
+        from_agent="cursor",
+        to_agent="web-anthropic",
+        subject="HOPE|not-a-hop",
+        body=_hop_body(),
+    )
+    with connect() as conn:
+        rows = get_hop_precedence(conn, thread_id="99005")
+    assert rows == []
+
+
+def test_checkpoints_plural_subject_not_sealed(bus_db) -> None:
+    insert_turn(
+        thread="99006",
+        from_agent="cursor",
+        to_agent="web-anthropic",
+        subject="CHECKPOINTS|batch",
+        body=_cp_body(),
+    )
+    insert_turn(
+        thread="99006",
+        from_agent="cursor",
+        to_agent="web-anthropic",
+        subject="HOP|liaison",
+        body=_hop_body(),
+    )
+    row = _single_hop_row("99006")
+    assert row["hop_status"] == HOP_STATUS_PENDING
+    assert row["held_reason"] == HELD_HOP_BEFORE_CHECKPOINT
 
 
 def test_fold_pure_hop_before_checkpoint() -> None:
