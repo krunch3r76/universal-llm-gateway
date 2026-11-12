@@ -91,7 +91,9 @@ def test_install_refuses_overwrite_without_replace(tmp_path: Path) -> None:
     )
     assert proc.returncode == 2
     assert ".bak" in proc.stderr or "replace" in proc.stderr.lower()
-    assert (header.parent / "vortex-mcp-headers.bak").is_file()
+    bak = header.parent / "vortex-mcp-headers.bak"
+    assert bak.is_file()
+    assert oct(bak.stat().st_mode & 0o777) == oct(0o600)
 
 
 @pytest.mark.offline
@@ -197,8 +199,11 @@ def test_print_paste_bootstrap_double_install_offline(tmp_path: Path) -> None:
     assert bootstrap.returncode == 0, bootstrap.stderr
 
     installer = home / ".local" / "bin" / "grokbot-box-mcp-install.sh"
+    launcher = home / ".local" / "bin" / "grokbot-mcp-remote-launcher.sh"
     assert installer.is_file()
     assert oct(installer.stat().st_mode & 0o777) == oct(0o700)
+    assert launcher.is_file()
+    assert oct(launcher.stat().st_mode & 0o777) == oct(0o755)
 
     install_env = {
         **env,
@@ -221,3 +226,118 @@ def test_print_paste_bootstrap_double_install_offline(tmp_path: Path) -> None:
         assert dummy not in run.stderr
         assert header.is_file()
         assert oct(header.stat().st_mode & 0o777) == oct(0o600)
+
+
+@pytest.mark.offline
+def test_print_paste_blob_does_not_leak_errexit_to_interactive_shell(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+    print_proc = subprocess.run(
+        ["bash", str(_INSTALL), "--print"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(_REPO_ROOT / "scripts"),
+        env={
+            **env,
+            "GROKBOT_LAUNCHER_SRC": str(
+                _REPO_ROOT / "scripts" / "grokbot-mcp-remote-launcher.sh"
+            ),
+        },
+    )
+    assert print_proc.returncode == 0, print_proc.stderr
+    assert "(\nset -euo pipefail" in print_proc.stdout
+
+    refuse_input = (
+        f"{print_proc.stdout}\n"
+        "printf '%s\\n' 'Authorization: Bearer <token>' | "
+        'bash "$HOME/.local/bin/grokbot-box-mcp-install.sh" --header-stdin --skip-mcp-remote\n'
+        "false\n"
+        "echo ALIVE\n"
+        "echo SHELLFLAGS:$-\n"
+    )
+    shell = subprocess.run(
+        ["bash", "--norc", "-i"],
+        input=refuse_input,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        timeout=120,
+    )
+    assert "ALIVE" in shell.stdout, shell.stdout + shell.stderr
+    flags = ""
+    for line in shell.stdout.splitlines():
+        if line.startswith("SHELLFLAGS:"):
+            flags = line.split(":", 1)[1]
+    assert "e" not in flags, flags
+
+
+@pytest.mark.offline
+def test_header_write_exit_trap_cleans_temp_on_mv_failure(tmp_path: Path) -> None:
+    header = tmp_path / "hdr" / "vortex-mcp-headers"
+    header.parent.mkdir()
+    bearer_old = "h" * 24
+    bearer_new = "i" * 24
+    header.write_text(f"Authorization: Bearer {bearer_old}\n", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "mv").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (fake_bin / "mv").chmod(0o755)
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "GROKBOT_HEADER_DEST": str(header),
+    }
+    proc = subprocess.run(
+        [
+            "bash",
+            str(_INSTALL),
+            "--header-stdin",
+            "--replace",
+            "--skip-mcp-remote",
+        ],
+        input=f"Authorization: Bearer {bearer_new}\n",
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0, proc.stderr + proc.stdout
+    leftovers = list(header.parent.glob(".vortex-mcp-headers.*"))
+    assert leftovers == []
+
+
+@pytest.mark.offline
+def test_install_self_candidate_strips_login_shell_argv0() -> None:
+    """N11: -bash argv0 must not drive dirname-based SELF resolution."""
+    script = _INSTALL.read_text(encoding="utf-8")
+    assert '[[ "${_SELF_CAND}" == -* ]]' in script
+    assert '_SELF_CAND="${_SELF_CAND#-}"' in script
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            r"""
+            _SELF_CAND=-bash
+            if [[ "${_SELF_CAND}" == -* ]]; then _SELF_CAND="${_SELF_CAND#-}"; fi
+            if [[ -n "${_SELF_CAND}" && "${_SELF_CAND}" != bash && "${_SELF_CAND}" != /bin/bash ]]; then
+              echo would_dirname
+            else
+              echo skip_dirname
+            fi
+            """,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "skip_dirname" in proc.stdout

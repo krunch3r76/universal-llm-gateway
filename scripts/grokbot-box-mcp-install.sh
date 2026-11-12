@@ -5,6 +5,9 @@
 set -euo pipefail
 
 _SELF_CAND="${BASH_SOURCE[0]:-$0}"
+if [[ "${_SELF_CAND}" == -* ]]; then
+  _SELF_CAND="${_SELF_CAND#-}"
+fi
 SELF=""
 SELF_DIR="${HOME}/.local/bin"
 if [[ -n "${_SELF_CAND}" && "${_SELF_CAND}" != bash && "${_SELF_CAND}" != /bin/bash ]]; then
@@ -101,6 +104,7 @@ marker_i = "GROKBOT_BOX_MCP_INSTALLER_EMBED"
 marker_l = "GROKBOT_BOX_MCP_LAUNCHER_EMBED"
 out = f"""#!/usr/bin/env bash
 # Paste into the Grok Bot box Shell: writes ~/.local/bin installers, then run grokbot-box-mcp-install.sh.
+(
 set -euo pipefail
 BIN_DIR="${{HOME}}/.local/bin"
 mkdir -p "${{BIN_DIR}}"
@@ -117,6 +121,7 @@ if launcher.strip():
 {marker_l}
 chmod 755 "${{LAUNCHER}}"
 """
+out += ")\n"
 out += 'echo "grokbot-box-mcp-install: wrote ${INSTALLER}" >&2\n'
 sys.stdout.write(out)
 PY
@@ -248,7 +253,7 @@ _write_header_from_line() {
   local tmp
   tmp="$(mktemp -p "$(dirname "${HEADER_DEST}")" .vortex-mcp-headers.XXXXXX)"
   GROKBOT_HEADER_TMP="${tmp}"
-  trap 'rm -f "${GROKBOT_HEADER_TMP:-}"; unset GROKBOT_HEADER_TMP' RETURN
+  trap 'rm -f "${GROKBOT_HEADER_TMP:-}"; unset GROKBOT_HEADER_TMP' EXIT
   local prior_umask
   prior_umask="$(umask)"
   umask 077
@@ -263,23 +268,27 @@ _write_header_from_line() {
     old_body="$(cat "${HEADER_DEST}")"
     if [[ "${old_body}" == "${new_body}" ]]; then
       rm -f "${tmp}"
-      trap - RETURN
+      trap - EXIT
       unset GROKBOT_HEADER_TMP
       return 0
     fi
     if [[ ! -f "${HEADER_DEST}.bak" ]]; then
       cp -p "${HEADER_DEST}" "${HEADER_DEST}.bak"
+      chmod 600 "${HEADER_DEST}.bak"
     fi
     if [[ "${HEADER_REPLACE}" != true ]]; then
       echo "grokbot-box-mcp-install: existing header differs; use --replace to overwrite (backup at .bak)" >&2
       rm -f "${tmp}"
-      trap - RETURN
+      trap - EXIT
       unset GROKBOT_HEADER_TMP
       exit 2
     fi
   fi
-  mv -f "${tmp}" "${HEADER_DEST}"
-  trap - RETURN
+  if ! mv -f "${tmp}" "${HEADER_DEST}"; then
+    echo "grokbot-box-mcp-install: failed to install header at ${HEADER_DEST}" >&2
+    exit 1
+  fi
+  trap - EXIT
   unset GROKBOT_HEADER_TMP
   chmod 600 "${HEADER_DEST}"
 }
@@ -332,9 +341,14 @@ _install_mcp_remote() {
   mkdir -p "${INSTALL_ROOT}"
   (
     cd "${INSTALL_ROOT}"
-    npm init -y >/dev/null 2>&1
-    HTTPS_PROXY="${HTTPS_PROXY}" NODE_OPTIONS='' \
-      npm install --no-save "mcp-remote@${PIN}" >/dev/null
+    if ! NODE_OPTIONS='' npm init -y; then
+      echo "grokbot-box-mcp-install: npm init failed under ${INSTALL_ROOT}" >&2
+      exit 1
+    fi
+    if ! HTTPS_PROXY="${HTTPS_PROXY}" NODE_OPTIONS='' npm install --no-save "mcp-remote@${PIN}"; then
+      echo "grokbot-box-mcp-install: npm install mcp-remote@${PIN} failed" >&2
+      exit 1
+    fi
   )
 }
 
