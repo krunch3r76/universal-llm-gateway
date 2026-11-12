@@ -8,7 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from cursor_bridge.spawn_endpoint_house_ledger import (
+from spawn_ledger.spawn_endpoint_house_ledger import (
     _fold_spawn_rows,
     _read_rows,
     ledger_path,
@@ -31,7 +31,7 @@ from .route import TeamDispatchGenerateBody
 
 @pytest.fixture
 def watch_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr("cursor_bridge.spawn_endpoint_house_ledger.WATCH_DIR", tmp_path)
+    monkeypatch.setattr("spawn_ledger.spawn_endpoint_house_ledger.WATCH_DIR", tmp_path)
     return tmp_path
 
 
@@ -93,7 +93,7 @@ async def test_admit_plan_skips_second_prepare_and_prefixes_message(
     """(a)(b) enriched plan: prepare must not run; message carries ledger prefix + sha."""
     fixed_row = mint_row_id()
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.mint_row_id", lambda: fixed_row
+        "spawn_ledger.spawn_endpoint_house_ledger.mint_row_id", lambda: fixed_row
     )
     sdk_mock = AsyncMock(return_value={"dispatch_id": "d1", "thread_id": "22253"})
     _patch_route_collaborators(monkeypatch, sdk_mock)
@@ -472,7 +472,7 @@ async def test_parallel_admits_do_not_mutate_shared_plan(
     row_ids = iter([mint_row_id(), mint_row_id()])
 
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.mint_row_id",
+        "spawn_ledger.spawn_endpoint_house_ledger.mint_row_id",
         lambda: next(row_ids),
     )
     monkeypatch.setattr(gw, "probe_thread", AsyncMock(return_value={"turn_count": 0}))

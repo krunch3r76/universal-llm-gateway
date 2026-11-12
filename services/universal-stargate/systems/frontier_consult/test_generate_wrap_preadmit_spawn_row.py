@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from cursor_bridge.spawn_endpoint_house_ledger import (
+from spawn_ledger.spawn_endpoint_house_ledger import (
     _fold_spawn_rows,
     _read_rows,
     ledger_path,
@@ -42,7 +42,7 @@ class _Body:
 
 @pytest.fixture
 def watch_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr("cursor_bridge.spawn_endpoint_house_ledger.WATCH_DIR", tmp_path)
+    monkeypatch.setattr("spawn_ledger.spawn_endpoint_house_ledger.WATCH_DIR", tmp_path)
     return tmp_path
 
 
@@ -132,7 +132,7 @@ def test_failure_patch_never_replaces_the_original_exception(
         raise UnicodeDecodeError("utf-8", b"", 0, 1, "corrupt ledger")
 
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.patch_spawn_row", _boom
+        "spawn_ledger.spawn_endpoint_house_ledger.patch_spawn_row", _boom
     )
 
     # Returns normally; the caller's `raise` is what propagates.
@@ -349,7 +349,7 @@ async def test_route_spawn_spine_failure_returns_500_and_marks_row(
         ),
     )
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.patch_spawn_row",
+        "spawn_ledger.spawn_endpoint_house_ledger.patch_spawn_row",
         lambda _rid, **_kw: {"ok": False, "error": "row_not_found"},
     )
 

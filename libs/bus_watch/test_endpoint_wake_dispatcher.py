@@ -4785,7 +4785,7 @@ def test_scan_once_ignores_threads_below_cursor(tmp_path, monkeypatch) -> None:
 
     ledger = Path(tmp_path) / "cursor-bridge-tab-wake-ledger.jsonl"
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+        "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
         lambda watch_dir=None: ledger,
     )
     monkeypatch.setattr(
@@ -4814,7 +4814,7 @@ def test_fire_cse_followup_dry_run_writes_nothing(tmp_path, monkeypatch) -> None
 
     ledger = Path(tmp_path) / "cursor-bridge-tab-wake-ledger.jsonl"
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+        "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
         lambda watch_dir=None: ledger,
     )
     with (
@@ -4846,7 +4846,7 @@ def test_fire_cse_followup_appends_wake_when_not_dry_run(tmp_path, monkeypatch) 
 
     ledger = Path(tmp_path) / "cursor-bridge-tab-wake-ledger.jsonl"
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+        "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
         lambda watch_dir=None: ledger,
     )
 
@@ -4890,7 +4890,7 @@ def test_deliver_cse_writes_no_ledger_row(tmp_path, monkeypatch) -> None:
 
     ledger = Path(tmp_path) / "cursor-bridge-tab-wake-ledger.jsonl"
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+        "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
         lambda watch_dir=None: ledger,
     )
     calls: list[bool] = []

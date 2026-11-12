@@ -10,7 +10,7 @@ from cursor_bridge.glass_services_js import (
     rename_composer_title_js,
     submit_wake_line_js,
 )
-from cursor_bridge.spawn_endpoint_house_ledger import (
+from spawn_ledger.spawn_endpoint_house_ledger import (
     last_successful_wake,
     record_tab_wake,
 )

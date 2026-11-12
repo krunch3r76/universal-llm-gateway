@@ -12,8 +12,6 @@ from typing import Any
 
 from bus_watch.fable_lock import WATCH_DIR
 
-CONSUMERS: tuple[str, ...] = ("mcp",)
-
 _ROW_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _LEDGER_ROW_BODY_RE = re.compile(r"^ledger_row: ([0-9a-f]{32})$", re.MULTILINE)
 

@@ -6,8 +6,8 @@ import json
 import re
 from typing import Any, override
 
-from cursor_bridge.spawn_endpoint_house_ledger import format_ledger_prompt_prefix
 from implement_admission.admission_read import compute_packet_sha256
+from spawn_ledger.spawn_endpoint_house_ledger import format_ledger_prompt_prefix
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 

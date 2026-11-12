@@ -427,6 +427,19 @@ def test_stargate_orion_chat_wake_handler_load_imports_orion_wake() -> None:
 
 
 @pytest.mark.offline
+def test_spawn_ledger_consumers_declared_and_verified() -> None:
+    """``CONSUMERS`` names agent_bus, mcp, and stargate; mcp import path verified."""
+    clear_verify_caches()
+    path = "libs/spawn_ledger/__init__.py"
+    decl = consumers_declared_in_source(
+        (repo_root() / path).read_text(encoding="utf-8")
+    )
+    assert decl == ("agent_bus", "mcp", "stargate")
+    assert verify_consumer_import("mcp", path) == "verified"
+    assert verify_consumer_import("agent_bus", path) == "verified"
+
+
+@pytest.mark.offline
 def test_web_tab_consumers_declared_and_mcp_verified() -> None:
     """``CONSUMERS`` names mcp and stargate; static walk verifies mcp only.
 

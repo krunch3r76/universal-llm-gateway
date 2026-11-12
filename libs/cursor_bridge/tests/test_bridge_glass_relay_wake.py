@@ -60,7 +60,7 @@ def test_relay_wake_tab_resolves_bound_thread(bus_db: None) -> None:
             "cursor_bridge.bridge_glass_relay.asyncio.run",
             return_value={"ok": True, "reason": "delivered"},
         ),
-        patch("cursor_bridge.spawn_endpoint_house_ledger.record_tab_wake"),
+        patch("spawn_ledger.spawn_endpoint_house_ledger.record_tab_wake"),
     ):
         out = relay_wake_tab(
             gui_host=":8",

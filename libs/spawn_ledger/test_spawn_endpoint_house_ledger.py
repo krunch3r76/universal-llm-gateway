@@ -43,7 +43,7 @@ from typing import Any
 
 import pytest
 
-import cursor_bridge.spawn_endpoint_house_ledger as ledger
+import spawn_ledger.spawn_endpoint_house_ledger as ledger
 
 _DISPATCH_IN_SUBJECT = re.compile(r"([0-9a-f]{12}-[0-9a-f]{8}(?:-r\d+)?)")
 

@@ -98,7 +98,7 @@ async def team_dispatch(
     if body.op == "ledger" and (
         getattr(body, "house", None) or getattr(body, "parent", None)
     ):
-        from cursor_bridge.spawn_endpoint_house_ledger import read_house_ledger
+        from spawn_ledger.spawn_endpoint_house_ledger import read_house_ledger
 
         parent_raw = getattr(body, "parent", None)
         parent_sel = (
@@ -307,7 +307,7 @@ async def team_dispatch(
 
         if body.op == "spawn":
             from cursor_bridge.bridge_spawn_relay import relay_spawn_tab
-            from cursor_bridge.spawn_endpoint_house_ledger import (
+            from spawn_ledger.spawn_endpoint_house_ledger import (
                 format_ledger_prompt_prefix,
                 patch_spawn_row,
                 record_spawn,

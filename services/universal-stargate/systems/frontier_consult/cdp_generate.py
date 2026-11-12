@@ -445,7 +445,7 @@ def _stage_inputs(
         )
     staged_prompt = stamp.body if stamp.stamped else staged_prompt
     if ledger_row_id and ledger_purpose is not None:
-        from cursor_bridge.spawn_endpoint_house_ledger import (
+        from spawn_ledger.spawn_endpoint_house_ledger import (
             format_ledger_prompt_prefix,
         )
 
@@ -569,7 +569,7 @@ async def dispatch_cdp_generate(
         )
 
     execution_id = str(uuid.uuid4())
-    from cursor_bridge.spawn_endpoint_house_ledger import mint_row_id, record_spawn
+    from spawn_ledger.spawn_endpoint_house_ledger import mint_row_id, record_spawn
 
     cdp_row_id = mint_row_id()
     cdp_thread = str(getattr(body, "dispatch_thread_id", "") or "").strip()
