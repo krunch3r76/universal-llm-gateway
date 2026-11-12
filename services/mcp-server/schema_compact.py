@@ -72,6 +72,20 @@ def _drop_null_branches(prop: dict[str, Any]) -> dict[str, Any]:
     return compact
 
 
+def _preserve_string_object_union(prop: dict[str, Any]) -> dict[str, Any]:
+    """Keep string+object ``anyOf`` for map-shaped digest preconditions."""
+    any_of = prop.get("anyOf")
+    if not isinstance(any_of, list):
+        return prop
+    branches = [b for b in any_of if isinstance(b, dict) and b.get("type") != "null"]
+    types = {b.get("type") for b in branches}
+    if {"string", "object"} <= types:
+        compact = {k: v for k, v in prop.items() if k != "anyOf"}
+        compact["anyOf"] = branches
+        return compact
+    return prop
+
+
 def _prefer_object_branch(prop: dict[str, Any]) -> dict[str, Any]:
     """For ``anyOf: [string, object, ...]``: promote object branch to top level.
 
@@ -117,7 +131,10 @@ def minify_schema(schema: dict[str, Any]) -> dict[str, Any]:
             continue
 
         prop = _drop_null_branches(prop)
-        prop = _prefer_object_branch(prop)
+        if name == "expected_read_sha256":
+            prop = _preserve_string_object_union(prop)
+        else:
+            prop = _prefer_object_branch(prop)
 
         if "default" in prop and _is_trivial_default(prop["default"]):
             prop = {k: v for k, v in prop.items() if k != "default"}

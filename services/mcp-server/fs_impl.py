@@ -159,6 +159,11 @@ def fs_impl(
     effective_paths = call.paths
     batch_originals = call.batch_originals
     lane_thread = str(thread).strip() if thread else ""
+    workspaces_target_repo: str | None = None
+    if lane_thread and effective_sandbox == "workspaces":
+        from lane_branch_root import GATEWAY_REPO_DIRNAME
+
+        workspaces_target_repo = GATEWAY_REPO_DIRNAME
 
     if effective_sandbox not in _VALID_ROOTS:
         return {"error": fs_missing_sandbox_hint(path, surface=surface)}
@@ -270,6 +275,7 @@ def fs_impl(
                     export=export,
                     chunk_cursor=chunk_cursor,
                     expected_read_sha256=expected_read_sha256,
+                    workspaces_target_repo=workspaces_target_repo,
                 )
             if isinstance(result, dict) and "error" not in result:
                 result.update(ingress_meta)
@@ -297,6 +303,7 @@ def fs_impl(
             export=export,
             chunk_cursor=chunk_cursor,
             expected_read_sha256=expected_read_sha256,
+            workspaces_target_repo=workspaces_target_repo,
         )
         if isinstance(result, dict) and "error" not in result:
             result.update(ingress_meta)
@@ -366,6 +373,7 @@ def fs_impl(
                 export=export,
                 chunk_cursor=chunk_cursor,
                 expected_read_sha256=expected_read_sha256,
+                workspaces_target_repo=workspaces_target_repo,
             )
         if isinstance(result, dict) and "error" not in result:
             attach_batch_key_remap(
