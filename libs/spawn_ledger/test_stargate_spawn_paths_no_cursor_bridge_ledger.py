@@ -7,9 +7,15 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
-from charter_runner_store.archive_pkg import import_archived
 
-repo_root = import_archived("propagation_libs_closure").repo_root
+REPO = Path(__file__).resolve().parents[2]
+assert (REPO / "libs" / "spawn_ledger").is_dir(), REPO
+
+
+def repo_root() -> Path:
+    """Scan the lane checkout that contains this test module."""
+    return REPO
+
 
 _CURSOR_BRIDGE_LEDGER_MODULE = "cursor_bridge.spawn_endpoint_house_ledger"
 

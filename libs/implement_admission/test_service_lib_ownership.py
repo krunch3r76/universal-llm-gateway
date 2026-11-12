@@ -440,6 +440,19 @@ def test_spawn_ledger_consumers_declared_and_verified() -> None:
 
 
 @pytest.mark.offline
+def test_ulg_paths_consumers_declared_and_verified() -> None:
+    """``ulg_paths`` CONSUMERS derived from import-graph reach (bus_watch + spawn_ledger)."""
+    clear_verify_caches()
+    path = "libs/ulg_paths/__init__.py"
+    decl = consumers_declared_in_source(
+        (repo_root() / path).read_text(encoding="utf-8")
+    )
+    assert decl == ("agent_bus", "mcp", "stargate")
+    for slug in decl:
+        assert verify_consumer_import(slug, path) == "verified"
+
+
+@pytest.mark.offline
 def test_web_tab_consumers_declared_and_mcp_verified() -> None:
     """``CONSUMERS`` names mcp and stargate; static walk verifies mcp only.
 
