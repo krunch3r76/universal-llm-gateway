@@ -1,8 +1,9 @@
 """Edge-facing behaviour: lease, started, result, lease loss, redelivery.
 
-``fixture-never`` is the redelivery=never case. It needs no registration: any
-kind absent from ``KIND_REDELIVERY`` is ``never`` by default, which is the
-deny-by-default the binding asks for.
+``NEVER_KIND`` is the redelivery=never case and ``ping`` the safe one. They
+differ in exactly one place — whether a result may be posted before Stargate
+has acknowledged ``started`` — and behave identically under lease loss, which
+the parametrized cases below assert.
 """
 
 from __future__ import annotations
@@ -12,12 +13,14 @@ import asyncio
 import pytest
 
 from systems.edge_ops import admission, leasing
-from systems.edge_ops.model import CODE_LEASE_MISMATCH, EdgeOpRefusedError
+from systems.edge_ops.model import (
+    CODE_LEASE_MISMATCH,
+    CODE_NOT_STARTED,
+    EdgeOpRefusedError,
+)
 from systems.edge_ops.store import EdgeOpsJournal
 
-from .conftest import LEASE_TTL_SECONDS, ManualClock, seen_edge
-
-NEVER_KIND = "fixture-never"
+from .conftest import LEASE_TTL_SECONDS, NEVER_KIND, ManualClock, seen_edge
 
 
 async def _queued(
@@ -272,3 +275,88 @@ async def test_lifecycle_events_fire_for_each_transition(
         "edge.op.started",
         "edge.op.completed",
     } <= signals
+
+
+@pytest.mark.asyncio
+async def test_a_never_kind_result_before_started_is_refused(
+    journal: EdgeOpsJournal,
+) -> None:
+    op_id = await _queued(journal, kind=NEVER_KIND, key="k-never")
+    grant = await leasing.lease(
+        journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0
+    )
+    assert grant is not None
+    assert grant.redelivery == "never"
+
+    with pytest.raises(EdgeOpRefusedError) as refusal:
+        await leasing.post_result(
+            journal, op_id=op_id, edge_id="edge-a", result={"ok": True}
+        )
+    assert refusal.value.code == CODE_NOT_STARTED
+    assert refusal.value.status_code == 409
+
+    record = await journal.get(op_id)
+    assert record is not None
+    assert record.state == "leased"
+    assert record.started_at_epoch is None
+    assert record.result is None
+
+
+@pytest.mark.asyncio
+async def test_a_never_kind_completes_once_started_has_landed(
+    journal: EdgeOpsJournal,
+) -> None:
+    op_id = await _queued(journal, kind=NEVER_KIND, key="k-never")
+    await leasing.lease(journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0)
+    await leasing.post_event(
+        journal, op_id=op_id, edge_id="edge-a", event_type="started"
+    )
+    closed = await leasing.post_result(
+        journal, op_id=op_id, edge_id="edge-a", result={"ok": True}
+    )
+    assert closed["status"] == "completed"
+
+    record = await journal.get(op_id)
+    assert record is not None
+    assert record.started_at_epoch is not None
+    assert record.result == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_a_refused_never_kind_result_leaves_the_op_finishable(
+    journal: EdgeOpsJournal,
+) -> None:
+    """The refusal writes nothing, so the same edge can start and then finish."""
+    op_id = await _queued(journal, kind=NEVER_KIND, key="k-never")
+    await leasing.lease(journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0)
+    with pytest.raises(EdgeOpRefusedError):
+        await leasing.post_result(
+            journal, op_id=op_id, edge_id="edge-a", result={"ok": False}
+        )
+    await leasing.post_event(
+        journal, op_id=op_id, edge_id="edge-a", event_type="started"
+    )
+    closed = await leasing.post_result(
+        journal, op_id=op_id, edge_id="edge-a", result={"ok": True}
+    )
+    assert closed["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_a_safe_kind_may_result_straight_from_leased(
+    journal: EdgeOpsJournal,
+) -> None:
+    """``ping`` is safe, so its handler need not wait for the ``started`` ack."""
+    op_id = await _queued(journal)
+    grant = await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
+    assert grant is not None
+    assert grant.redelivery == "safe"
+
+    closed = await leasing.post_result(
+        journal, op_id=op_id, edge_id="edge-a", result={"ok": True, "pong": True}
+    )
+    assert closed["status"] == "completed"
+
+    record = await journal.get(op_id)
+    assert record is not None
+    assert record.started_at_epoch is None

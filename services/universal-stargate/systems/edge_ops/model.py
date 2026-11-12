@@ -4,7 +4,12 @@ One authority for the words the store, the service functions, the HTTP routes
 and the edge all use. ``redelivery`` rides on the lease grant because the edge
 reads it to decide whether a handler may run before Stargate has acknowledged
 its ``started`` event; the lease-loss fold itself is uniform across kinds
-(before started re-leases, after started ends ``unknown``).
+(before started re-leases, after started ends ``unknown``). Stargate holds the
+other half of that contract: a ``never`` op's result is refused with
+``edge_not_started`` until its ``started`` event has landed, because without
+that ack the fold would have re-leased work the handler had already done. A
+``safe`` op may result straight from ``leased`` — a second delivery of a safe
+kind is harmless, so its handler never has to wait for the ack.
 
 Terminal status is separate from the handler result. A handler that answers
 ``{"ok": false, ...}`` still ends ``completed`` — ``failed`` is reserved for an
@@ -53,6 +58,7 @@ CODE_FAILED = "edge_op_failed"
 CODE_EXPIRED = "edge_op_expired"
 CODE_UNRESOLVED = "edge_op_unknown"
 CODE_LEASE_MISMATCH = "edge_lease_mismatch"
+CODE_NOT_STARTED = "edge_not_started"
 CODE_IDENTITY_REFUSED = "edge_identity_refused"
 
 # Reasons carried on fold transitions and on the matching lifecycle events.

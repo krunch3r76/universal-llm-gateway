@@ -7,17 +7,22 @@ the running proxy, so a boot sequence that wires one owns the instance and the
 routes follow it; absent that, the routes build a default one on the
 configured path, which creates its schema on first touch.
 
-A1 ships no boot wiring, because the gate is off and there are no callers yet.
-Until a boot step installs a journal here, the fallback instance is what every
-request uses and it carries no event bus, so the ``edge.op.*`` vocabulary is
-declared and tested but not published at runtime. Wiring that step — construct
-``EdgeOpsJournal(event_bus=proxy.event_bus)``, ``await initialize()``, and
-install it with ``set_default_journal`` (or attach it as
-``proxy.edge_ops_journal``) — is the one thing needed before the flag is
-flipped on.
+A1 ships no boot wiring, so that fallback instance is what every request uses.
+It still publishes. The proxy is resolved the way every other ``/api/v1/*``
+router resolves it — the app's own ``get_proxy`` dependency, with an override
+registered on the app taking precedence — and the ``event_bus`` that proxy owns
+is injected into the journal on the first request that reaches the store, so
+the ``edge.op.*`` vocabulary reaches the Event Service without a boot step. The
+proxy builds that bus in ``init_proxy`` during lifespan startup, which is
+before any request arrives; a request that somehow preceded it would publish
+nothing and the next one binds. No proxy at all — a test app, or a process that
+never initialized one — is not an error here: the routes still answer from the
+authority store, with nothing published.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from fastapi import Request
 
@@ -29,12 +34,34 @@ _fallback: EdgeOpsJournal | None = None
 
 
 def journal_for(request: Request) -> EdgeOpsJournal:
-    """Return the journal this request should use."""
-    proxy = getattr(request.app.state, "proxy", None)
+    """Return the journal this request should use, with its event bus bound."""
+    proxy = _running_proxy(request)
     attached = getattr(proxy, PROXY_ATTRIBUTE, None)
     if isinstance(attached, EdgeOpsJournal):
         return attached
-    return default_journal()
+    journal = default_journal()
+    journal.bind_event_bus(getattr(proxy, "event_bus", None))
+    return journal
+
+
+def _running_proxy(request: Request) -> Any | None:
+    """Resolve the running proxy, or ``None`` when none is initialized.
+
+    Mirrors how the sibling ``/api/v1/*`` routers reach it: the app's
+    ``get_proxy`` dependency, with an override registered on the app winning
+    so a test can supply its own. The import is deferred to call time to keep
+    this package's module graph free of ``systems.proxy``, which pulls in the
+    whole proxy implementation.
+    """
+    from ..proxy.dependencies import get_proxy
+
+    override = request.app.dependency_overrides.get(get_proxy)
+    if override is not None:
+        return override()
+    try:
+        return get_proxy()
+    except RuntimeError:
+        return None
 
 
 def default_journal() -> EdgeOpsJournal:

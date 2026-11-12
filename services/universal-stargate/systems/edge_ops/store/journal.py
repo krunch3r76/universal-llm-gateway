@@ -107,6 +107,24 @@ class EdgeOpsJournal:
         """Current time from the injected clock."""
         return self._clock()
 
+    def bind_event_bus(self, event_bus: EventBusProtocol | None) -> None:
+        """Adopt the process event bus when this journal has none yet.
+
+        The fallback journal the routes use is built on the first request that
+        reaches the store, which can be before anything has a bus to hand it,
+        so the bus is injected on first touch instead of being fixed at
+        construction. Idempotent, and it never replaces a bus already
+        injected: a journal that a boot sequence or a test constructed with
+        one keeps that one.
+
+        Args:
+            event_bus: The bus to adopt, or ``None`` when none is available
+                yet — then this call changes nothing and a later one can
+                still bind.
+        """
+        if event_bus is not None and self._event_bus is None:
+            self._event_bus = event_bus
+
     async def initialize(self) -> None:
         """Create the schema if missing. Idempotent; safe on every boot."""
         await asyncio.to_thread(initialize_schema_sync, self._path)

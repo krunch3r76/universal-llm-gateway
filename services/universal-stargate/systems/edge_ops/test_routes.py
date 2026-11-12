@@ -10,9 +10,15 @@ from fastapi.testclient import TestClient
 
 from systems.edge_ops import config, runtime
 from systems.edge_ops.auth import require_internal_caller
-from systems.edge_ops.model import CODE_DISABLED, CODE_IDENTITY_REFUSED
+from systems.edge_ops.model import (
+    CODE_DISABLED,
+    CODE_IDENTITY_REFUSED,
+    CODE_NOT_STARTED,
+)
 from systems.edge_ops.routes import router
 from systems.edge_ops.store import EdgeOpsJournal
+
+from .conftest import NEVER_KIND
 
 EDGE_ID = "edge-a"
 EDGE_TOKEN = "test-edge-token"
@@ -170,3 +176,41 @@ def test_directives_answer_204_in_a1(
         headers=EDGE_HEADERS,
     )
     assert response.status_code == 204
+
+
+def test_a_never_kind_result_before_started_is_refused_over_http(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The protocol refusal reaches the caller in the canonical envelope."""
+    monkeypatch.setenv(config.ENABLED_ENV_KEY, "true")
+    lease_body = {"kinds": [NEVER_KIND], "wait_s": 0}
+    idle = client.post("/edge/leases", json=lease_body, headers=EDGE_HEADERS)
+    assert idle.status_code == 204
+
+    admitted = client.post(
+        "/edge/ops",
+        json={"kind": NEVER_KIND, "op": NEVER_KIND, "idempotency_key": "k-never"},
+    )
+    assert admitted.status_code == 202
+    op_id = admitted.json()["op_id"]
+
+    granted = client.post("/edge/leases", json=lease_body, headers=EDGE_HEADERS)
+    assert granted.status_code == 200
+    assert granted.json()["redelivery"] == "never"
+
+    refused = client.post(
+        f"/edge/ops/{op_id}/result",
+        json={"result": {"ok": True}, "outcome": "completed"},
+        headers=EDGE_HEADERS,
+    )
+    assert refused.status_code == 409
+    envelope = refused.json()
+    assert set(envelope) == {"error"}
+    assert set(envelope["error"]) == {"code", "message"}
+    assert envelope["error"]["code"] == CODE_NOT_STARTED
+    assert "started" in envelope["error"]["message"]
+
+    record = client.get(f"/edge/ops/{op_id}")
+    assert record.json()["status"] == "leased"
+    assert record.json()["result"] is None

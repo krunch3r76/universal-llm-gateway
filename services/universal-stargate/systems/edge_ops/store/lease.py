@@ -7,6 +7,9 @@ The edge identity is checked on every write, so one edge cannot renew, start,
 finish or release another edge's op. A write against an op that already
 reached a terminal state is a no-op that returns the stored state — the
 substrate never retries, reopens or overwrites a completed op.
+
+The one ordering rule enforced here is on the terminal write: a ``never`` op's
+result is refused until its ``started`` event has landed.
 """
 
 from __future__ import annotations
@@ -16,7 +19,13 @@ import sqlite3
 import uuid
 from typing import Any
 
-from ..model import TERMINAL_STATES, LeaseGrant, Outcome
+from ..model import (
+    CODE_NOT_STARTED,
+    TERMINAL_STATES,
+    EdgeOpRefusedError,
+    LeaseGrant,
+    Outcome,
+)
 from .schema import record_transition_sync
 
 
@@ -109,9 +118,15 @@ def _owned_row_sync(
     op_id: str,
     edge_id: str,
 ) -> sqlite3.Row | None:
-    """Return the op row when *edge_id* currently holds its lease."""
+    """Return the op row when *edge_id* currently holds its lease.
+
+    Carries ``redelivery`` alongside ``state`` and ``kind``, because the
+    terminal write has to know whether this op's class permits a result
+    before ``started``.
+    """
     return connection.execute(
-        "SELECT state, kind FROM edge_ops WHERE op_id = ? AND leased_by = ?",
+        "SELECT state, kind, redelivery FROM edge_ops "
+        "WHERE op_id = ? AND leased_by = ?",
         (op_id, edge_id),
     ).fetchone()
 
@@ -204,12 +219,34 @@ def finish_sync(
 
     ``None`` means this edge does not hold the lease. An op already terminal
     keeps its stored state and result untouched.
+
+    A ``never`` op must have posted ``started`` first. That 2xx is what its
+    handler waits for, so a result arriving while the op is still ``leased``
+    says the handler ran without the ack — and the lease-loss fold, seeing no
+    ``started``, would have re-leased work that had already happened. Such a
+    result is refused and nothing is written, so the op stays leased and the
+    same edge can still post ``started`` and then its result. A ``safe`` op
+    may result straight from ``leased``: a second delivery of a safe kind is
+    harmless, so its handler never has to wait for the ack and may send no
+    ``started`` at all.
+
+    Raises:
+        EdgeOpRefusedError: 409 ``edge_not_started`` when a ``never`` op that
+            has not reached ``started`` posts a result.
     """
     row = _owned_row_sync(connection, op_id, edge_id)
     if row is None:
         return None
-    if row["state"] in TERMINAL_STATES:
-        return row["state"], row["kind"]
+    state = row["state"]
+    if state in TERMINAL_STATES:
+        return state, row["kind"]
+    if row["redelivery"] == "never" and state != "started":
+        raise EdgeOpRefusedError(
+            409,
+            CODE_NOT_STARTED,
+            f"Edge op {op_id!r} is {state!r}: a redelivery=never op must post "
+            "a 'started' event before its result.",
+        )
     connection.execute(
         "UPDATE edge_ops SET state = ?, result_json = ?, "
         "lease_expires_epoch = NULL, updated_at_epoch = ? WHERE op_id = ?",

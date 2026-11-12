@@ -17,6 +17,11 @@ from systems.edge_ops.store import EdgeOpsJournal
 
 LEASE_TTL_SECONDS = 30.0
 
+# The redelivery=never fixture kind. Any kind absent from ``KIND_REDELIVERY``
+# is ``never`` by default — the deny-by-default the binding asks for — so this
+# one needs no registration to exercise the ``never`` path.
+NEVER_KIND = "fixture-never"
+
 
 class ManualClock:
     """A clock a test advances explicitly."""
