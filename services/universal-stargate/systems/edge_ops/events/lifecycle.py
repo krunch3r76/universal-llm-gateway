@@ -77,6 +77,27 @@ def EdgeOpStarted(  # noqa: N802
 
 
 @event_factory
+def EdgeOpStartRefused(  # noqa: N802
+    op_id: str,
+    kind: str,
+    edge_id: str,
+    refusal_code: str,
+) -> Event:
+    """Emitted when a ``started`` ack is refused (terminal or stale lease)."""
+    return Event(
+        signal="edge.op.start_refused",
+        payload={
+            "op_id": op_id,
+            "kind": kind,
+            "edge_id": edge_id,
+            "refusal_code": refusal_code,
+        },
+        role="coordination",
+        scope="node",
+    )
+
+
+@event_factory
 def EdgeOpProgress(  # noqa: N802
     op_id: str,
     kind: str,

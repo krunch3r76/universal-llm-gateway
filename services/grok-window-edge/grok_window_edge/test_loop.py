@@ -93,6 +93,7 @@ class InProcessClient:
         self,
         *,
         op_id: str,
+        lease_id: str,
         event_type: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
@@ -104,6 +105,7 @@ class InProcessClient:
                 self._journal,
                 op_id=op_id,
                 edge_id=self._edge_id,
+                lease_id=lease_id,
                 event_type=event_type,
                 payload=payload,
             )
@@ -112,6 +114,7 @@ class InProcessClient:
         self,
         *,
         op_id: str,
+        lease_id: str,
         result: Any,
         outcome: str,
     ) -> dict[str, Any]:
@@ -121,15 +124,19 @@ class InProcessClient:
                 self._journal,
                 op_id=op_id,
                 edge_id=self._edge_id,
+                lease_id=lease_id,
                 result=result,
                 outcome=outcome,  # type: ignore[arg-type]
             )
 
-    async def release(self, *, op_id: str) -> dict[str, Any]:
+    async def release(self, *, op_id: str, lease_id: str) -> dict[str, Any]:
         """Release through the real service function."""
         with _as_client_error():
             return await leasing.release(
-                self._journal, op_id=op_id, edge_id=self._edge_id
+                self._journal,
+                op_id=op_id,
+                edge_id=self._edge_id,
+                lease_id=lease_id,
             )
 
 
@@ -155,6 +162,57 @@ async def journal(tmp_path: Path, clock: ManualClock) -> EdgeOpsJournal:
     await store.initialize()
     await store.record_poll(edge_id=EDGE_ID, kinds=("ping", NEVER_KIND))
     return store
+
+
+@pytest.mark.asyncio
+async def test_stale_lease_id_prevents_never_handler_from_running(
+    journal: EdgeOpsJournal,
+    clock: ManualClock,
+) -> None:
+    op_id = await admission.admit(
+        journal,
+        kind=NEVER_KIND,
+        op=NEVER_KIND,
+        args={},
+        idempotency_key="never-stale",
+    )
+    grant = await leasing.lease(
+        journal, edge_id=EDGE_ID, kinds=(NEVER_KIND,), wait_s=0.0
+    )
+    assert grant is not None
+    stale_id = grant.lease_id
+    clock.advance(LEASE_TTL_SECONDS + 1.0)
+    assert (
+        await leasing.lease(journal, edge_id=EDGE_ID, kinds=(NEVER_KIND,), wait_s=0.0)
+        is not None
+    )
+
+    ran: list[str] = []
+
+    async def _handler(op: str, args: dict[str, object]) -> dict[str, object]:
+        ran.append(op)
+        return {"ok": True}
+
+    loop = EdgeLoop(
+        InProcessClient(journal, edge_id=EDGE_ID),
+        kinds=(NEVER_KIND,),
+        handlers={NEVER_KIND: _handler},
+        lease_wait_s=0.0,
+    )
+    await loop._execute(
+        {
+            "op_id": op_id,
+            "lease_id": stale_id,
+            "kind": NEVER_KIND,
+            "op": NEVER_KIND,
+            "args": {},
+            "redelivery": "never",
+        }
+    )
+    assert ran == []
+    record = await journal.get(op_id)
+    assert record is not None
+    assert record.state == "leased"
 
 
 @pytest.mark.asyncio

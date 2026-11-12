@@ -23,6 +23,7 @@ from ..model import (
     REASON_LEASE_LOST_AFTER_STARTED,
     REASON_LEASE_LOST_BEFORE_STARTED,
 )
+from .directives_io import write_cancel_directive_sync
 
 _OPS_DDL = """
 CREATE TABLE IF NOT EXISTS edge_ops (
@@ -177,11 +178,17 @@ def fold_due_sync(
         "FROM edge_ops WHERE state IN ('queued', 'leased', 'started')"
     ).fetchall()
     for row in rows:
+        if row["state"] == "started" and now >= row["deadline_epoch"]:
+            if write_cancel_directive_sync(connection, op_id=row["op_id"], now=now):
+                connection.commit()
         new_state, reason = _due_transition_for(row, now)
         if new_state is None or reason is None:
             continue
-        _apply_fold_sync(connection, row["op_id"], new_state, reason, now)
-        folded.append((row["op_id"], row["kind"], new_state, reason))
+        applied = _apply_fold_sync(
+            connection, row["op_id"], row["state"], new_state, reason, now
+        )
+        if applied:
+            folded.append((row["op_id"], row["kind"], new_state, reason))
     if folded:
         connection.commit()
     return folded
@@ -211,23 +218,27 @@ def _due_transition_for(
 def _apply_fold_sync(
     connection: sqlite3.Connection,
     op_id: str,
+    expected_state: str,
     new_state: str,
     reason: str,
     now: float,
-) -> None:
-    """Write the folded state, clearing lease columns when requeueing."""
+) -> bool:
+    """Write the folded state when *expected_state* still holds. True when applied."""
     if new_state == "queued":
-        connection.execute(
+        updated = connection.execute(
             "UPDATE edge_ops SET state = 'queued', leased_by = NULL, "
             "lease_id = NULL, lease_expires_epoch = NULL, updated_at_epoch = ? "
-            "WHERE op_id = ?",
-            (now, op_id),
-        )
+            "WHERE op_id = ? AND state = ?",
+            (now, op_id, expected_state),
+        ).rowcount
     else:
-        connection.execute(
-            "UPDATE edge_ops SET state = ?, updated_at_epoch = ? WHERE op_id = ?",
-            (new_state, now, op_id),
-        )
+        updated = connection.execute(
+            "UPDATE edge_ops SET state = ?, updated_at_epoch = ? "
+            "WHERE op_id = ? AND state = ?",
+            (new_state, now, op_id, expected_state),
+        ).rowcount
+    if not updated:
+        return False
     record_transition_sync(
         connection,
         op_id=op_id,
@@ -235,3 +246,4 @@ def _apply_fold_sync(
         reason=reason,
         at_epoch=now,
     )
+    return True

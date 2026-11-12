@@ -26,7 +26,7 @@ from .model import (
     EdgeOpRefusedError,
 )
 from .runtime import journal_for
-from .wire import AdmitBody, EventBody, LeaseBody, ResultBody
+from .wire import AdmitBody, EventBody, LeaseBody, ReleaseBody, ResultBody
 
 router = APIRouter(prefix="/edge", tags=["edge-ops"])
 
@@ -168,6 +168,7 @@ async def post_op_event(
             journal_for(request),
             op_id=op_id,
             edge_id=edge_id,
+            lease_id=body.lease_id,
             event_type=body.type,
             payload=body.payload,
         )
@@ -192,6 +193,7 @@ async def post_op_result(
             journal_for(request),
             op_id=op_id,
             edge_id=edge_id,
+            lease_id=body.lease_id,
             result=body.result,
             outcome=body.outcome,
         )
@@ -201,7 +203,11 @@ async def post_op_result(
 
 
 @router.post("/ops/{op_id}/release")
-async def release_op(op_id: str, request: Request) -> JSONResponse:
+async def release_op(
+    op_id: str,
+    body: ReleaseBody,
+    request: Request,
+) -> JSONResponse:
     """Give the lease back without a result."""
     refused = _gate()
     if refused is not None:
@@ -209,7 +215,10 @@ async def release_op(op_id: str, request: Request) -> JSONResponse:
     try:
         edge_id = await require_edge_identity(request)
         released = await leasing.release(
-            journal_for(request), op_id=op_id, edge_id=edge_id
+            journal_for(request),
+            op_id=op_id,
+            edge_id=edge_id,
+            lease_id=body.lease_id,
         )
     except EdgeOpRefusedError as error:
         return _refusal_response(error)
@@ -220,6 +229,7 @@ async def release_op(op_id: str, request: Request) -> JSONResponse:
 async def get_op_directives(
     op_id: str,
     request: Request,
+    lease_id: str = Query(..., min_length=1),
     after: int = Query(0, ge=0),
     wait: float = Query(config.LONG_POLL_SECONDS, ge=0.0),
 ) -> Response:
@@ -239,6 +249,7 @@ async def get_op_directives(
             journal_for(request),
             op_id=op_id,
             edge_id=edge_id,
+            lease_id=lease_id,
             after=after,
             wait_s=wait,
         )

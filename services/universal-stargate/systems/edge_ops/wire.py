@@ -35,6 +35,7 @@ class EventBody(BaseModel):
     """``POST /api/v1/edge/ops/{id}/events`` — open type plus free payload."""
 
     type: str = Field(..., min_length=1)
+    lease_id: str = Field(..., min_length=1)
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -47,5 +48,12 @@ class ResultBody(BaseModel):
     infrastructure error.
     """
 
+    lease_id: str = Field(..., min_length=1)
     result: Any = None
     outcome: Literal["completed", "failed"] = "completed"
+
+
+class ReleaseBody(BaseModel):
+    """``POST /api/v1/edge/ops/{id}/release`` — end the lease without a result."""
+
+    lease_id: str = Field(..., min_length=1)

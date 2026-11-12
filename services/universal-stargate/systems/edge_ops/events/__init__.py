@@ -11,6 +11,7 @@ from .lifecycle import (
     EdgeOpReleased,
     EdgeOpRequeued,
     EdgeOpStarted,
+    EdgeOpStartRefused,
     EdgeOpUnknown,
 )
 
@@ -24,6 +25,7 @@ __all__ = [
     "EdgeOpProgress",
     "EdgeOpRequeued",
     "EdgeOpReleased",
+    "EdgeOpStartRefused",
     "EdgeOpStarted",
     "EdgeOpUnknown",
 ]
