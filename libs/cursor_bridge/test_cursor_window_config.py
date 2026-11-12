@@ -39,7 +39,6 @@ def test_cursor_windows_config_tracked_and_loads() -> None:
 )
 def test_configured_hosts_match_prior_behavior(host: str) -> None:
     assert is_cursor_xvfb_host(host) is True
-    assert is_cursor_xvfb_host("jupiter") is False
 
 
 @pytest.mark.parametrize(

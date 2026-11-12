@@ -14,8 +14,6 @@ import json
 import uuid
 from typing import Any
 
-from host_predicates.cursor_hosts import is_cursor_xvfb_host
-
 from cursor_bridge.cdp_pages import list_pages
 from cursor_bridge.cursor_window_config import cdp_origin_for_gui_host
 from cursor_bridge.glass_services_js import (
@@ -380,7 +378,6 @@ __all__ = [
     "_select_agent_js",
     "archive_cursor_agents_tab",
     "cursor_debug_url_for_gui_host",
-    "is_cursor_xvfb_host",
     "launch_cursor_agents_tab",
     "list_pages",
     "pick_chat_page",

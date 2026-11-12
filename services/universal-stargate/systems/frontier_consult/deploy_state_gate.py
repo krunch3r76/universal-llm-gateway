@@ -393,12 +393,6 @@ def _identity_passes(
         return False, True
 
     h_ref = str(health.get("source_ref") or "").strip()
-    if h_ref and source_ref and h_ref == source_ref:
-        return True, True
-
-    h_tree = str(health.get("source_tree_hash") or "").strip()
-    if h_tree and expected_tree_hash and h_tree == expected_tree_hash:
-        return True, True
 
     if h_ref and source_ref:
         src_kind = source_ref.split(":", 1)[0]

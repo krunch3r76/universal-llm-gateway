@@ -68,7 +68,7 @@ from bus_watch.judgment_rows import harvest_judgment_turns
 from bus_watch.liaison_digest import build_digest
 from bus_watch.now_row import format_now_line, resolve_now_row
 from bus_watch.tick_state import load_state
-from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
+from host_predicates.cursor_hosts import is_cursor_xvfb_host
 
 _SIGTERM_RETIRE_CTX: dict[str, Any] = {}
 

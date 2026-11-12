@@ -25,7 +25,6 @@ from cursor_bridge.cursor_agents_hop import (
     _select_agent_js,
     archive_cursor_agents_tab,
     cursor_debug_url_for_gui_host,
-    is_cursor_xvfb_host,
     launch_cursor_agents_tab,
     prune_cursor_agents_predecessors,
 )
@@ -39,6 +38,7 @@ from cursor_bridge.glass_services_js import (
 )
 from cursor_bridge.house_knob_parameters import map_house_knob_parameters
 from cursor_bridge.wake_delivery import normalize_target
+from host_predicates.cursor_hosts import is_cursor_xvfb_host
 
 pytestmark = pytest.mark.offline
 
