@@ -12,15 +12,30 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _INSTALL = _REPO_ROOT / "scripts" / "grokbot-box-mcp-install.sh"
 
 
+def _stub_proxyshim_undici(shim_dir: Path) -> None:
+    undici = shim_dir / "node_modules" / "undici"
+    undici.mkdir(parents=True, exist_ok=True)
+    (undici / "package.json").write_text('{"name":"undici","version":"6.29.0"}', encoding="utf-8")
+
+
 def _run_install(
     tmp_path: Path,
     *extra_args: str,
     stdin: str | None = None,
     header_dest: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    shim_dir = tmp_path / ".proxyshim"
+    _stub_proxyshim_undici(shim_dir)
     env = {
         "HOME": str(tmp_path),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "GROKBOT_PROXYSHIM_DIR": str(shim_dir),
+        "GROKBOT_PROXYSHIM_PRELOAD_SRC": str(
+            _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "preload.cjs"
+        ),
+        "GROKBOT_PROXYSHIM_PKG_SRC": str(
+            _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "package.json"
+        ),
     }
     if header_dest is not None:
         env["GROKBOT_HEADER_DEST"] = str(header_dest)
@@ -209,11 +224,20 @@ def test_print_paste_bootstrap_double_install_offline(tmp_path: Path) -> None:
     assert launcher.is_file()
     assert oct(launcher.stat().st_mode & 0o777) == oct(0o755)
 
+    shim_dir = home / ".proxyshim"
+    _stub_proxyshim_undici(shim_dir)
     install_env = {
         **env,
         "GROKBOT_HEADER_DEST": str(header),
         "GROKBOT_LAUNCHER_SRC": str(
             home / ".local" / "bin" / "grokbot-mcp-remote-launcher.sh"
+        ),
+        "GROKBOT_PROXYSHIM_DIR": str(shim_dir),
+        "GROKBOT_PROXYSHIM_PRELOAD_SRC": str(
+            _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "preload.cjs"
+        ),
+        "GROKBOT_PROXYSHIM_PKG_SRC": str(
+            _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "package.json"
         ),
     }
     for _ in range(2):
@@ -295,10 +319,19 @@ def test_header_write_exit_trap_cleans_temp_on_mv_failure(tmp_path: Path) -> Non
     fake_bin.mkdir()
     (fake_bin / "mv").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
     (fake_bin / "mv").chmod(0o755)
+    shim_dir = tmp_path / ".proxyshim"
+    _stub_proxyshim_undici(shim_dir)
     env = {
         "HOME": str(tmp_path),
         "PATH": f"{fake_bin}:{os.environ.get('PATH', '/usr/bin:/bin')}",
         "GROKBOT_HEADER_DEST": str(header),
+        "GROKBOT_PROXYSHIM_DIR": str(shim_dir),
+        "GROKBOT_PROXYSHIM_PRELOAD_SRC": str(
+            _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "preload.cjs"
+        ),
+        "GROKBOT_PROXYSHIM_PKG_SRC": str(
+            _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "package.json"
+        ),
     }
     proc = subprocess.run(
         [
@@ -322,9 +355,18 @@ def test_header_write_exit_trap_cleans_temp_on_mv_failure(tmp_path: Path) -> Non
 @pytest.mark.offline
 def test_install_self_candidate_strips_login_shell_argv0(tmp_path: Path) -> None:
     """N11/N13: -bash argv0 must not break SELF resolution on the real install script."""
+    shim_dir = tmp_path / ".proxyshim"
+    _stub_proxyshim_undici(shim_dir)
     env = {
         "HOME": str(tmp_path),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "GROKBOT_PROXYSHIM_DIR": str(shim_dir),
+        "GROKBOT_PROXYSHIM_PRELOAD_SRC": str(
+            _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "preload.cjs"
+        ),
+        "GROKBOT_PROXYSHIM_PKG_SRC": str(
+            _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "package.json"
+        ),
     }
     with _INSTALL.open("rb") as script:
         proc = subprocess.run(

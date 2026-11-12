@@ -23,7 +23,11 @@ INSTALL_ROOT="${HOME}/.local/share/ulg-mcp-remote/${PIN}"
 BIN_DIR="${HOME}/.local/bin"
 LAUNCHER_DEST="${BIN_DIR}/grokbot-mcp-remote-launcher.sh"
 HEADER_DEST="${GROKBOT_HEADER_DEST:-/home/box/.gateway/vortex-mcp-headers}"
-_PROXYSHIM_REQUIRE="--require /home/box/.proxyshim/preload.cjs"
+PROXYSHIM_DIR="${GROKBOT_PROXYSHIM_DIR:-/home/box/.proxyshim}"
+PROXYSHIM_PRELOAD_SRC="${GROKBOT_PROXYSHIM_PRELOAD_SRC:-${SELF_DIR}/grokbot-proxyshim/preload.cjs}"
+PROXYSHIM_PKG_SRC="${GROKBOT_PROXYSHIM_PKG_SRC:-${SELF_DIR}/grokbot-proxyshim/package.json}"
+PROXYSHIM_PRELOAD_SHA="0e8a545a2b04946b489fad332f1af485d397f77c0c7fc161e2f6386ce016636c"
+_PROXYSHIM_REQUIRE="--require ${PROXYSHIM_DIR}/preload.cjs"
 
 usage() {
   cat >&2 <<'EOF'
@@ -52,23 +56,40 @@ _installer_body_for_embed() {
     return 1
   fi
   if [[ -f "${LAUNCHER_SRC}" ]] && command -v python3 >/dev/null 2>&1; then
-    GROKBOT_LAUNCHER_SRC="${LAUNCHER_SRC}" GROKBOT_INSTALL_SELF="${src}" python3 <<'PY'
+    GROKBOT_LAUNCHER_SRC="${LAUNCHER_SRC}" \
+    GROKBOT_PROXYSHIM_PRELOAD_SRC="${PROXYSHIM_PRELOAD_SRC}" \
+    GROKBOT_PROXYSHIM_PKG_SRC="${PROXYSHIM_PKG_SRC}" \
+    GROKBOT_INSTALL_SELF="${src}" python3 <<'PY'
 import os
 import pathlib
 import sys
 
 self_path = pathlib.Path(os.environ["GROKBOT_INSTALL_SELF"]).resolve()
 launcher = pathlib.Path(os.environ["GROKBOT_LAUNCHER_SRC"]).read_text(encoding="utf-8")
+preload = pathlib.Path(os.environ["GROKBOT_PROXYSHIM_PRELOAD_SRC"]).read_text(encoding="utf-8")
+pkg = pathlib.Path(os.environ["GROKBOT_PROXYSHIM_PKG_SRC"]).read_text(encoding="utf-8")
 body = self_path.read_text(encoding="utf-8")
-start = "  cat >\"${LAUNCHER_DEST}\" <<'GROKBOT_MCP_REMOTE_LAUNCHER_EMBED'\n"
-end = "\nGROKBOT_MCP_REMOTE_LAUNCHER_EMBED\n"
-i = body.find(start)
-j = body.find(end, i)
-if i < 0 or j < 0:
-    sys.stderr.write("grokbot-box-mcp-install: --print embed markers missing\n")
-    raise SystemExit(2)
-new_body = body[: i + len(start)] + launcher.rstrip("\n") + body[j:]
-sys.stdout.write(new_body)
+
+
+def splice(body: str, start: str, end: str, content: str) -> str:
+    i = body.find(start)
+    j = body.find(end, i)
+    if i < 0 or j < 0:
+        sys.stderr.write("grokbot-box-mcp-install: --print embed markers missing\n")
+        raise SystemExit(2)
+    return body[: i + len(start)] + content.rstrip("\n") + body[j:]
+
+
+start_l = "  cat >\"${LAUNCHER_DEST}\" <<'GROKBOT_MCP_REMOTE_LAUNCHER_EMBED'\n"
+end_l = "\nGROKBOT_MCP_REMOTE_LAUNCHER_EMBED\n"
+start_p = "  cat >\"${PROXYSHIM_DIR}/preload.cjs\" <<'GROKBOT_PROXYSHIM_PRELOAD_EMBED'\n"
+end_p = "\nGROKBOT_PROXYSHIM_PRELOAD_EMBED\n"
+start_j = "  cat >\"${PROXYSHIM_DIR}/package.json\" <<'GROKBOT_PROXYSHIM_PACKAGE_EMBED'\n"
+end_j = "\nGROKBOT_PROXYSHIM_PACKAGE_EMBED\n"
+body = splice(body, start_l, end_l, launcher)
+body = splice(body, start_p, end_p, preload)
+body = splice(body, start_j, end_j, pkg)
+sys.stdout.write(body)
 PY
     return 0
   fi
@@ -122,6 +143,7 @@ if launcher.strip():
 chmod 755 "${{LAUNCHER}}"
 """
 out += 'echo "grokbot-box-mcp-install: wrote ${INSTALLER}" >&2\n'
+out += 'echo "grokbot-box-mcp-install: run installer to provision proxyshim under /home/box/.proxyshim" >&2\n'
 out += ')\n'
 sys.stdout.write(out)
 PY
@@ -312,6 +334,81 @@ _read_header_line() {
   _write_header_from_line "${line}"
 }
 
+_file_sha256() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+_proxyshim_embed_usable() {
+  local self="${SELF:-}"
+  if [[ -z "${self}" || ! -f "${self}" ]]; then
+    self="${BASH_SOURCE[0]}"
+  fi
+  [[ -f "${self}" ]] && grep -q "GROKBOT_PROXYSHIM_PRELOAD_EMBED" "${self}"
+}
+
+_install_proxyshim_from_embed() {
+  cat >"${PROXYSHIM_DIR}/preload.cjs" <<'GROKBOT_PROXYSHIM_PRELOAD_EMBED'
+const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+if (proxy) { const { setGlobalDispatcher, ProxyAgent } = require('/home/box/.proxyshim/node_modules/undici'); setGlobalDispatcher(new ProxyAgent(proxy)); }
+GROKBOT_PROXYSHIM_PRELOAD_EMBED
+  cat >"${PROXYSHIM_DIR}/package.json" <<'GROKBOT_PROXYSHIM_PACKAGE_EMBED'
+{"name":"proxyshim","version":"1.0.0","private":true,"dependencies":{"undici":"^6.29.0"}}
+GROKBOT_PROXYSHIM_PACKAGE_EMBED
+}
+
+_install_proxyshim_deps() {
+  if [[ -f "${PROXYSHIM_DIR}/node_modules/undici/package.json" ]]; then
+    return 0
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "grokbot-box-mcp-install: npm missing; cannot install undici under ${PROXYSHIM_DIR}" >&2
+    exit 2
+  fi
+  (
+    cd "${PROXYSHIM_DIR}"
+    if ! NODE_OPTIONS='' HTTPS_PROXY="${HTTPS_PROXY:-http://127.0.0.1:8791}" npm install --no-fund --no-audit; then
+      echo "grokbot-box-mcp-install: npm install undici under proxyshim failed" >&2
+      exit 1
+    fi
+  )
+}
+
+_install_proxyshim() {
+  export HTTPS_PROXY="${HTTPS_PROXY:-http://127.0.0.1:8791}"
+  local dest_preload="${PROXYSHIM_DIR}/preload.cjs"
+  local expected="${PROXYSHIM_PRELOAD_SHA}"
+
+  if [[ -f "${dest_preload}" ]]; then
+    local cur
+    cur="$(_file_sha256 "${dest_preload}")"
+    if [[ "${cur}" == "${expected}" ]]; then
+      echo "grokbot-box-mcp-install: proxyshim preload unchanged (skip ${dest_preload})" >&2
+      _install_proxyshim_deps
+      return 0
+    fi
+  fi
+
+  if [[ -f "${PROXYSHIM_PRELOAD_SRC}" && -f "${PROXYSHIM_PKG_SRC}" ]]; then
+    mkdir -p "${PROXYSHIM_DIR}"
+    cp "${PROXYSHIM_PRELOAD_SRC}" "${dest_preload}"
+    cp "${PROXYSHIM_PKG_SRC}" "${PROXYSHIM_DIR}/package.json"
+  elif _proxyshim_embed_usable; then
+    mkdir -p "${PROXYSHIM_DIR}"
+    _install_proxyshim_from_embed
+  else
+    echo "grokbot-box-mcp-install: missing proxyshim preload source (expected ${PROXYSHIM_PRELOAD_SRC})" >&2
+    exit 1
+  fi
+
+  local got
+  got="$(_file_sha256 "${dest_preload}")"
+  if [[ "${got}" != "${expected}" ]]; then
+    echo "grokbot-box-mcp-install: proxyshim preload sha mismatch (got ${got}, want ${expected})" >&2
+    exit 1
+  fi
+  _install_proxyshim_deps
+}
+
 _append_proxyshim() {
   if [[ -z "${NODE_OPTIONS:-}" ]]; then
     export NODE_OPTIONS="${_PROXYSHIM_REQUIRE}"
@@ -376,6 +473,7 @@ if [[ "${PRINT}" == true ]]; then
 fi
 
 _install_launcher
+_install_proxyshim
 
 if [[ "${HEADER_STDIN}" == true || "${HEADER_PROMPT}" == true ]]; then
   _read_header_line
@@ -388,4 +486,4 @@ if [[ "${SKIP_MCP}" == false ]]; then
   _install_mcp_remote
 fi
 
-echo "grokbot-box-mcp-install: ok launcher=${LAUNCHER_DEST}"
+echo "grokbot-box-mcp-install: ok launcher=${LAUNCHER_DEST} proxyshim=${PROXYSHIM_DIR}"
