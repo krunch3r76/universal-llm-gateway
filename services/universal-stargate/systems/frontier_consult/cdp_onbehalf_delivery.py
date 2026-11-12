@@ -12,7 +12,6 @@ from bus_compact_pointer import (
     compact_pointer_body,
     extract_verdict_line,
 )
-from bus_compact_pointer.pointer import MAX_BODY_CHARS
 from claude_bundles.cdp_model_endpoint import CdpGenerateResult
 from services.git_integration_worker.cursor_sdk_closeout_harvest import _fenced_spans
 from universal_logging import get_logger
@@ -40,26 +39,23 @@ def build_cdp_degraded_inline_body(*, format_metadata: str, harvest: str) -> str
     return f"{_DEGRADED_SIDECAR_WARNING}\n\n{text}"
 
 
-def _degraded_spill_brief(*, format_metadata: str) -> str:
-    meta = format_metadata.strip()
-    if meta:
-        return f"{_DEGRADED_SIDECAR_WARNING}\n{meta}"
-    return _DEGRADED_SIDECAR_WARNING
-
-
 def _bounded_degraded_fallback(full_body: str) -> str:
     """Truncate degraded inline for allow_long_body after spill refusal."""
-    note = "\n… truncated spill fallback"
-    budget = BUS_MAX_BODY_CHARS - len(note)
-    if len(full_body) <= budget:
+    if len(full_body) <= BUS_MAX_BODY_CHARS:
         return full_body
-    dropped = len(full_body) - budget
-    note = (
-        f"\n… truncated {dropped} chars "
-        "(sidecar write failed; allow_long_body fallback)"
-    )
-    budget = BUS_MAX_BODY_CHARS - len(note)
-    return full_body[: max(0, budget)].rstrip() + note
+    trimmed = full_body[:BUS_MAX_BODY_CHARS].rstrip()
+    for _ in range(32):
+        dropped = len(full_body) - len(trimmed)
+        note = (
+            f"\n… truncated {dropped} chars "
+            "(sidecar write failed; allow_long_body fallback)"
+        )
+        candidate = trimmed + note
+        if len(candidate) <= BUS_MAX_BODY_CHARS:
+            return candidate
+        over = len(candidate) - BUS_MAX_BODY_CHARS
+        trimmed = full_body[: max(0, len(trimmed) - over)].rstrip()
+    return full_body[: max(0, BUS_MAX_BODY_CHARS - 80)].rstrip() + note
 
 # Same shape as master_review_owed.CANONICAL_VERDICT_RE (binder contract).
 _CANONICAL_VERDICT_RE = re.compile(
@@ -186,17 +182,26 @@ async def write_cdp_harvest_sidecar(
     """Persist harvest to cortex thread sidecar before pointer post."""
     from systems.pipeline.core.handlers.thread_persistence.events import cx_async
 
-    sidecar_result = await cx_async(
-        "thread_sidecar_write",
-        {
-            "thread": thread_id,
-            "subject": subject,
-            "content": content,
-            "from_agent": "web-anthropic",
-            "execution_id": result.execution_id,
-            "oversized": oversized,
-        },
-    )
+    try:
+        sidecar_result = await cx_async(
+            "thread_sidecar_write",
+            {
+                "thread": thread_id,
+                "subject": subject,
+                "content": content,
+                "from_agent": "web-anthropic",
+                "execution_id": result.execution_id,
+                "oversized": oversized,
+            },
+        )
+    except Exception as exc:
+        logger.error(
+            "CDP on-behalf sidecar write failed: execution_id=%s thread=%s error=%s",
+            result.execution_id,
+            thread_id,
+            exc,
+        )
+        return None
     if "error" in sidecar_result:
         logger.error(
             "CDP on-behalf sidecar write failed: execution_id=%s thread=%s error=%s",
@@ -232,7 +237,7 @@ async def build_cdp_success_delivery_body(
     pointer_only: bool = False,
     body_mode: BodyMode = "compact",
 ) -> str | None:
-    """Build ok=True delivery body; None when oversized sidecar write failed.
+    """Build ok=True delivery body; degraded inline when sidecar write failed.
 
   ``body_mode=compact`` (default) always sidecars harvest and posts a compact
     pointer. ``inline`` preserves legacy inline harvest up to ``BUS_MAX_BODY_CHARS``.
@@ -336,48 +341,33 @@ async def _post_degraded_ok_body(
     to_agent: str,
     subject: str,
     full_body: str,
-    format_metadata: str,
     request_id: str,
     pointer_turn: int,
+    enable_bounded_fallback: bool = True,
 ):
+    """Post degraded ok=True body; bus auto-spill handles bodies > brief limit."""
     from .cdp_generate_worker import post_cdp_turn
 
-    if len(full_body) <= MAX_BODY_CHARS:
-        kwargs: dict[str, object] = {}
-        return await post_cdp_turn(
-            thread_id=thread_id,
-            to_agent=to_agent,
-            subject=subject,
-            body=full_body,
-            request_id=request_id,
-            pointer_turn=pointer_turn,
-            **kwargs,
-        )
-
-    spill_body = _degraded_spill_brief(format_metadata=format_metadata)
-    spill = await post_cdp_turn(
+    primary = await post_cdp_turn(
         thread_id=thread_id,
         to_agent=to_agent,
         subject=subject,
-        body=spill_body,
+        body=full_body,
         request_id=request_id,
         pointer_turn=pointer_turn,
-        sidecar_content=full_body,
     )
-    if spill.ok:
-        return spill
-    if spill.http_status == 413:
-        bounded = _bounded_degraded_fallback(full_body)
-        return await post_cdp_turn(
-            thread_id=thread_id,
-            to_agent=to_agent,
-            subject=subject,
-            body=bounded,
-            request_id=request_id,
-            pointer_turn=pointer_turn,
-            allow_long_body=True,
-        )
-    return spill
+    if primary.ok or not enable_bounded_fallback:
+        return primary
+    bounded = _bounded_degraded_fallback(full_body)
+    return await post_cdp_turn(
+        thread_id=thread_id,
+        to_agent=to_agent,
+        subject=subject,
+        body=bounded,
+        request_id=request_id,
+        pointer_turn=pointer_turn,
+        allow_long_body=True,
+    )
 
 
 async def deliver_cdp_result_turn(
@@ -417,9 +407,9 @@ async def deliver_cdp_result_turn(
                 to_agent=to_agent,
                 subject=subject,
                 full_body=body,
-                format_metadata=metadata,
                 request_id=request_id,
                 pointer_turn=pointer_turn,
+                enable_bounded_fallback=True,
             )
             if last_outcome.ok:
                 return True
@@ -429,9 +419,9 @@ async def deliver_cdp_result_turn(
                 to_agent=to_agent,
                 subject=subject,
                 full_body=body,
-                format_metadata=metadata,
                 request_id=request_id,
                 pointer_turn=pointer_turn,
+                enable_bounded_fallback=False,
             )
             if last_outcome.ok:
                 return True
