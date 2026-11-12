@@ -14,14 +14,8 @@ from agent_bus_store.db.endpoint_wake_ledger import (
     get_cursor,
     newest_subscribed_thread_scoped_subscription,
 )
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_dispatcher import qualify, scan_once
-
-
-def _rewind_wake_cursor(conn, *, to: int = 0) -> None:
-    conn.execute(
-        "UPDATE endpoint_wake_cursor SET high_water_turn_id=? WHERE consumer=?",
-        (to, CONSUMER),
-    )
 
 
 _THREAD = "22796"
@@ -182,7 +176,7 @@ def _run_scan_for_turn(
     )
     get_cursor()
     with connect() as conn:
-        _rewind_wake_cursor(conn, to=0)
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     store = _ScanStore()
     scan_once(store)  # type: ignore[arg-type]
     return store.pending, turn_id
@@ -211,7 +205,7 @@ def test_scan_once_idempotent_one_ledger_row_per_turn(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        _rewind_wake_cursor(conn, to=0)
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     store = _ScanStore()
     scan_once(store)  # type: ignore[arg-type]
     scan_once(store)  # type: ignore[arg-type]

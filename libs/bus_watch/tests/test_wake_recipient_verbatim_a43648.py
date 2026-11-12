@@ -7,6 +7,7 @@ from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
 from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
 from agent_bus_store.db.endpoint_wake_ledger import CONSUMER, advance_scan, get_cursor
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_dispatcher import (
     _COORD_WAKE_EXCLUDED_TO,
     _WAKE_COORD_SUBSCRIBER_RULE,
@@ -55,13 +56,6 @@ def db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     init_db()
 
 
-def _rewind(conn) -> None:
-    conn.execute(
-        "UPDATE endpoint_wake_cursor SET high_water_turn_id=0 WHERE consumer=?",
-        (CONSUMER,),
-    )
-
-
 class _Store:
     def cursor(self):
         return get_cursor()
@@ -98,7 +92,7 @@ class _Store:
             return {
                 "registration_id": reg,
                 "chat_url": f"https://claude.ai/cowork/{reg}",
-                "seat_state": "houseless",
+                "seat_state": "driving",
             }
         return None
 
@@ -111,10 +105,10 @@ def _seed_sub(agent: str, thread: str) -> None:
     subscribe_endpoint(
         agent=agent,
         thread_scope=thread,
-        surface="cse",
-        display="cse",
+        surface="cursor",
+        display="8",
         title="sub",
-        agent_id=f"reg-{agent}",
+        agent_id=thread,
         bound_by="verbatim-a43648",
     )
 
@@ -130,7 +124,7 @@ def _scan_turn(thread: str, *, from_agent: str, to_agent: str, subject: str) -> 
     )
     get_cursor()
     with connect() as conn:
-        _rewind(conn)
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     scan_once(_Store())  # type: ignore[arg-type]
 
 

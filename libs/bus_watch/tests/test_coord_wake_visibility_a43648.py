@@ -7,6 +7,7 @@ from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
 from agent_bus_store.db.endpoint_subscriptions import subscribe_endpoint
 from agent_bus_store.db.endpoint_wake_ledger import CONSUMER, advance_scan, get_cursor
+from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 
 from bus_watch.endpoint_wake_dispatcher import qualify, scan_once
 
@@ -18,13 +19,6 @@ _THREAD_23056 = "23056"
 def db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
     init_db()
-
-
-def _rewind(conn) -> None:
-    conn.execute(
-        "UPDATE endpoint_wake_cursor SET high_water_turn_id=0 WHERE consumer=?",
-        (CONSUMER,),
-    )
 
 
 class _Store:
@@ -109,7 +103,7 @@ def test_pointer_default_suppress_leaves_skipped_tombstone(db: None) -> None:
     )
     get_cursor()
     with connect() as conn:
-        _rewind(conn)
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
     scan_once(_Store())  # type: ignore[arg-type]
     with connect() as conn:
         rows = conn.execute(
