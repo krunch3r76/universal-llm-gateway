@@ -222,7 +222,7 @@ tools:
         - body
       section:
         type: string
-        description: 'body intent: md_read one section by heading/path'
+        description: 'body intent: md_read one section by id'
       full_body:
         type: boolean
         description: 'body intent: false=section manifest only; omit or true=whole body (default)'
@@ -3081,6 +3081,11 @@ tools:
         type: string
       path:
         type: string
+      offset:
+        type: integer
+        description: Descriptor cursor from a prior md_list ``cursor`` field.
+      size_only:
+        type: boolean
     required:
     - path
   skill_uri: rule:fs
@@ -6206,6 +6211,11 @@ tools:
         type: string
       path:
         type: string
+      offset:
+        type: integer
+        description: Descriptor cursor from a prior md_list ``cursor`` field.
+      size_only:
+        type: boolean
     required:
     - path
   skill_uri: rule:fs
@@ -6849,7 +6859,7 @@ tools:
         - body
       section:
         type: string
-        description: 'body intent: md_read one section by heading/path'
+        description: 'body intent: md_read one section by id'
       full_body:
         type: boolean
         description: 'body intent: false=section manifest only; omit or true=whole body (default)'

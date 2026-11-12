@@ -1,6 +1,6 @@
 """Markdown-shaped overflow manifests for the response size guard.
 
-Builds md_list-equivalent section trees for oversized markdown tool results
+Builds section trees for oversized markdown tool results
 while keeping full payloads in the rs_ store for retrieve pop semantics.
 """
 
@@ -17,9 +17,7 @@ from markdown_sections import list_sections as md_list_sections
 STRUCTURE_BUDGET_BYTES: int = 16 * 1024
 STRUCTURE_MAX_SECTIONS: int = 200
 
-_SECTION_KEYS: frozenset[str] = frozenset(
-    {"id", "heading", "level", "line", "char_count"}
-)
+_SECTION_KEYS: frozenset[str] = frozenset({"heading", "level", "path", "line", "chars"})
 
 
 def _walk_strings(obj: Any) -> list[str]:
@@ -112,16 +110,16 @@ def _section_row_bytes(rows: list[dict[str, Any]]) -> int:
 
 
 def _normalize_section_rows(rows: list[dict[str, str | int]]) -> list[dict[str, Any]]:
-    """Keep only md_list-shaped keys with stable JSON-serializable values."""
+    """Keep only navigation row keys with stable JSON-serializable values."""
     normalized: list[dict[str, Any]] = []
     for row in rows:
         normalized.append(
             {
-                "id": str(row.get("id", "")),
                 "heading": str(row.get("heading", "")),
                 "level": int(row.get("level", 0)),
+                "path": str(row.get("path", "")),
                 "line": int(row.get("line", 0)),
-                "char_count": int(row.get("char_count", 0)),
+                "chars": int(row.get("chars", 0)),
             }
         )
     return normalized
@@ -190,16 +188,14 @@ def _build_selective_options(
     if location:
         options.append(f'fs(op="md_list", path="{location}")')
         if sections:
-            section_id = str(sections[0].get("id", "")).strip()
+            section_id = str(sections[0].get("path", "")).strip()
             if section_id:
                 options.append(
                     f'fs(op="md_read", path="{location}", section="{section_id}")'
                 )
-        options.append(
-            f'fs(op="md_read", path="{location}", section="__preamble__")'
-        )
+        options.append(f'fs(op="md_read", path="{location}", section="__preamble__")')
     if not location and sections and text_basis == "content":
-        section_id = str(sections[0].get("id", "")).strip()
+        section_id = str(sections[0].get("path", "")).strip()
         if section_id:
             options.append(f'retrieve(id="{ref_id}", section="{section_id}")')
     options.append(f'retrieve(id="{ref_id}")')
@@ -276,17 +272,12 @@ def format_markdown_overflow_note(manifest: dict[str, Any]) -> str:
     tree_suffix = ""
     if truncated:
         tree_suffix = (
-            "; truncated — use md_list for full outline"
-            if location
-            else "; truncated"
+            "; truncated — use md_list for full outline" if location else "; truncated"
         )
 
     note_lines = [
         "Large markdown payload flagged.",
-        (
-            f"Size: {manifest['size_kb']}KB over "
-            f"{manifest['threshold_kb']}KB threshold."
-        ),
+        (f"Size: {manifest['size_kb']}KB over {manifest['threshold_kb']}KB threshold."),
         f"Stored as: {ref_id} (expires in 10 min).",
         f"Section tree: {structure_rows} rows{tree_suffix}.",
         "",

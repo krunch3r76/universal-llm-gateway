@@ -30,8 +30,8 @@ BATCH_MAX_SECTIONS = 16
 BATCH_MAX_CONTENT_CHARS = 64 * 1024
 
 _ID_FORMAT_HINT = (
-    "Section ids come from md_list (heading paths 'Parent/Child', duplicate "
-    "headings get '#n', preamble is '__preamble__'). Call md_list to enumerate."
+    "Section ids come from md_list (ATX paths 'Parent/Child', XML blocks as "
+    "'<tag>', duplicate headings '#n', preamble '__preamble__'). Call md_list."
 )
 
 _WINDOW_GATE_NEXT = (
@@ -105,13 +105,6 @@ def is_sparse_document_suffix(suffix: str) -> bool:
         ".html",
         ".htm",
     }
-
-
-def _preamble_parent_id(text: str) -> str | None:
-    for sec in parse_sections(text):
-        if sec.level == 0 and sec.chars > 0:
-            return PREAMBLE_ID
-    return None
 
 
 def _id_last_segment(section_id: str) -> str:
@@ -301,7 +294,7 @@ def _span_meta_for_section_id(
         return meta
     own = _section_own_body(text, row)
     own_len = len(own) if own is not None else row.char_count
-    child_ids = _direct_child_ids(indexed, row.path_key)
+    child_ids = _direct_child_ids(indexed, row.section_id)
     subtree = _subtree_char_count(text, row)
     return {
         "span": "own_body",
@@ -357,11 +350,7 @@ def build_section_batch_response(
             "sparse_section_batch": True,
         }
     atx = [s for s in parse_sections(text) if s.level > 0]
-    indexed = (
-        _assign_section_ids(atx, preamble_parent_id=_preamble_parent_id(text))
-        if atx
-        else []
-    )
+    indexed = _assign_section_ids(atx) if atx else []
     items: list[dict[str, Any]] = []
     omitted: list[str] = []
     budget_cursor: int | None = None
@@ -562,11 +551,7 @@ def resolve_document_read(
     if has_section:
         sid = str(section).strip()
         atx = [s for s in parse_sections(text) if s.level > 0]
-        indexed = (
-            _assign_section_ids(atx, preamble_parent_id=_preamble_parent_id(text))
-            if atx
-            else []
-        )
+        indexed = _assign_section_ids(atx) if atx else []
         span_meta = _span_meta_for_section_id(text, indexed, sid)
         if expected_read_sha256 and not sha256_hex_equal(
             read_sha256, expected_read_sha256

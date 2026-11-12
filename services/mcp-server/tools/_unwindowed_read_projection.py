@@ -82,11 +82,11 @@ def _cap_utf8_on_line_boundary(text: str, max_bytes: int) -> tuple[str, bool, bo
 def _normalize_section_rows(rows: list[dict[str, str | int]]) -> list[dict[str, Any]]:
     return [
         {
-            "id": str(row.get("id", "")),
             "heading": str(row.get("heading", "")),
             "level": int(row.get("level", 0)),
+            "path": str(row.get("path", "")),
             "line": int(row.get("line", 0)),
-            "char_count": int(row.get("char_count", 0)),
+            "chars": int(row.get("chars", 0)),
         }
         for row in rows
     ]
@@ -194,9 +194,9 @@ def sidecar_section_listing(
     if listing_truncated:
         sections = sections[:MAX_LISTED_SECTIONS]
     section_reads = [
-        _md_read_call(sidecar_uri, str(row["id"]))
+        _md_read_call(sidecar_uri, str(row["path"]))
         for row in sections
-        if str(row.get("id", "")).strip()
+        if str(row.get("path", "")).strip()
     ]
     payload: dict[str, Any] = {
         "sidecar_uri": sidecar_uri,

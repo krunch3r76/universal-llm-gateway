@@ -153,13 +153,8 @@ def resolve_section(text: str, section_path: str) -> Section:
     from markdown_xml_blocks import resolve_xml_section
 
     sections = parse_sections(text)
-    if section_path == "":
-        for sec in sections:
-            if sec.level == 0:
-                return sec
-        raise SectionError("No preamble found in document")
     normalized = section_path.strip()
-    if normalized == PREAMBLE_ID:
+    if normalized in ("", PREAMBLE_ID):
         for sec in sections:
             if sec.level == 0:
                 return sec
@@ -228,47 +223,19 @@ def resolve_section(text: str, section_path: str) -> Section:
     raise SectionError(f"Section not found: {section_path!r}")
 
 
-def _atx_section_id(path_key: str, ordinal: int, *, path_total: int) -> str:
-    if path_total == 1:
-        return path_key
-    return f"{path_key}#{ordinal}"
-
-
 def list_sections(text: str) -> list[dict[str, str | int]]:
-    """Metadata rows for navigation (skips empty preamble). Rows carry ``id`` (wire id)."""
-    body = [s for s in _document_sections(text) if s.level > 0]
-    totals: dict[str, int] = {}
-    for sec in body:
-        totals[sec.path] = totals.get(sec.path, 0) + 1
-    seen: dict[str, int] = {}
-    rows: list[dict[str, str | int]] = []
-    for sec in _document_sections(text):
-        if sec.level == 0 and sec.chars == 0:
-            continue
-        if sec.level == 0:
-            rows.append(
-                {
-                    "id": PREAMBLE_ID,
-                    "heading": "[Preamble]",
-                    "level": 0,
-                    "line": sec.line,
-                    "char_count": sec.chars,
-                }
-            )
-            continue
-        path_key = sec.path
-        seen[path_key] = seen.get(path_key, 0) + 1
-        sid = _atx_section_id(path_key, seen[path_key], path_total=totals[path_key])
-        rows.append(
-            {
-                "id": sid,
-                "heading": sec.heading,
-                "level": sec.level,
-                "line": sec.line,
-                "char_count": sec.chars,
-            }
-        )
-    return rows
+    """Metadata rows for navigation (skips empty preamble). Preamble uses ``__preamble__`` path."""
+    return [
+        {
+            "heading": sec.heading if sec.heading else "[Preamble]",
+            "level": sec.level,
+            "path": PREAMBLE_ID if sec.level == 0 else sec.path,
+            "line": sec.line,
+            "chars": sec.chars,
+        }
+        for sec in _document_sections(text)
+        if not (sec.level == 0 and sec.chars == 0)
+    ]
 
 
 def read_section(text: str, section_path: str) -> str:

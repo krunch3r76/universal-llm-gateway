@@ -9,7 +9,11 @@ from pathlib import Path
 import pytest
 from fastmcp import FastMCP
 
-from tools._document_manifest import MANIFEST_MAX_DESCRIPTOR_JSON_BYTES
+from tools._document_manifest import (
+    MANIFEST_MAX_DESCRIPTOR_JSON_BYTES,
+    build_document_manifest,
+)
+from tools._hashing import sha256_hex_of_bytes
 from tools.markdown_tool import register_markdown_tools
 
 pytestmark = pytest.mark.offline
@@ -49,9 +53,7 @@ def _list(fn, root: Path, name: str, **kwargs) -> dict:
     return fn(op="list_sections", path=name, sandbox="cortex", **kwargs)
 
 
-def _read(
-    fn, root: Path, name: str, section: str, *, text: str | None = None
-) -> dict:
+def _read(fn, root: Path, name: str, section: str, *, text: str | None = None) -> dict:
     if text is not None:
         (root / name).write_text(text, encoding="utf-8")
     return fn(op="read_section", path=name, sandbox="cortex", section=section)
@@ -127,15 +129,110 @@ def test_descriptor_paging_union_complete(md_tool) -> None:
             sandbox="cortex",
             offset=page["cursor"],
         )
-    assert len(seen) >= 200
+    digest = sha256_hex_of_bytes(text.encode("utf-8"))
+    expected: set[str] = set()
+    offset = 0
+    while True:
+        page = build_document_manifest(
+            path="big.md",
+            sandbox="cortex",
+            text=text,
+            read_sha256=digest,
+            descriptor_offset=offset,
+        )
+        for row in page["sections"]:
+            expected.add(row["id"])
+        if not page.get("truncated") or page.get("cursor") is None:
+            break
+        offset = int(page["cursor"])
+    assert seen == expected
 
 
 def test_leaf_char_count_matches_content(md_tool) -> None:
     fn, root = md_tool
-    text = "# Root\n\nleaf only\n\n## Child\n\nnested\n"
-    out = _read(fn, root, "leaf.md", "Root", text=text)
+    text = "# Root\n\n## Child\n\nleaf only\n"
+    out = _read(fn, root, "leaf.md", "Child", text=text)
     assert out["outcome"] == "ok"
     assert out["char_count"] == len(out["content"])
+
+
+_SIX_BLOCK_PACKET = """---
+contract: implement
+---
+
+<scope>
+Implement XML navigation.
+</scope>
+
+<invariants>
+- ATX unchanged
+</invariants>
+
+<task_guidance>
+## Phase 1
+Do the work.
+</task_guidance>
+
+<corpus>
+- spec.md
+</corpus>
+
+<mcp_capabilities>
+fs, cortex
+</mcp_capabilities>
+
+<output_format>
+Sidecar + code.
+</output_format>
+"""
+
+
+def test_md_list_includes_six_xml_blocks(md_tool) -> None:
+    fn, root = md_tool
+    listed = _list(fn, root, "packet.md", _text=_SIX_BLOCK_PACKET)
+    ids = [row["id"] for row in listed["sections"] if row["id"].startswith("<")]
+    assert ids == [
+        "<scope>",
+        "<invariants>",
+        "<task_guidance>",
+        "<corpus>",
+        "<mcp_capabilities>",
+        "<output_format>",
+    ]
+    assert "Phase 1" not in {row["id"] for row in listed["sections"]}
+
+
+def test_preamble_not_parent_of_root_headings(md_tool) -> None:
+    fn, root = md_tool
+    text = "intro\n\n# Root\n\nbody\n\n## Child\n\nnested\n"
+    listed = _list(fn, root, "p.md", _text=text)
+    pre = next(r for r in listed["sections"] if r["id"] == "__preamble__")
+    assert pre["children"] == []
+    roots = [r for r in listed["sections"] if r.get("parent_id") is None]
+    assert all(r["id"] != "__preamble__" or r["id"] == "__preamble__" for r in roots)
+    root_row = next(r for r in listed["sections"] if r["heading"] == "Root")
+    assert root_row.get("parent_id") is None
+
+
+def test_empty_section_write_refused(md_tool) -> None:
+    fn, root = md_tool
+    (root / "w.md").write_text("# T\n\n", encoding="utf-8")
+    for op in (
+        "replace_section",
+        "append_section",
+        "delete_section",
+        "rewrite_section",
+    ):
+        out = fn(op=op, path="w.md", sandbox="cortex", section="", content="x")
+        assert "error" in out, op
+
+
+def test_f4_slash_parent_id_in_manifest(md_tool) -> None:
+    fn, root = md_tool
+    text = "# Parent\n\n## Alpha/Beta\\Gamma\n\nchild\n"
+    listed = _list(fn, root, "slash-parent.md", _text=text)
+    child = next(r for r in listed["sections"] if "Beta" in r["heading"])
+    assert child["parent_id"] == "Parent"
 
 
 def test_md_delete_refuses_preamble(md_tool) -> None:

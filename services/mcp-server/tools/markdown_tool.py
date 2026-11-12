@@ -34,6 +34,7 @@ from markdown_sections import (
 )
 from mcp_events import record
 
+from tools._document_manifest import build_document_manifest
 from tools._hashing import format_sha256_uri, sha256_hex_of_bytes
 from tools.filesystem._expected_read_sha256_boundary import (
     coerce_expected_read_sha256_at_fs_boundary,
@@ -252,6 +253,17 @@ def _durable_markdown_rmw(
     return None
 
 
+def _refuse_empty_write_section(section: str, op: str) -> dict[str, Any] | None:
+    if not (section or "").strip():
+        return {
+            "error": (
+                f"'section' is required for {op}: empty section targets the file "
+                "preamble and is refused; use op='write' for whole-file edits."
+            )
+        }
+    return None
+
+
 def _section_write_result(
     resolved: Path,
     path: str,
@@ -264,6 +276,9 @@ def _section_write_result(
     mutation_op: str | None = None,
     warn_on_shrink: bool = False,
 ) -> dict[str, Any]:
+    refused = _refuse_empty_write_section(section, mutation_op or signal)
+    if refused is not None:
+        return refused
     if is_converted_format(resolved):
         return {
             "error": (
@@ -474,6 +489,9 @@ def _section_delete_result(
     sandbox: str,
     section: str,
 ) -> dict[str, Any]:
+    refused = _refuse_empty_write_section(section, "delete_section")
+    if refused is not None:
+        return refused
     if section.strip() == PREAMBLE_ID:
         return {
             "error": (
@@ -736,8 +754,6 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                         "total_chars": len(text),
                         "read_sha256": read_sha256,
                     }
-                from tools._document_manifest import build_document_manifest
-
                 start = max(0, int(offset or 0))
                 manifest = build_document_manifest(
                     path=path,

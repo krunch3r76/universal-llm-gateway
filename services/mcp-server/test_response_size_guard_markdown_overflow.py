@@ -98,7 +98,7 @@ def test_markdown_overflow_includes_sections_and_ref_id() -> None:
     emitted = manifest["sections"]
     assert len(emitted) == len(expected)
     for row in emitted:
-        assert set(row) == {"id", "heading", "level", "line", "char_count"}
+        assert set(row) == {"heading", "level", "path", "line", "chars"}
     assert any(row["level"] == 3 for row in emitted)
 
 
@@ -125,9 +125,9 @@ def test_structure_cap_sets_truncated_marker() -> None:
         {
             "heading": f"H{i}",
             "level": 1 if i % 2 == 0 else 3,
-            "id": f"H{i}",
+            "path": f"H{i}",
             "line": i + 1,
-            "char_count": 500,
+            "chars": 500,
         }
         for i in range(250)
     ]
@@ -153,9 +153,7 @@ def test_replacement_under_cursor_safe_and_default_thresholds() -> None:
         ("cursor_safe", _CURSOR_THRESHOLD),
         ("default", _DEFAULT_THRESHOLD),
     ):
-        replacement = _guard_replacement(
-            original, threshold=threshold, profile=profile
-        )
+        replacement = _guard_replacement(original, threshold=threshold, profile=profile)
         assert _measure_result(replacement) <= threshold
 
 
@@ -193,7 +191,9 @@ def test_agent_bus_manifest_unchanged() -> None:
             }
         ]
     }
-    manifest = _agent_bus_manifest("rs_abcd01", payload, size=256_000, threshold=128_000)
+    manifest = _agent_bus_manifest(
+        "rs_abcd01", payload, size=256_000, threshold=128_000
+    )
     assert manifest["tool"] == "agent_bus"
     assert manifest["kind"] == "turns"
     assert "sections" not in manifest
@@ -230,7 +230,7 @@ def test_sections_match_list_sections_modulo_truncation() -> None:
     assert len(emitted) < len(full_rows)
     assert emitted == full_rows[: len(emitted)]
     for row in emitted:
-        assert set(row) == {"id", "heading", "level", "line", "char_count"}
+        assert set(row) == {"heading", "level", "path", "line", "chars"}
 
 
 def test_manifest_builder_returns_none_for_plain_text() -> None:

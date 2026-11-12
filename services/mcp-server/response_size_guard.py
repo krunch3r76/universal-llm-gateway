@@ -354,9 +354,9 @@ def _summarize_markdown_sections(text: str, max_sections: int = 5) -> list[str]:
     except SectionError:
         return []
     return [
-        str(section.get("id", "")).strip()
+        str(section.get("path", "")).strip()
         for section in sections[:max_sections]
-        if str(section.get("id", "")).strip() and section.get("level", 0) > 0
+        if str(section.get("path", "")).strip() and section.get("level", 0) > 0
     ]
 
 

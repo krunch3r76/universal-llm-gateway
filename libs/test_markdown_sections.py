@@ -91,7 +91,9 @@ def test_patch_section_body_replaces_target_only() -> None:
     assert "slash body" not in updated
     # Sibling section and its nested child are untouched.
     assert "plain body" in updated
-    assert read_section(updated, "Captured behavior (key cases)").strip() == "nested body"
+    assert (
+        read_section(updated, "Captured behavior (key cases)").strip() == "nested body"
+    )
 
 
 def test_patch_section_body_target_missing_raises() -> None:
@@ -300,9 +302,7 @@ class TestHeadingLessContentContract:
 
     def test_append_preserves_existing_child_heading(self) -> None:
         doc = "## Parent\n\n### Existing Child\nchild body\n\n## Sibling\nx\n"
-        updated, normd = append_section(
-            doc, "Parent", "## Parent\nmore parent body\n"
-        )
+        updated, normd = append_section(doc, "Parent", "## Parent\nmore parent body\n")
         assert normd
         assert updated.count("## Parent") == 1
         assert updated.count("### Existing Child") == 1
@@ -318,18 +318,14 @@ class TestHeadingLessContentContract:
 
     def test_sections_to_dict_round_trip_replace(self) -> None:
         before = sections_to_dict(self.TARGET_DOC)
-        updated, _ = replace_section(
-            self.TARGET_DOC, "Target", "## Target\nreplaced\n"
-        )
+        updated, _ = replace_section(self.TARGET_DOC, "Target", "## Target\nreplaced\n")
         after = sections_to_dict(updated)
         assert set(before) == set(after)
         assert "replaced" in after["Target"]
 
     def test_sections_to_dict_round_trip_append(self) -> None:
         before = sections_to_dict(self.TARGET_DOC)
-        updated, _ = append_section(
-            self.TARGET_DOC, "Target", "## Target\nappended\n"
-        )
+        updated, _ = append_section(self.TARGET_DOC, "Target", "## Target\nappended\n")
         after = sections_to_dict(updated)
         assert set(before) == set(after)
         assert "appended" in after["Target"]
@@ -434,9 +430,7 @@ beta body
 
     def test_crlf_document(self) -> None:
         doc = "## Alpha\r\n\r\nbody\r\n\r\n## Beta\r\nbeta\r\n"
-        updated, normd = insert_section(
-            doc, "New", 2, "end", body="inserted\r\n"
-        )
+        updated, normd = insert_section(doc, "New", 2, "end", body="inserted\r\n")
         assert not normd
         assert "\r\n" in updated
         assert "## New\r\n" in updated
@@ -460,9 +454,7 @@ beta body
         assert "deep content" in read_section(updated, "Deep New")
 
     def test_sections_to_dict_round_trip(self) -> None:
-        updated, _ = insert_section(
-            self.DOC, "Dict Test", 2, "end", body="dict body\n"
-        )
+        updated, _ = insert_section(self.DOC, "Dict Test", 2, "end", body="dict body\n")
         data = sections_to_dict(updated)
         assert "Dict Test" in data["Top"]
         assert "dict body" in data["Top"]["Dict Test"]
@@ -511,17 +503,17 @@ class TestXmlBlockSections:
 
     def test_md_list_includes_six_blocks(self) -> None:
         rows = list_sections(_SIX_BLOCK_PACKET)
-        xml_rows = [row for row in rows if str(row["id"]).startswith("<")]
-        ids = [row["id"] for row in xml_rows]
-        assert ids == list(self.EXPECTED_TAGS)
+        xml_rows = [row for row in rows if str(row["path"]).startswith("<")]
+        paths = [row["path"] for row in xml_rows]
+        assert paths == list(self.EXPECTED_TAGS)
 
     def test_trailing_inner_atx_excluded_from_nav(self) -> None:
         """ATX headings wholly inside an XML block must not leak into md_list."""
         rows = list_sections(_SIX_BLOCK_PACKET)
-        ids = [str(row["id"]) for row in rows]
-        assert "<task_guidance>" in ids
-        assert "Phase 1" not in ids
-        assert not any(not p.startswith("<") and "Phase" in p for p in ids)
+        paths = [str(row["path"]) for row in rows]
+        assert "<task_guidance>" in paths
+        assert "Phase 1" not in paths
+        assert not any(not p.startswith("<") and "Phase" in p for p in paths)
 
     def test_md_read_angle_bracket_key(self) -> None:
         body = read_section(_SIX_BLOCK_PACKET, "<task_guidance>")
@@ -545,7 +537,7 @@ class TestXmlBlockSections:
     def test_xml_tags_inside_fence_ignored(self) -> None:
         doc = "# Doc\n\n```\n<scope>\nfake\n</scope>\n```\n\n<scope>\nreal\n</scope>\n"
         rows = list_sections(doc)
-        assert len([r for r in rows if r["id"] == "<scope>"]) == 1
+        assert len([r for r in rows if r["path"] == "<scope>"]) == 1
         assert read_section(doc, "<scope>").strip() == "real"
 
     def test_unknown_xml_section_raises(self) -> None:
@@ -611,4 +603,3 @@ class TestFencePairing:
         headings = [s.heading for s in parse_sections(doc) if s.level > 0]
         assert headings == ["Doc"]
         assert "Heading After False Close" not in headings
-

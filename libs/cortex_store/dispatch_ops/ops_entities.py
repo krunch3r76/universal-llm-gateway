@@ -121,7 +121,7 @@ def _entity_get_body_response(
         try:
             section_text = read_section(body_text, section)
         except SectionError:
-            available = [s["id"] for s in list_sections(body_text)]
+            available = [s["path"] for s in list_sections(body_text)]
             return {
                 "error": "section_not_found",
                 "section": section,
@@ -362,7 +362,9 @@ def _expected_revision_for_batch_id_conn(
     return expected_revision
 
 
-def _coerce_non_negative_int_revision(value: object, *, field: str) -> int | dict[str, Any]:
+def _coerce_non_negative_int_revision(
+    value: object, *, field: str
+) -> int | dict[str, Any]:
     if not isinstance(value, int):
         return {
             "error": f"{field} values must be non-negative integers",
@@ -552,7 +554,9 @@ def _entities_table_has_revision_column(conn: sqlite3.Connection) -> bool:
     return any(r[1] == "revision" for r in rows)
 
 
-def _revision_unverifiable_whole_call(*, entity_id: str | None = None) -> dict[str, Any]:
+def _revision_unverifiable_whole_call(
+    *, entity_id: str | None = None
+) -> dict[str, Any]:
     out: dict[str, Any] = {
         "ok": False,
         "outcome": "revision_unverifiable",
@@ -1149,7 +1153,9 @@ def _op_entity_update(
                     conn,
                     entity_id=canonical_id if not raw_id else entity_id,
                     entity_type=entity_type,
-                    attrs=attrs if isinstance(attrs, dict) else result.get("attributes"),
+                    attrs=attrs
+                    if isinstance(attrs, dict)
+                    else result.get("attributes"),
                 )
                 if birth_warning is not None:
                     attach_endeavor_birth_warning(result, birth_warning)

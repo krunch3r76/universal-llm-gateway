@@ -43,14 +43,9 @@ PDF, DOCX, ODT, EML, HTML support `md_list` / `md_read` as converted read-only d
 
 ## Section addressing
 
-Section paths are hierarchical slash-separated heading paths: `Configuration/Database/Connection Pool`.
+`md_list` / default `md_read` manifests expose wire **`id`** values (not a separate `path` key on manifest rows). ATX ids are hierarchical: `Configuration/Database/Connection Pool`. Line-anchored XML blocks use tag ids such as `<scope>`. Preamble is only `__preamble__` (no `[Preamble]` alias). Literal `/` in headings is escaped as `\/` in ids; duplicate headings append `#n`.
 
-Resolution order:
-1. exact full path;
-2. suffix match for single-segment queries if unambiguous;
-3. bare heading text if unambiguous.
-
-Copy the exact `id` from `md_list` (`__preamble__` for pre-heading body; no `[Preamble]` alias). Literal `/` in headings is escaped as `\/` in ids. Duplicate headings use `#n`.
+Pass the exact manifest `id` to `md_read` / write ops (`section=`).
 
 ## Heading-less-content contract
 
@@ -74,7 +69,7 @@ Use `char_count` from `md_list` to decide whether to read a section directly or 
 | Error | Fix |
 |---|---|
 | `Section not found` | Run `md_list`; copy exact `id` (check `nearest_ids`). |
-| `Ambiguous section` | Use full hierarchical path from error. |
+| `Ambiguous section` | Use the full manifest `id` from `md_list` (see `id_format_hint`). |
 | traversal rejected | Remove `../`; use sandbox-relative paths. |
 | file not found | Check sandbox + path with `fs(op="list")`. |
 | bad sandbox | Use `cortex` or `workspaces`; old aliases `files`, `project`, `context` are invalid. |

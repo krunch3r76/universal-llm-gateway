@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from markdown_fence import is_closing_fence_line, parse_fence_open
-from markdown_sections import PREAMBLE_ID, parse_sections
+from markdown_sections import PREAMBLE_ID, _document_sections, parse_sections
 
 from tools._hashing import sha256_hex_equal
 from tools._sparse_payload_envelope import _stale_read_root
@@ -35,9 +35,11 @@ class _IndexedSection:
     end: int
 
 
-def _assign_section_ids(
-    sections: list[Any], *, preamble_parent_id: str | None
-) -> list[_IndexedSection]:
+def _is_xml_nav_section(sec: Any) -> bool:
+    return bool(sec.path.startswith("<"))
+
+
+def _assign_section_ids(sections: list[Any]) -> list[_IndexedSection]:
     """Build stable ids with ``path#ordinal`` for duplicate paths."""
     body = [s for s in sections if s.level > 0]
     totals: dict[str, int] = {}
@@ -53,7 +55,7 @@ def _assign_section_ids(
         sid = path_key if totals[path_key] == 1 else f"{path_key}#{ord_n}"
         while stack and stack[-1][0] >= sec.level:
             stack.pop()
-        parent_id = stack[-1][1] if stack else preamble_parent_id
+        parent_id = stack[-1][1] if stack else None
         indexed.append(
             _IndexedSection(
                 section_id=sid,
@@ -207,6 +209,68 @@ def _page_descriptors(
     return kept, omitted, cursor, truncated
 
 
+def _indexed_by_line(indexed: list[_IndexedSection]) -> dict[int, _IndexedSection]:
+    return {row.line: row for row in indexed}
+
+
+def _manifest_descriptors(text: str) -> list[dict[str, Any]]:
+    """Navigation rows in document order (ATX + line-anchored XML blocks)."""
+    nav = [s for s in _document_sections(text) if not (s.level == 0 and s.chars == 0)]
+    preamble_len = _preamble_span_len(text)
+    descriptors: list[dict[str, Any]] = []
+    if preamble_len > 0:
+        descriptors.append(
+            {
+                "id": PREAMBLE_ID,
+                "heading": "[Preamble]",
+                "level": 0,
+                "parent_id": None,
+                "line": _preamble_line(text),
+                "char_count": preamble_len,
+                "children": [],
+                "subtree_char_count": preamble_len,
+            }
+        )
+    atx_nav = [s for s in nav if s.level > 0 and not _is_xml_nav_section(s)]
+    indexed = _assign_section_ids(atx_nav)
+    by_line = _indexed_by_line(indexed)
+    for sec in nav:
+        if sec.level == 0:
+            continue
+        if _is_xml_nav_section(sec):
+            descriptors.append(
+                {
+                    "id": sec.path,
+                    "heading": sec.heading,
+                    "level": sec.level,
+                    "parent_id": None,
+                    "line": sec.line,
+                    "char_count": sec.chars,
+                    "children": [],
+                    "subtree_char_count": sec.chars,
+                }
+            )
+            continue
+        row = by_line.get(sec.line)
+        if row is None:
+            continue
+        own = _section_own_body(text, row)
+        own_len = len(own) if own is not None else row.char_count
+        descriptors.append(
+            {
+                "id": row.section_id,
+                "heading": row.heading,
+                "level": row.level,
+                "parent_id": row.parent_id,
+                "line": row.line,
+                "char_count": own_len,
+                "children": _direct_child_ids(indexed, row.section_id),
+                "subtree_char_count": _subtree_char_count(text, row),
+            }
+        )
+    return descriptors
+
+
 def build_document_manifest(
     *,
     path: str,
@@ -221,9 +285,8 @@ def build_document_manifest(
             read_sha256=read_sha256,
             expected_read_sha256=expected_read_sha256,
         )
-    atx = [s for s in parse_sections(text) if s.level > 0]
-    preamble_len = _preamble_span_len(text)
-    if not atx:
+    has_body = any(s.level > 0 for s in _document_sections(text))
+    if not has_body:
         descriptors = [
             {
                 "id": UNSECTIONED_ID,
@@ -254,39 +317,8 @@ def build_document_manifest(
             "truncated": truncated,
         }
 
-    preamble_parent = PREAMBLE_ID if preamble_len > 0 else None
-    indexed = _assign_section_ids(atx, preamble_parent_id=preamble_parent)
-    descriptors: list[dict[str, Any]] = []
-    if preamble_len > 0:
-        descriptors.append(
-            {
-                "id": PREAMBLE_ID,
-                "heading": "[Preamble]",
-                "level": 0,
-                "parent_id": None,
-                "line": _preamble_line(text),
-                "char_count": preamble_len,
-                "children": _direct_child_ids(indexed, PREAMBLE_ID),
-                "subtree_char_count": preamble_len,
-            }
-        )
-    for row in indexed:
-        own = _section_own_body(text, row)
-        own_len = len(own) if own is not None else row.char_count
-        child_ids = _direct_child_ids(indexed, row.section_id)
-        subtree = _subtree_char_count(text, row)
-        descriptors.append(
-            {
-                "id": row.section_id,
-                "heading": row.heading,
-                "level": row.level,
-                "parent_id": row.parent_id,
-                "line": row.line,
-                "char_count": own_len,
-                "children": child_ids,
-                "subtree_char_count": subtree,
-            }
-        )
+    preamble_len = _preamble_span_len(text)
+    descriptors = _manifest_descriptors(text)
     paged, omitted, cursor, truncated = _page_descriptors(
         descriptors, start=descriptor_offset
     )
@@ -303,6 +335,6 @@ def build_document_manifest(
         "cursor": cursor,
         "truncated": truncated,
     }
-    if truncated and cursor is not None and descriptor_offset == 0:
+    if truncated and cursor is not None:
         out["_next"] = f'fs(op="md_list", path="{path}", offset={cursor})'
     return out

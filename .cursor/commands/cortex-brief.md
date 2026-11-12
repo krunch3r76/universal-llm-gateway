@@ -16,7 +16,7 @@ or inhabit Cortex.
 
 These rules are navigable by section. **Do not read them in full at brief time.**
 Use `fs(sandbox="workspaces", op="md_list", path="<repo-prefix>/<file>.mdc")` for
-the TOC, then `md_read` with `section=<heading>` to load only the block you need.
+the TOC, then `md_read` with `section=<id>` to load only the block you need.
 
 | Rule | Repo path | Load when |
 |---|---|---|
