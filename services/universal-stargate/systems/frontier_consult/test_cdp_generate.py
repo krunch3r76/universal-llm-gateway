@@ -510,7 +510,8 @@ async def test_c7_deliver_sidecar_write_none_degraded_inline(
     )
     assert ok is True
     assert len(subjects) == 1
-    assert subjects[0].startswith("[sidecar write failed] cdp reply")
+    assert subjects[0].startswith("cdp reply")
+    assert "[sidecar write failed]" not in subjects[0]
     assert "DELIVERY FAILED" not in subjects[0]
     assert len(posted_bodies) == 1
     body = posted_bodies[0]
@@ -524,11 +525,12 @@ async def test_c7_deliver_sidecar_write_none_degraded_inline(
 async def test_w3_degraded_subject_marker_happy_path_subject_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Degraded inline posts prefix subject; compact happy path subject is unchanged."""
+    """Degraded inline keeps normal subject; body carries sidecar-failed marker."""
     from systems.frontier_consult import cdp_onbehalf_delivery as delivery
     from systems.frontier_consult.cdp_onbehalf_delivery import SidecarResult
 
     degraded_subjects: list[str] = []
+    degraded_bodies: list[str] = []
     happy_subjects: list[str] = []
 
     async def fake_sidecar_none(**kwargs: object) -> None:
@@ -544,6 +546,7 @@ async def test_w3_degraded_subject_marker_happy_path_subject_unchanged(
 
     async def fake_post_degraded(**kwargs: object) -> PostOutcome:
         degraded_subjects.append(str(kwargs.get("subject")))
+        degraded_bodies.append(str(kwargs.get("body")))
         return PostOutcome(ok=True, http_status=201)
 
     async def fake_post_happy(**kwargs: object) -> PostOutcome:
@@ -562,7 +565,10 @@ async def test_w3_degraded_subject_marker_happy_path_subject_unchanged(
         request_id="r-w3-degraded-subject",
     )
     assert len(degraded_subjects) == 1
-    assert degraded_subjects[0].startswith("[sidecar write failed] cdp reply")
+    assert degraded_subjects[0].startswith("cdp reply")
+    assert "[sidecar write failed]" not in degraded_subjects[0]
+    assert len(degraded_bodies) == 1
+    assert "sidecar write failed" in degraded_bodies[0]
 
     monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar_ok)
     monkeypatch.setattr(

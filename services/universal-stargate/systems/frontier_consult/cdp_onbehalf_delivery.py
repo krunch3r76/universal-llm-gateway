@@ -23,7 +23,6 @@ _POST_RETRY_SLEEP_S = 0.5
 _DEGRADED_SIDECAR_WARNING = (
     "WARNING: sidecar write failed; reply delivered inline (no sidecar_ref/sha256)"
 )
-_DEGRADED_SIDECAR_SUBJECT_PREFIX = "[sidecar write failed] "
 
 
 def degraded_sidecar_delivery_body(body: str) -> bool:
@@ -345,11 +344,10 @@ async def _post_degraded_ok_body(
     """Post degraded ok=True body; bus auto-spill handles bodies > brief limit."""
     from .cdp_generate_worker import post_cdp_turn
 
-    degraded_subject = f"{_DEGRADED_SIDECAR_SUBJECT_PREFIX}{subject}"
     primary = await post_cdp_turn(
         thread_id=thread_id,
         to_agent=to_agent,
-        subject=degraded_subject,
+        subject=subject,
         body=full_body,
         request_id=request_id,
         pointer_turn=pointer_turn,
@@ -360,7 +358,7 @@ async def _post_degraded_ok_body(
     return await post_cdp_turn(
         thread_id=thread_id,
         to_agent=to_agent,
-        subject=degraded_subject,
+        subject=subject,
         body=bounded,
         request_id=request_id,
         pointer_turn=pointer_turn,
