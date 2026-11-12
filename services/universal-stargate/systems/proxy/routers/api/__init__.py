@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from systems.continuity import continuity_router
+from systems.edge_ops import edge_ops_router
 
 from .admin_active_work import router as admin_active_work_router
 from .admission_state import router as admission_state_router
@@ -54,3 +55,6 @@ router.include_router(git_router)
 router.include_router(triggers_router)
 router.include_router(continuity_router)
 router.include_router(claudeburst_read_router)
+# /api/v1/edge/* — edge-op lease substrate; every route refuses with
+# edge_ops_disabled until EDGE_OPS_ENABLED is set (default off).
+router.include_router(edge_ops_router)
