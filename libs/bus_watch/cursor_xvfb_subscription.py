@@ -212,7 +212,7 @@ def detect_cursor_gui_host(
     explicit_gui_host: str | None = None,
 ) -> str | None:
     """Resolve ``orion-node`` vs ``:8`` for wake subscription and CDP probes."""
-    from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
+    from host_predicates.cursor_hosts import is_cursor_xvfb_host
 
     from bus_watch.cursor_tab_whereami import resolve_cursor_tab_whereami
 

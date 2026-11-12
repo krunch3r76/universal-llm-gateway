@@ -160,7 +160,9 @@ def test_dual_merge_disagreement_get_wins_and_emits_event(
     )
     manage = {"source_synced_at": _SYNCED}
     get_h = {"source_synced_at": _OTHER_SYNCED}
-    merged = _dual_merge_deploy_identity(manage, get_h, producer="mcp")
+    merged = _dual_merge_deploy_identity(
+        manage, get_h, producer="mcp", request_id="req-dual-1"
+    )
     assert merged["source_synced_at"] == _OTHER_SYNCED
     assert emitted == [
         {
@@ -168,6 +170,7 @@ def test_dual_merge_disagreement_get_wins_and_emits_event(
             "field": "source_synced_at",
             "get_value": _OTHER_SYNCED,
             "manage_value": _SYNCED,
+            "request_id": "req-dual-1",
         }
     ]
 
@@ -274,6 +277,33 @@ def test_mcp_dual_read_passes_manage_only(
     )
 
 
+def test_stamp_unreadable_manage_health_blocks_gate(
+    mock_cortex: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_cortex.entity_get.return_value = {"attributes": {}}
+    monkeypatch.setattr(
+        "systems.frontier_consult.deploy_state_gate._call_manage_health",
+        lambda _p: {
+            "status": "running",
+            "deploy_stamp_reason": "stamp_unreadable",
+        },
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.deploy_state_gate._fetch_producer_health_json",
+        lambda _p: {},
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        require_deploy_state(
+            request_id="r-stamp-unreadable",
+            source_ref="todo:stamp-unreadable-gate",
+            closeout=_closeout(files_modified=["services/mcp-server/tools/foo.py"]),
+            cortex=mock_cortex,
+        )
+    assert exc.value.code == "deploy_state_pending"
+    assert "stamp_unreadable" in exc.value.reason
+
+
 def test_stamp_newer_than_process_fails_even_when_get_has_identity(
     mock_cortex: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
@@ -312,6 +342,7 @@ def test_deploy_state_gate_dual_read_mismatch_event_factory() -> None:
         field="source_synced_at",
         get_value="a",
         manage_value="b",
+        request_id="rid-1",
     )
     assert event.signal == "deploy_state_gate.dual_read_mismatch"
     assert event.payload == {
@@ -319,4 +350,5 @@ def test_deploy_state_gate_dual_read_mismatch_event_factory() -> None:
         "field": "source_synced_at",
         "get_value": "a",
         "manage_value": "b",
+        "request_id": "rid-1",
     }

@@ -581,7 +581,7 @@ def _compose_successor_wake(
             format_skill_load_block("house_resume", detail=detail).rstrip()
         )
     gui_host = str((policy or {}).get("gui_host") or ":8")
-    from cursor_bridge.cursor_agents_hop import is_cursor_xvfb_host
+    from host_predicates.cursor_hosts import is_cursor_xvfb_host
 
     xvfb_push_wake = is_cursor_xvfb_host(gui_host)
     if _seat_has_jupiter_shell(seat) and not xvfb_push_wake:
