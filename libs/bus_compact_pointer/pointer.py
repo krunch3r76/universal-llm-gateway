@@ -139,6 +139,19 @@ def compact_pointer_body(
             parts.extend(f"- {ln}" for ln in contexts)
         return "\n".join(parts)
 
+    def _shrink_verdict_header() -> None:
+        mandatory = "\n".join(header[1:])
+        budget = max_chars - len(mandatory) - 1
+        if budget < 1:
+            budget = 1
+        verdict_line = header[0]
+        if len(verdict_line) > budget:
+            ellipsis = "…"
+            if verdict_line.startswith("VERDICT:") and budget > len(ellipsis):
+                header[0] = verdict_line[: budget - len(ellipsis)] + ellipsis
+            else:
+                header[0] = verdict_line[:budget]
+
     out = _render()
     while len(out) > max_chars:
         if sections:
@@ -156,9 +169,8 @@ def compact_pointer_body(
             contexts.pop()
         out = _render()
     if len(out) > max_chars:
+        _shrink_verdict_header()
         out = "\n".join(header)
-        if len(out) > max_chars:
-            out = out[:max_chars]
     if len(out) > TARGET_BODY_CHARS and sections:
         while len(out) > TARGET_BODY_CHARS and sections:
             sections.pop()

@@ -271,8 +271,6 @@ class CloseoutMemoDeliverHandler(BaseHandler):
             row = _ledger.load(memo_ids[0])
             pointer_body = overflow
             if row is not None:
-                import json
-
                 memo = CloseoutMemoRequest.model_validate(json.loads(row["payload_json"]))
                 pointer_body = compact_overflow_bus_body(
                     memo=memo, overflow_markdown=overflow

@@ -55,8 +55,6 @@ class CloseoutMemoFallbackHandler(BaseHandler):
         if memo_ids:
             row = _ledger.load(memo_ids[0])
             if row is not None:
-                import json
-
                 memo_model = CloseoutMemoRequest.model_validate(
                     json.loads(row["payload_json"])
                 )
