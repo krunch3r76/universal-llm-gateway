@@ -445,6 +445,17 @@ def insert_turn(
                     if attachments:
                         _insert_attachments(conn, turn_id, attachments)
 
+                    from .hop_precedence import apply_hop_precedence_on_turn_send
+
+                    apply_hop_precedence_on_turn_send(
+                        conn,
+                        thread_id=thread,
+                        turn_id=turn_id,
+                        subject=subject,
+                        body=body,
+                        updated_at=ts,
+                    )
+
     if early_existing is not None:
         if thread_reopened_from_closed:
             _shadow_hook_after_reopen_from_closed(thread_id=thread)
