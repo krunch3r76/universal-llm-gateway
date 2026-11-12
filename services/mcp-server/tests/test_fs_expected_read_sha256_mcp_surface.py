@@ -93,6 +93,44 @@ def test_generated_schema_admits_string_or_map() -> None:
     assert schema.get("type") != "string" or "anyOf" in schema or "oneOf" in schema
 
 
+def test_compacted_schema_preserves_string_and_object() -> None:
+    from fastmcp import FastMCP
+    from schema_compact import minify_schema
+    from tools._fs_read import register_fs_read_tool
+
+    for builder in (_mcp,):
+        tool = builder()
+        getter = tool.get_tool
+        fs = asyncio.run(getter("fs"))
+        params = fs.parameters
+        props = params["properties"] if isinstance(params, dict) else params.properties
+        raw = props["expected_read_sha256"]
+        if not isinstance(raw, dict):
+            raw = dict(raw)
+        compacted = minify_schema(
+            {"type": "object", "properties": {"expected_read_sha256": raw}}
+        )["properties"]["expected_read_sha256"]
+        branches = compacted.get("anyOf") or []
+        types = {b.get("type") for b in branches if isinstance(b, dict)}
+        assert "string" in types and "object" in types, compacted
+
+    mcp = FastMCP("fs-read-compact")
+    register_fs_read_tool(mcp, surface="code")
+    fs_read = asyncio.run(mcp.get_tool("fs_read"))
+    params = fs_read.parameters
+    props = params["properties"] if isinstance(params, dict) else params.properties
+    raw_fr = props["expected_read_sha256"]
+    if not isinstance(raw_fr, dict):
+        raw_fr = dict(raw_fr)
+    compacted_fr = minify_schema(
+        {"type": "object", "properties": {"expected_read_sha256": raw_fr}}
+    )["properties"]["expected_read_sha256"]
+    types_fr = {
+        b.get("type") for b in (compacted_fr.get("anyOf") or []) if isinstance(b, dict)
+    }
+    assert "string" in types_fr and "object" in types_fr, compacted_fr
+
+
 def test_call_tool_per_path_map_splits_stale_and_manifest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

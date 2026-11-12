@@ -226,7 +226,9 @@ def _id_last_segment(section_id: str) -> str:
     return base.rsplit("/", 1)[-1]
 
 
-def _nearest_section_ids(sid: str, indexed: list[_IndexedSection], *, limit: int = 5) -> list[str]:
+def _nearest_section_ids(
+    sid: str, indexed: list[_IndexedSection], *, limit: int = 5
+) -> list[str]:
     """Rank document section ids to help callers recover from a miss.
 
     Order: case-insensitive exact id, ``difflib`` close matches (cutoff 0.5),

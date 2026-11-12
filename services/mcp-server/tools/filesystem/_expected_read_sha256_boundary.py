@@ -9,7 +9,29 @@ from tools._sparse_document_read import (
     expected_read_sha256_key_error,
     param_not_applicable_error,
 )
-_SINGLE_PATH_OPS = frozenset({"read", "md_read", "md_to_dict"})
+
+
+def _single_path_expected_read_ops() -> frozenset[str]:
+    from tools.filesystem._fs_dispatch import SINGLE_PATH_EXPECTED_READ_OPS
+
+    return SINGLE_PATH_EXPECTED_READ_OPS
+
+
+def _workspaces_repo_segment(path: str) -> str | None:
+    bare = str(path or "").strip().lstrip("/")
+    if not bare or "/" not in bare:
+        return None
+    return bare.split("/", 1)[0]
+
+
+def _workspaces_key_repo(key: str) -> str | None:
+    text = str(key).strip()
+    if not text.startswith("workspaces://"):
+        return None
+    rest = text.split("://", 1)[1]
+    if "/" not in rest:
+        return rest.strip("/") or None
+    return rest.split("/", 1)[0].strip("/") or None
 
 
 def _scheme_of_key(key: str) -> str | None:
@@ -25,12 +47,10 @@ def _target_aliases(path: str, sandbox: str) -> set[str]:
     bare = str(path or "").strip().lstrip("/")
     if bare:
         aliases.add(bare)
-        if sandbox == "workspaces" and "/" in bare:
-            _repo, rel = bare.split("/", 1)
-            if rel:
-                aliases.add(rel)
     if bare and sandbox:
         aliases.add(f"{sandbox}://{bare}")
+        if sandbox == "workspaces":
+            aliases.update(_path_match_keys(f"workspaces://{bare}"))
     return aliases
 
 
@@ -48,15 +68,21 @@ def _key_matches_target(key: str, *, path: str, sandbox: str) -> bool:
     key_scheme = _scheme_of_key(key)
     if key_scheme is not None and key_scheme != sandbox:
         return False
+    path_repo = _workspaces_repo_segment(path) if sandbox == "workspaces" else None
+    key_repo = _workspaces_key_repo(key)
+    if key_repo is not None and path_repo is not None and key_repo != path_repo:
+        return False
     target_aliases = _target_aliases(path, sandbox)
     key_aliases = set(_path_match_keys(key))
     bare_key = str(key).strip().lstrip("/")
-    if bare_key:
+    if bare_key and "://" not in bare_key:
         key_aliases.add(bare_key)
     return bool(target_aliases & key_aliases)
 
 
-def _normalize_digest_value(key: str, raw: Any) -> tuple[str | None, dict[str, Any] | None]:
+def _normalize_digest_value(
+    key: str, raw: Any
+) -> tuple[str | None, dict[str, Any] | None]:
     if raw is None or not isinstance(raw, str):
         return None, expected_read_sha256_key_error(
             keys=[key],
@@ -134,11 +160,12 @@ def coerce_expected_read_sha256_at_fs_boundary(
     sandbox: str,
 ) -> tuple[str | dict[str, str], dict[str, Any] | None]:
     """Normalize a map precondition to a scalar for single-path fs ops."""
+    single_path_ops = _single_path_expected_read_ops()
     if op == "read_multi":
         if expected is None:
             return "", None
         return expected, None
-    if op not in _SINGLE_PATH_OPS:
+    if op not in single_path_ops:
         if isinstance(expected, dict):
             return "", expected_read_sha256_key_error(
                 keys=list(expected.keys()),
@@ -165,7 +192,3 @@ def coerce_expected_read_sha256_at_fs_boundary(
         return "", err
     assert digest is not None
     return digest, None
-
-
-# Back-compat name used by markdown direct-entry tests.
-coerce_expected_read_sha256_for_md = coerce_expected_read_sha256_at_fs_boundary

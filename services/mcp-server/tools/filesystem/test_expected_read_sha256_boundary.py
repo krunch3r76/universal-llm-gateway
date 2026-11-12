@@ -13,7 +13,6 @@ from tools._file_helpers import read_file_result
 from tools._hashing import sha256_hex_of_file
 from tools.filesystem._expected_read_sha256_boundary import (
     coerce_expected_read_sha256_at_fs_boundary,
-    coerce_expected_read_sha256_for_md,
 )
 from tools.filesystem._files_dispatcher import dispatch_files_op
 from tools.filesystem._ops_text import read_files_batch_impl
@@ -169,6 +168,7 @@ def test_md_read_non_matching_dict_returns_envelope(
     assert out.get("code") == "invalid_parameter"
     assert out.get("retryable") is True
     assert "other.md" in out["data"]["keys"]
+    assert out["data"].get("accepted_for_target")
     assert "AttributeError" not in str(out)
 
 
@@ -250,7 +250,7 @@ def test_read_multi_dict_unchanged_at_boundary(
 
 
 def test_coerce_unit_matching_share_uri() -> None:
-    digest, err = coerce_expected_read_sha256_for_md(
+    digest, err = coerce_expected_read_sha256_at_fs_boundary(
         op="md_read",
         expected={"cortex://notes/x.md": "ab" * 32},
         path="notes/x.md",
@@ -261,7 +261,8 @@ def test_coerce_unit_matching_share_uri() -> None:
 
 
 def test_markdown_tool_to_dict_dict_never_attribute_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Direct markdown MCP path must not crash on map-shaped precondition."""
     root = tmp_path / "files"
@@ -283,7 +284,8 @@ def test_markdown_tool_to_dict_dict_never_attribute_error(
 
 
 def test_markdown_tool_read_section_matching_dict_ok(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "files"
     root.mkdir()

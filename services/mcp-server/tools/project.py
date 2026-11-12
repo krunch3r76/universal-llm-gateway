@@ -384,7 +384,7 @@ def register_project_tools(mcp: FastMCP) -> None:
         sections: list[str] | None = None,
         export: bool = False,
         chunk_cursor: int | None = None,
-        expected_read_sha256: str | dict[str, str] | None = None,
+        expected_read_sha256: str | None = None,
     ) -> dict[str, Any]:
         """Read a file from the project directory.
 
@@ -424,9 +424,7 @@ def register_project_tools(mcp: FastMCP) -> None:
             export=export,
             chunk_cursor=chunk_cursor,
             chunk_cursor_provided=chunk_cursor is not None,
-            expected_read_sha256=(
-                expected_read_sha256 if expected_read_sha256 else None
-            ),
+            expected_read_sha256=expected_read_sha256,
         )
         result["path"] = rel_path
         result["uri"] = workspaces_share_uri(src, _PROJECT_ROOT.resolve())
@@ -897,9 +895,8 @@ def register_project_tools(mcp: FastMCP) -> None:
         wall_truncated = enum_truncated
 
         for rel_path in candidates:
-            if (
-                not include_worktrees
-                and path_has_worktree_below_scope(rel_path, directory)
+            if not include_worktrees and path_has_worktree_below_scope(
+                rel_path, directory
             ):
                 continue
             if state.wall_exceeded():
