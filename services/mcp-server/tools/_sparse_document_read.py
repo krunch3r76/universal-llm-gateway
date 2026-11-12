@@ -3,28 +3,26 @@
 from __future__ import annotations
 
 import difflib
-import re
 from typing import Any
 
-from markdown_fence import is_closing_fence_line, parse_fence_open
 from markdown_sections import SectionError, parse_sections, resolve_section
 
 from tools._document_manifest import (
     PREAMBLE_ID,
     UNSECTIONED_ID,
     _assign_section_ids,
+    _direct_child_ids,
     _IndexedSection,
+    _own_body_slice,
+    _section_own_body,
+    _subtree_char_count,
     build_document_manifest,
 )
 from tools._hashing import sha256_hex_equal, sha256_hex_of_bytes
-
-_MIN_FENCE_LEN = 3
+from tools._sparse_payload_envelope import finalize_sparse_document_payload
 
 BATCH_MAX_SECTIONS = 16
 BATCH_MAX_CONTENT_CHARS = 64 * 1024
-# 65536 code points × 4 UTF-8 bytes max (BMP scalar) — defensive wire ceiling.
-SPARSE_MAX_CONTENT_BYTES = 262_144
-SPARSE_POLICY_SLICE1 = "slice1_document_and_entity_preview"
 
 _ID_FORMAT_HINT = (
     "Section ids are heading paths 'Parent/Child'; duplicate headings get '#n'. "
@@ -37,8 +35,6 @@ _WINDOW_GATE_NEXT = (
     "section=/sections=), or pass export=true (sanctioned whole-document override, "
     "chunked via chunk_cursor)."
 )
-
-_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 
 
 def sparse_selector_conflict_error(message: str) -> dict[str, Any]:
@@ -90,72 +86,6 @@ def expected_read_sha256_key_error(
         "retryable": True,
         "data": data,
     }
-
-
-def _sum_utf8_content_bytes(node: Any) -> int:
-    total = 0
-    if isinstance(node, dict):
-        for key, val in node.items():
-            if key == "content" and isinstance(val, str):
-                total += len(val.encode("utf-8"))
-            else:
-                total += _sum_utf8_content_bytes(val)
-    elif isinstance(node, list):
-        for item in node:
-            total += _sum_utf8_content_bytes(item)
-    return total
-
-
-def finalize_sparse_document_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Attach sparse policy marker and enforce the UTF-8 byte ceiling (slice 1)."""
-    if payload.get("code") in {"param_not_applicable", "invalid_selector_combo"}:
-        return payload
-    selection = payload.get("selection")
-    if selection == "multi":
-        byte_sum = _sum_utf8_content_bytes(payload)
-        if byte_sum <= SPARSE_MAX_CONTENT_BYTES:
-            payload["sparse_policy"] = SPARSE_POLICY_SLICE1
-        return payload
-    if selection not in {"manifest", "section", "sections", "export", "window"}:
-        return payload
-    byte_sum = _sum_utf8_content_bytes(payload)
-    if byte_sum > SPARSE_MAX_CONTENT_BYTES:
-        return {
-            "code": "sparse_payload_over_byte_ceiling",
-            "message": (
-                f"Sparse document response exceeded UTF-8 content ceiling "
-                f"({byte_sum} bytes > {SPARSE_MAX_CONTENT_BYTES})"
-            ),
-            "source": "fs",
-            "retryable": False,
-            "data": {"measured_utf8_bytes": byte_sum},
-        }
-    payload["sparse_policy"] = SPARSE_POLICY_SLICE1
-    return payload
-
-
-def _stale_read_root(*, read_sha256: str, expected_read_sha256: str) -> dict[str, Any]:
-    return finalize_sparse_document_payload(
-        {
-            "ok": False,
-            "outcome": "stale_handle",
-            "read_sha256": read_sha256,
-            "expected_read_sha256": expected_read_sha256,
-            "selection": "manifest",
-            "omitted": ["content"],
-        }
-    )
-
-
-def _direct_child_ids(indexed: list[_IndexedSection], parent_path: str) -> list[str]:
-    return [r.section_id for r in indexed if r.parent_id == parent_path]
-
-
-def _subtree_char_count(text: str, row: _IndexedSection) -> int:
-    sec = _resolve_section_object(text, row)
-    if sec is None:
-        return 0
-    return sec.end - sec.start
 
 
 def is_sparse_document_suffix(suffix: str) -> bool:
@@ -210,80 +140,6 @@ def _nearest_section_ids(
         req_tail = _id_last_segment(sid)
         _append([i for i in doc_ids if _id_last_segment(i) == req_tail])
     return ranked[:limit]
-
-
-def _own_body_slice(text: str, sec: Any) -> str:
-    """Section body before the first child heading (parent excludes nested)."""
-    lines = text.splitlines(keepends=True)
-    char_offset = 0
-    in_range = False
-    in_fence = False
-    fence_char = ""
-    fence_len = 0
-    child_start: int | None = None
-    for line in lines:
-        if not in_range:
-            if char_offset >= sec.start:
-                in_range = True
-            else:
-                char_offset += len(line)
-                continue
-        stripped_fence = line.strip()
-        if not in_fence:
-            parsed = parse_fence_open(stripped_fence)
-            if parsed is not None:
-                ch, ln, _lang = parsed
-                if ln >= _MIN_FENCE_LEN:
-                    in_fence = True
-                    fence_char, fence_len = ch, ln
-                    char_offset += len(line)
-                    continue
-        elif is_closing_fence_line(stripped_fence, fence_char, fence_len):
-            in_fence = False
-            fence_char, fence_len = "", 0
-            char_offset += len(line)
-            continue
-        if in_fence:
-            char_offset += len(line)
-            continue
-        stripped = line.rstrip("\n\r")
-        m = _HEADING_RE.match(stripped)
-        if m and char_offset > sec.start:
-            level = len(m.group(1))
-            if level > sec.level:
-                child_start = char_offset
-                break
-        char_offset += len(line)
-    end = child_start if child_start is not None else sec.end
-    return text[sec.start : end]
-
-
-def _resolve_section_object(text: str, row: _IndexedSection) -> Any | None:
-    sections = parse_sections(text)
-    dupes = [s for s in sections if s.level > 0 and s.path == row.path_key]
-    if not dupes:
-        return None
-    if len(dupes) > 1:
-        dupes.sort(key=lambda s: s.line)
-        if row.ordinal <= 0 or row.ordinal > len(dupes):
-            return None
-        return dupes[row.ordinal - 1]
-    return dupes[0]
-
-
-def _section_own_body(text: str, row: _IndexedSection) -> str | None:
-    sec = _resolve_section_object(text, row)
-    if sec is None:
-        return None
-    all_body = [s for s in parse_sections(text) if s.level > 0]
-    children = [
-        s
-        for s in all_body
-        if s.level > sec.level and s.start > sec.start and s.start < sec.end
-    ]
-    if children:
-        return _own_body_slice(text, sec)
-    return text[sec.start : sec.end]
 
 
 def _resolve_indexed(

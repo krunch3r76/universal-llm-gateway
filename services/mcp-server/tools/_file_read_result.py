@@ -37,11 +37,11 @@ from ._pdf_read import (
     read_pdf,
 )
 from ._sparse_document_read import (
-    _stale_read_root,
     is_sparse_document_suffix,
     param_not_applicable_error,
     resolve_document_read,
 )
+from ._sparse_payload_envelope import _stale_read_root
 from ._unwindowed_read_projection import build_unwindowed_oversized_payload
 
 

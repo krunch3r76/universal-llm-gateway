@@ -26,11 +26,11 @@ from ._hashing import sha256_hex_equal, sha256_hex_of_file
 from ._sparse_document_read import (
     BATCH_MAX_CONTENT_CHARS,
     BATCH_MAX_SECTIONS,
-    finalize_sparse_document_payload,
     param_not_applicable_error,
     resolve_document_read,
     sparse_selector_conflict_error,
 )
+from ._sparse_payload_envelope import finalize_sparse_document_payload
 
 
 def read_files_batch(

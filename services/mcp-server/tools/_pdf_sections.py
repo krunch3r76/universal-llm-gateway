@@ -367,10 +367,10 @@ def resolve_pdf_outline_read(
         BATCH_MAX_CONTENT_CHARS,
         BATCH_MAX_SECTIONS,
         _chunk_cursor_out_of_range,
-        finalize_sparse_document_payload,
         param_not_applicable_error,
         sparse_selector_conflict_error,
     )
+    from ._sparse_payload_envelope import finalize_sparse_document_payload
 
     has_section = bool(section and str(section).strip())
     has_sections = bool(sections)
