@@ -215,6 +215,18 @@ def _existing_first_turn(
     return int(row["id"]), str(row["created_at"]), int(row["turn_number"]), True
 
 
+def _shadow_hook_after_reopen_from_closed(*, thread_id: str) -> None:
+    """Fail-open shadow ledger hook after a closed thread was reopened and committed."""
+    try:
+        from .seat_ledger import shadow_hook_thread_reopen
+
+        shadow_hook_thread_reopen(thread_id=thread_id)
+    except Exception:
+        from .seat_ledger import _record_shadow_hook_error
+
+        _record_shadow_hook_error(where="reopen_turn", thread_id=thread_id)
+
+
 def insert_turn(
     *,
     thread: str,
@@ -247,6 +259,9 @@ def insert_turn(
     """
     ts = now()
     thread_reopened_from_closed = False
+    early_existing: tuple[int, str, int, bool] | None = None
+    turn_id = 0
+    turn_number = 0
     with write_connect() as conn:
         row = conn.execute(
             "SELECT id, status, bus_lifecycle_state FROM threads WHERE id = ?",
@@ -304,123 +319,136 @@ def insert_turn(
                 (thread,),
             ).fetchone()
             if existing_turn1 is not None:
-                return _existing_first_turn(
+                early_existing = _existing_first_turn(
                     existing_turn1, thread=thread, from_agent=from_agent
                 )
 
-        max_row = conn.execute(
-            "SELECT MAX(turn_number) AS max_tn FROM turns WHERE thread = ?",
-            (thread,),
-        ).fetchone()
-        latest_turn_number = max_row["max_tn"] or 0
-
-        if after_turn is not None and not on_behalf:
-            # Mirror get_turns inbox semantics (legacy short to_agent slugs included).
-            include_team = from_agent != "kaywan"
-            inbox_clause, inbox_params = recipient_in_clause(
-                from_agent, include_team=include_team
-            )
-            unread_rows = conn.execute(
-                f"SELECT id, turn_number, subject FROM turns "
-                f"WHERE thread = ? AND {inbox_clause} "
-                f"AND turn_number > ? AND read_at IS NULL",
-                (thread, *inbox_params, after_turn),
-            ).fetchall()
-            if unread_rows:
-                raise UnreadTurnsExist(
-                    [dict(r) for r in unread_rows],
-                    latest_turn_number=latest_turn_number,
-                    provided_after_turn=after_turn,
-                )
-
-        turn_number = 1 if idempotent_first_turn else latest_turn_number + 1
-
-        from ..notice_closeout_dedupe import notice_closeout_key_for_send
-
-        notice_key = notice_closeout_key_for_send(
-            from_agent=from_agent, subject=subject, body=body
-        )
-        if notice_key is not None:
-            existing_closeout = conn.execute(
-                "SELECT id, created_at, turn_number, from_agent FROM turns "
-                "WHERE thread=? AND from_agent=? AND notice_closeout_key=? LIMIT 1",
-                (thread, from_agent, notice_key),
+        if early_existing is None:
+            max_row = conn.execute(
+                "SELECT MAX(turn_number) AS max_tn FROM turns WHERE thread = ?",
+                (thread,),
             ).fetchone()
-            if existing_closeout is not None:
-                return _existing_first_turn(
-                    existing_closeout, thread=thread, from_agent=from_agent
+            latest_turn_number = max_row["max_tn"] or 0
+
+            if after_turn is not None and not on_behalf:
+                # Mirror get_turns inbox semantics (legacy short to_agent slugs included).
+                include_team = from_agent != "kaywan"
+                inbox_clause, inbox_params = recipient_in_clause(
+                    from_agent, include_team=include_team
                 )
+                unread_rows = conn.execute(
+                    f"SELECT id, turn_number, subject FROM turns "
+                    f"WHERE thread = ? AND {inbox_clause} "
+                    f"AND turn_number > ? AND read_at IS NULL",
+                    (thread, *inbox_params, after_turn),
+                ).fetchall()
+                if unread_rows:
+                    raise UnreadTurnsExist(
+                        [dict(r) for r in unread_rows],
+                        latest_turn_number=latest_turn_number,
+                        provided_after_turn=after_turn,
+                    )
 
-        read_at: str | None = None
-        if normalize_bus_address(from_agent) == normalize_bus_address(to_agent):
-            if not is_same_seat_memo_note(
-                seat=from_agent,
-                from_agent=from_agent,
-                to_agent=to_agent,
-                subject=subject,
-            ):
-                read_at = ts
+            turn_number = 1 if idempotent_first_turn else latest_turn_number + 1
 
-        try:
-            cur = conn.execute(
-                "INSERT INTO turns "
-                "(thread, turn_number, from_agent, to_agent, subject, body, "
-                "status, supersedes_turn, created_at, read_at, attested_by, user_agent, "
-                "notice_closeout_key, from_agent_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    thread,
-                    turn_number,
-                    from_agent,
-                    to_agent,
-                    subject,
-                    body,
-                    status,
-                    supersedes_turn,
-                    ts,
-                    read_at,
-                    attested_by,
-                    user_agent,
-                    notice_key,
-                    from_agent_id,
-                ),
+            from ..notice_closeout_dedupe import notice_closeout_key_for_send
+
+            notice_key = notice_closeout_key_for_send(
+                from_agent=from_agent, subject=subject, body=body
             )
-        except sqlite3.IntegrityError:
             if notice_key is not None:
-                raced_closeout = conn.execute(
+                existing_closeout = conn.execute(
                     "SELECT id, created_at, turn_number, from_agent FROM turns "
                     "WHERE thread=? AND from_agent=? AND notice_closeout_key=? LIMIT 1",
                     (thread, from_agent, notice_key),
                 ).fetchone()
-                if raced_closeout is not None:
-                    return _existing_first_turn(
-                        raced_closeout, thread=thread, from_agent=from_agent
+                if existing_closeout is not None:
+                    early_existing = _existing_first_turn(
+                        existing_closeout, thread=thread, from_agent=from_agent
                     )
-            if not idempotent_first_turn:
-                raise
-            raced = conn.execute(
-                "SELECT id, created_at, turn_number, from_agent FROM turns "
-                "WHERE thread = ? AND turn_number = 1 LIMIT 1",
-                (thread,),
-            ).fetchone()
-            if raced is None:
-                raise
-            return _existing_first_turn(raced, thread=thread, from_agent=from_agent)
 
-        if supersedes_turn is not None:
-            conn.execute(
-                "UPDATE turns SET status = 'superseded' WHERE id = ?",
-                (supersedes_turn,),
-            )
+            if early_existing is None:
+                read_at: str | None = None
+                if normalize_bus_address(from_agent) == normalize_bus_address(to_agent):
+                    if not is_same_seat_memo_note(
+                        seat=from_agent,
+                        from_agent=from_agent,
+                        to_agent=to_agent,
+                        subject=subject,
+                    ):
+                        read_at = ts
 
-        conn.execute("UPDATE threads SET updated_at = ? WHERE id = ?", (ts, thread))
+                try:
+                    cur = conn.execute(
+                        "INSERT INTO turns "
+                        "(thread, turn_number, from_agent, to_agent, subject, body, "
+                        "status, supersedes_turn, created_at, read_at, attested_by, user_agent, "
+                        "notice_closeout_key, from_agent_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            thread,
+                            turn_number,
+                            from_agent,
+                            to_agent,
+                            subject,
+                            body,
+                            status,
+                            supersedes_turn,
+                            ts,
+                            read_at,
+                            attested_by,
+                            user_agent,
+                            notice_key,
+                            from_agent_id,
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    if notice_key is not None:
+                        raced_closeout = conn.execute(
+                            "SELECT id, created_at, turn_number, from_agent FROM turns "
+                            "WHERE thread=? AND from_agent=? AND notice_closeout_key=? LIMIT 1",
+                            (thread, from_agent, notice_key),
+                        ).fetchone()
+                        if raced_closeout is not None:
+                            early_existing = _existing_first_turn(
+                                raced_closeout, thread=thread, from_agent=from_agent
+                            )
+                    if early_existing is None:
+                        if not idempotent_first_turn:
+                            raise
+                        raced = conn.execute(
+                            "SELECT id, created_at, turn_number, from_agent FROM turns "
+                            "WHERE thread = ? AND turn_number = 1 LIMIT 1",
+                            (thread,),
+                        ).fetchone()
+                        if raced is None:
+                            raise
+                        early_existing = _existing_first_turn(
+                            raced, thread=thread, from_agent=from_agent
+                        )
 
-        if cur.lastrowid is None:
-            raise RuntimeError("Failed to insert turn: sqlite returned no row id")
+                if early_existing is None:
+                    if supersedes_turn is not None:
+                        conn.execute(
+                            "UPDATE turns SET status = 'superseded' WHERE id = ?",
+                            (supersedes_turn,),
+                        )
 
-        turn_id = cur.lastrowid
-        if attachments:
-            _insert_attachments(conn, turn_id, attachments)
+                    conn.execute(
+                        "UPDATE threads SET updated_at = ? WHERE id = ?", (ts, thread)
+                    )
+
+                    if cur.lastrowid is None:
+                        raise RuntimeError("Failed to insert turn: sqlite returned no row id")
+
+                    turn_id = cur.lastrowid
+                    if attachments:
+                        _insert_attachments(conn, turn_id, attachments)
+
+    if early_existing is not None:
+        if thread_reopened_from_closed:
+            _shadow_hook_after_reopen_from_closed(thread_id=thread)
+        return early_existing
 
     from ..orphan_demote import maybe_demote_orphans_after_insert
 
@@ -466,14 +494,7 @@ def insert_turn(
         thread_id=thread, turn_number=turn_number, subject=subject
     )
     if thread_reopened_from_closed:
-        try:
-            from .seat_ledger import shadow_hook_thread_reopen
-
-            shadow_hook_thread_reopen(thread_id=thread)
-        except Exception:
-            from .seat_ledger import _record_shadow_hook_error
-
-            _record_shadow_hook_error(where="reopen_turn", thread_id=thread)
+        _shadow_hook_after_reopen_from_closed(thread_id=thread)
     return turn_id, ts, turn_number, False
 
 
