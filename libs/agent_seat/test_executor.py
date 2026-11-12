@@ -38,55 +38,25 @@ def test_parse_dispatch_arguments_malformed_returns_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_unknown_tool_returns_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", None)
+async def test_execute_unknown_tool_returns_error() -> None:
     result = await execute_tool("nonsense", {})
-    assert json.loads(result) == {"error": "Unknown tool: nonsense"}
+    data = json.loads(result)
+    assert data["code"] == "client_side_mcp_http_refused"
 
 
 @pytest.mark.asyncio
-async def test_execute_unknown_tool_uses_mcp_executor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class _FakeMcpExecutor:
-        async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
-            return json.dumps({"name": name, "arguments": arguments, "source": "mcp"})
-
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", _FakeMcpExecutor())
-
+async def test_execute_mcp_server_tool_refuses_http_path() -> None:
     result = await execute_tool("web_search", {"query": "test"})
-    assert json.loads(result) == {
-        "name": "web_search",
-        "arguments": {"query": "test"},
-        "source": "mcp",
-    }
+    data = json.loads(result)
+    assert data["code"] == "client_side_mcp_http_refused"
+    assert "remote_mcp" in data["error"]
 
 
 @pytest.mark.asyncio
-async def test_brave_search_alias_remaps_to_mcp_web_search(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """brave_search must invoke MCP with name='web_search', not 'brave_search'."""
-
-    class _FakeMcpExecutor:
-        async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
-            return json.dumps({"name": name, "arguments": arguments, "source": "mcp"})
-
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", _FakeMcpExecutor())
-
+async def test_brave_search_refuses_without_remote_mcp() -> None:
     result = await execute_tool("brave_search", {"query": "eth price"})
     data = json.loads(result)
-    assert data["name"] == "web_search", (
-        "brave_search must remap to MCP 'web_search'; got "
-        f"{data['name']!r}. Native model tools would shadow 'brave_search' "
-        "if it were passed as-is to the MCP server."
-    )
-    assert data["arguments"] == {"query": "eth price"}
+    assert data["code"] == "client_side_mcp_http_refused"
 
 
 @pytest.mark.asyncio
@@ -309,87 +279,33 @@ async def test_execute_agent_bus_reply_posts_body(
 
 
 @pytest.mark.asyncio
-async def test_get_mcp_tool_definitions_returns_live_defs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class _FakeMcpExecutor:
-        def get_openai_tool_defs(self) -> list[dict[str, Any]]:
-            return [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "web_search",
-                        "description": "Search the web",
-                        "parameters": {"type": "object", "properties": {}},
-                    },
-                }
-            ]
-
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", _FakeMcpExecutor())
-
+async def test_get_mcp_tool_definitions_returns_in_process_registry() -> None:
     defs = await get_mcp_tool_definitions()
-    assert defs[0]["function"]["name"] == "web_search"
+    names = [d["function"]["name"] for d in defs]
+    assert names == ["cortex", "agent_bus"]
 
 
 @pytest.mark.asyncio
-async def test_get_mcp_executor_retries_after_missing_env(
+async def test_get_mcp_tool_definitions_does_not_http_dial_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", False)
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", None)
-    monkeypatch.delenv("MCP_PUBLIC_URL", raising=False)
-    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    import httpx
 
-    executor = await _ex._get_mcp_executor()
+    async def forbidden(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("httpx must not be called for in-process tool defs")
 
-    assert executor is None
-    assert _ex._MCP_EXECUTOR_INITIALIZED is False
+    monkeypatch.setattr(httpx, "AsyncClient", forbidden)
+    defs = await get_mcp_tool_definitions()
+    assert defs
 
 
 @pytest.mark.asyncio
-async def test_resolve_tool_definitions_combines_static_and_live(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class _FakeMcpExecutor:
-        def get_openai_tool_defs(self) -> list[dict[str, Any]]:
-            return [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "web_search",
-                        "description": "Search the web",
-                        "parameters": {"type": "object", "properties": {}},
-                    },
-                }
-            ]
-
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", _FakeMcpExecutor())
-
-    defs = await resolve_tool_definitions(["cortex", "web_search"])
-    assert [d["function"]["name"] for d in defs] == ["cortex", "web_search"]
+async def test_resolve_tool_definitions_in_process_only() -> None:
+    defs = await resolve_tool_definitions(["cortex", "agent_bus"])
+    assert [d["function"]["name"] for d in defs] == ["cortex", "agent_bus"]
 
 
 @pytest.mark.asyncio
-async def test_resolve_tool_definitions_uses_live_rag_tool(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class _FakeMcpExecutor:
-        def get_openai_tool_defs(self) -> list[dict[str, Any]]:
-            return [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "rag",
-                        "description": "RAG dispatch",
-                        "parameters": {"type": "object", "properties": {}},
-                    },
-                }
-            ]
-
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
-    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", _FakeMcpExecutor())
-
-    defs = await resolve_tool_definitions(["rag"])
-    assert [d["function"]["name"] for d in defs] == ["rag"]
+async def test_resolve_tool_definitions_rejects_mcp_only_names() -> None:
+    with pytest.raises(ValueError, match="MCP-only"):
+        await resolve_tool_definitions(["rag"])

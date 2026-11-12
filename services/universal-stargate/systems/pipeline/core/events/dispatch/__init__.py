@@ -44,6 +44,7 @@ from .frontier_lifecycle import (
     PipelineFrontierDispatchStarted,
 )
 from .frontier_mcp import (
+    PipelineFrontierDispatchClientMcpRegistryBound,
     PipelineFrontierDispatchRemoteMcpEnabled,
     PipelineFrontierDispatchRemoteMcpMisconfigured,
 )
@@ -89,6 +90,7 @@ __all__ = [
     # Frontier remote MCP
     "PipelineFrontierDispatchRemoteMcpEnabled",
     "PipelineFrontierDispatchRemoteMcpMisconfigured",
+    "PipelineFrontierDispatchClientMcpRegistryBound",
     # Frontier anomaly
     "PipelineFrontierDispatchOutputShort",
     "PipelineFrontierDispatchTerminationShadow",

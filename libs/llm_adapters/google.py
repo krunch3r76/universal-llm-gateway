@@ -137,6 +137,9 @@ class GoogleAdapter:
         req: FrontierRequest,
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
         """Build Gemini native generateContent request from FrontierRequest."""
+        from llm_adapters.client_side_mcp import validate_client_side_mcp_tool_loop
+
+        validate_client_side_mcp_tool_loop(req)
         if req.remote_mcp:
             raise NotImplementedError("google has no native remote MCP protocol")
         headers: dict[str, str] = {

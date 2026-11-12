@@ -3,25 +3,21 @@
 Dispatches OpenAI-function-call ``tool_calls`` to local REST endpoints:
   - cortex:    POST /dispatch on cortex-api (unified op dispatch)
   - agent_bus: UDS REST on agent-bus
-  - rag:       live MCP ``rag`` tool
-  - any other MCP tool: proxied through the live MCP server over JSON-RPC
-    using the shared ``McpToolExecutor`` client already used by the cloud proxy
 
 Returns a JSON string for each call (matches the tool-result payload shape
 expected by OpenAI / Anthropic / xAI / Google adapters).
+
+MCP JSON-RPC execution is intentionally absent here — Stargate must not
+HTTP-dial MCP on the client-side tool loop (browser-resource-governance C2).
+Full MCP tool surfaces use ``remote_mcp`` (provider connector) instead.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import os
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import urlencode
-
-if TYPE_CHECKING:
-    from services.universal_cloud_proxy.mcp_executor import McpToolExecutor
 
 from transport_utils import (
     DEFAULT_AGENT_BUS_URL,
@@ -31,13 +27,15 @@ from transport_utils import (
 from ulg_routing_headers.client import internal_dispatch_headers
 
 from agent_seat.context import get_active_role
+from agent_seat.tools import (
+    IN_PROCESS_CLIENT_TOOL_NAMES,
+    TOOL_REGISTRY,
+    in_process_client_tool_definitions,
+)
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30.0
-_MCP_EXECUTOR_LOCK = asyncio.Lock()
-_MCP_EXECUTOR: McpToolExecutor | None = None
-_MCP_EXECUTOR_INITIALIZED = False
 
 
 def _parse_dispatch_arguments(raw: Any) -> dict[str, Any] | None:
@@ -54,100 +52,31 @@ def _parse_dispatch_arguments(raw: Any) -> dict[str, Any] | None:
     return None
 
 
-async def _get_mcp_executor() -> McpToolExecutor | None:
-    """Return a started MCP JSON-RPC client, or ``None`` if unavailable.
-
-    The frontier path runs inside Stargate rather than the MCP container, so we
-    use the same public MCP endpoint configuration as the existing remote-MCP
-    helpers: ``MCP_PUBLIC_URL`` + ``MCP_AUTH_TOKEN``. The executor discovers the
-    live tool catalog once and reuses it for subsequent requests.
-    """
-
-    global _MCP_EXECUTOR, _MCP_EXECUTOR_INITIALIZED
-    if _MCP_EXECUTOR_INITIALIZED:
-        return _MCP_EXECUTOR
-
-    async with _MCP_EXECUTOR_LOCK:
-        if _MCP_EXECUTOR_INITIALIZED:
-            return _MCP_EXECUTOR
-
-        url = os.environ.get("MCP_PUBLIC_URL", "").strip()
-        token = os.environ.get("MCP_AUTH_TOKEN", "").strip()
-        if not url or not token:
-            logger.error(
-                "agent_seat live MCP disabled — falling back to static tools only: "
-                "MCP_PUBLIC_URL/MCP_AUTH_TOKEN not configured"
-            )
-            return None
-
-        from llm_adapters._mcp_entry import normalize_mcp_public_url
-
-        url = normalize_mcp_public_url(url)
-
-        try:
-            from services.universal_cloud_proxy.mcp_executor import McpToolExecutor
-        except ImportError as exc:
-            logger.error(
-                "agent_seat live MCP disabled — falling back to static tools only: "
-                "McpToolExecutor unavailable: %s",
-                exc,
-            )
-            _MCP_EXECUTOR_INITIALIZED = True
-            return None
-
-        executor = McpToolExecutor(mcp_url=url, auth_token=token)
-        await executor.startup()
-        if executor.available:
-            _MCP_EXECUTOR = executor
-        else:
-            logger.warning("agent_seat MCP executor discovered no tools from %s", url)
-            return None
-        _MCP_EXECUTOR_INITIALIZED = True
-        return _MCP_EXECUTOR
-
-
 async def get_mcp_tool_definitions() -> list[dict[str, Any]]:
-    """Return live MCP tool defs converted to OpenAI function format."""
+    """Return in-process client tool defs (no live MCP catalog fetch)."""
 
-    executor = await _get_mcp_executor()
-    if executor is None:
-        return []
-    return executor.get_openai_tool_defs()
+    return in_process_client_tool_definitions()
 
 
 async def resolve_tool_definitions(names: list[str]) -> list[dict[str, Any]]:
-    """Resolve tool names against the static registry plus the live MCP catalog."""
-
-    from agent_seat.tools import TOOL_REGISTRY
+    """Resolve tool names against the static in-process registry only."""
 
     definitions: list[dict[str, Any]] = []
-    unresolved: list[str] = []
+    unknown: list[str] = []
     for name in names:
         entry = TOOL_REGISTRY.get(name)
-        if entry is not None:
-            definitions.append(entry["definition"])
-        else:
-            unresolved.append(name)
-
-    if not unresolved:
-        return definitions
-
-    live_defs = {
-        d.get("function", {}).get("name", ""): d
-        for d in await get_mcp_tool_definitions()
-    }
-    still_unknown: list[str] = []
-    for name in unresolved:
-        defn = live_defs.get(name)
-        if defn is None:
-            still_unknown.append(name)
-        else:
-            definitions.append(defn)
-
-    if still_unknown:
-        available = sorted(set(TOOL_REGISTRY) | {k for k in live_defs if k})
+        if entry is None:
+            unknown.append(name)
+            continue
+        if name not in IN_PROCESS_CLIENT_TOOL_NAMES:
+            unknown.append(name)
+            continue
+        definitions.append(entry["definition"])
+    if unknown:
+        available = sorted(IN_PROCESS_CLIENT_TOOL_NAMES)
         raise ValueError(
-            f"unknown tool {sorted(set(still_unknown))!r}; available: {available}"
+            f"unknown or MCP-only tool {sorted(set(unknown))!r}; "
+            f"in-process available: {available}"
         )
     return definitions
 
@@ -258,6 +187,8 @@ async def _agent_bus_request(
     returns 401, breaking persona-side ``agent_bus`` calls from
     ``team_dispatch`` tool loops (e.g. Orion posting completion briefs).
     """
+    import os
+
     token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
     if not token:
         logger.error(
@@ -344,21 +275,22 @@ async def _execute_agent_bus(args: dict[str, Any]) -> str:
 async def execute_tool(name: str, args: dict[str, Any]) -> str:
     """Dispatch a single tool call to its REST backend. Returns JSON string.
 
-    Supported tools (match libs/agent_seat/tools.TEAM_TOOL_DEFINITIONS):
-      - ``cortex``       — unified op dispatch to cortex-api /dispatch
-      - ``agent_bus``    — unified op dispatch to agent-bus
-      - ``brave_search`` — Brave Search API via MCP (safe alias; MCP name: web_search)
+    Supported in-process tools (``libs/agent_seat/tools.TEAM_TOOL_DEFINITIONS``):
+      - ``cortex``    — unified op dispatch to cortex-api /dispatch
+      - ``agent_bus`` — unified op dispatch to agent-bus
 
-    Unknown names fall back to the live MCP server catalog when available.
+    MCP-server tools are not executed here — enable ``remote_mcp`` on the dispatch.
     """
     if name == "cortex":
         return await _execute_cortex(args)
     if name == "agent_bus":
         return await _execute_agent_bus(args)
-    # brave_search is the safe alias for the MCP-side "web_search" tool.
-    # ¬call "web_search" directly — name collides with native model capability.
-    mcp_name = "web_search" if name == "brave_search" else name
-    executor = await _get_mcp_executor()
-    if executor is not None:
-        return await executor.execute_tool(mcp_name, args)
-    return json.dumps({"error": f"Unknown tool: {name}"})
+    return json.dumps(
+        {
+            "error": (
+                f"Tool {name!r} requires remote_mcp (provider MCP connector); "
+                "Stargate does not HTTP-dial MCP on client-side tool loops."
+            ),
+            "code": "client_side_mcp_http_refused",
+        }
+    )

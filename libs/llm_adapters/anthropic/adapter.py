@@ -146,6 +146,9 @@ class AnthropicAdapter:
         # clamp already applied upstream in ``gen_params``).
         body["max_tokens"] = req.max_tokens
 
+        from llm_adapters.client_side_mcp import validate_client_side_mcp_tool_loop
+
+        validate_client_side_mcp_tool_loop(req)
         if req.remote_mcp:
             if req.mcp_tool_loop:
                 raise ValueError(

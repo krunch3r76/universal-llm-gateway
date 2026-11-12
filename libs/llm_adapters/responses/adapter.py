@@ -179,6 +179,9 @@ class ResponsesAPIAdapter:
             else:
                 body["text"] = {"format": fmt}
 
+        from llm_adapters.client_side_mcp import validate_client_side_mcp_tool_loop
+
+        validate_client_side_mcp_tool_loop(req)
         if req.remote_mcp:
             if self._vendor == "xai":
                 # Vendor supports type:"mcp"; raise is policy while the card keeps

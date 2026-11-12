@@ -27,6 +27,11 @@ from llm_adapters.capability_dispatch import (
     ProtocolError,
     resolve_dispatch,
 )
+from llm_adapters.client_side_mcp import (
+    client_side_mcp_tool_loop_allowed,
+    non_in_process_tool_names,
+    validate_client_side_mcp_tool_loop,
+)
 from model_capabilities import server_side_tools
 from model_id import ModelId
 
@@ -40,6 +45,7 @@ from ...events.dispatch import (
 from ...execution.errors import (
     CapabilityCatalogMissError,
     CapabilityKnobRejectedError,
+    ClientSideMcpHttpRefusedError,
 )
 from .admission_checks import (
     build_runtime_context_block,
@@ -216,10 +222,22 @@ def build_frontier_request(
         tool_choice=gen_params.get("tool_choice"),
         response_format=gen_params.get("response_format"),
         provider_options=gen_params.get("provider_options"),
-        mcp_tool_loop=bool(admission.tools) and not admission.remote_mcp,
+        mcp_tool_loop=client_side_mcp_tool_loop_allowed(
+            tools=admission.tools,
+            remote_mcp=bool(admission.remote_mcp),
+        ),
         remote_mcp=admission.remote_mcp,
         skills_mount=admission.skills_mount,
     )
+    try:
+        validate_client_side_mcp_tool_loop(req)
+    except ValueError as exc:
+        raise ClientSideMcpHttpRefusedError(
+            model=admission.model,
+            provider=admission.provider,
+            offending_tools=non_in_process_tool_names(req.tools),
+            message=str(exc),
+        ) from exc
     return FrontierRequestBundle(req=req, system=system)
 
 

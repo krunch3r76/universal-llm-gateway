@@ -235,6 +235,14 @@ TEAM_TOOL_DEFINITIONS: list[dict[str, Any]] = [
 # is the superset — do NOT concatenate TOOL_DEFINITIONS (duplicate cortex).
 STATIC_TOOL_FALLBACK: list[dict[str, Any]] = TEAM_TOOL_DEFINITIONS
 
+# Client-side Stargate loop — no MCP HTTP (C2).
+IN_PROCESS_CLIENT_TOOL_NAMES: frozenset[str] = frozenset({"cortex", "agent_bus"})
+
+
+def in_process_client_tool_definitions() -> list[dict[str, Any]]:
+    """OpenAI-shaped tool defs Stargate may attach without HTTP-dialing MCP."""
+    return list(STATIC_TOOL_FALLBACK)
+
 
 # Tool-registry entry: definition + async executor reference name. The
 # executor name is resolved by libs/agent_seat/executor.py at tool-loop

@@ -23,8 +23,8 @@ Public surface (stable):
 ``NATIVE_PATHS``            — provider → native endpoint path map
 
 ``execute_tool(name, args)`` — async dispatcher for local tools + live MCP tools
-``get_mcp_tool_definitions()`` — discover live MCP tool defs for client-side injection
-``resolve_tool_definitions(names)`` — resolve static or live MCP tool names
+``get_mcp_tool_definitions()`` — in-process client tool defs (no MCP HTTP dial)
+``resolve_tool_definitions(names)`` — resolve in-process registry tool names
 """
 
 from __future__ import annotations
