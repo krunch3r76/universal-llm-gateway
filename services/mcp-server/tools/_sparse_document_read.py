@@ -19,6 +19,7 @@ from tools._document_manifest import (
     build_document_manifest,
 )
 from tools._hashing import sha256_hex_equal, sha256_hex_of_bytes
+from tools._line_range import apply_line_range
 from tools._sparse_payload_envelope import finalize_sparse_document_payload
 
 BATCH_MAX_SECTIONS = 16
@@ -672,8 +673,6 @@ def resolve_document_read(
                     "sandbox": sandbox,
                 }
             )
-        from tools._line_range import apply_line_range
-
         window, meta = apply_line_range(text, offset, limit)
         out: dict[str, Any] = {
             "content": window,
