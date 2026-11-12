@@ -14,26 +14,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ulg_paths.repo_root import ulg_repo_root
+
 from bus_watch.events import emit_night_id_reset
 
 
 def bus_watch_repo_root() -> Path:
     """ULG checkout root — honors container ``PROJECT_ROOT=/data/project`` mounts."""
-    project_root = Path(os.environ.get("PROJECT_ROOT", "")).expanduser()
-    if project_root.is_dir():
-        if (project_root / "libs" / "bus_watch").is_dir():
-            return project_root
-        nested = project_root / "universal-llm-gateway"
-        if nested.is_dir() and (nested / "libs" / "bus_watch").is_dir():
-            return nested
-    return Path(__file__).resolve().parents[2]
+    return ulg_repo_root(libs_anchor=Path(__file__))
 
 
 _REPO = bus_watch_repo_root()
 WATCH_DIR = _REPO / "tmp" / "watchers"
 HOUSE_LABEL_PREFIX = "house-"
 FABLE_LOCK = WATCH_DIR / "liaison-fable.lock"  # legacy constant; never read or written
-TICKER_LOCK = WATCH_DIR / "liaison-ticker.lock"  # legacy; live ticker uses ticker_lock_path
+TICKER_LOCK = (
+    WATCH_DIR / "liaison-ticker.lock"
+)  # legacy; live ticker uses ticker_lock_path
 LOCK_STALE_S = 1800.0
 LEASE_SLACK_S = 1800
 MAX_HOPS_PER_NIGHT = 8
@@ -267,7 +264,11 @@ def claim_fable_lock(
             if not ide_to_ide_takeover:
                 current["preempt_by"] = holder
                 path.write_text(json.dumps(current, indent=2), encoding="utf-8")
-                return {"ok": False, "reason": "held_preempt_requested", "lock": current}
+                return {
+                    "ok": False,
+                    "reason": "held_preempt_requested",
+                    "lock": current,
+                }
             displaced_holder = live_holder
         else:
             return {"ok": False, "reason": "held", "lock": current}
@@ -398,13 +399,13 @@ def _cmdline_matches_root(cmdline: str, root_id: str) -> bool:
 
 def _is_gear3_ticker_cmdline(cmdline: str) -> bool:
     return (
-        "liaison-tick.py" in cmdline or "metronome.py" in cmdline
-    ) and "--loop" in cmdline and "--spawn-on-wake" in cmdline
+        ("liaison-tick.py" in cmdline or "metronome.py" in cmdline)
+        and "--loop" in cmdline
+        and "--spawn-on-wake" in cmdline
+    )
 
 
-def _legacy_spawn_loop_alive(
-    root_id: str, *, proc_root: Path | None = None
-) -> bool:
+def _legacy_spawn_loop_alive(root_id: str, *, proc_root: Path | None = None) -> bool:
     """True when a foreign gear-3 ``--loop --spawn-on-wake`` tick process exists."""
     root = proc_root or Path(os.environ.get("LIAISON_PROC_ROOT", "/proc"))
     self_pid = os.getpid()
@@ -430,9 +431,7 @@ def _legacy_spawn_loop_alive(
     return False
 
 
-def ticker_lease_live(
-    lock: dict[str, Any] | None = None, *, root_id: str
-) -> bool:
+def ticker_lease_live(lock: dict[str, Any] | None = None, *, root_id: str) -> bool:
     """Whether the gear-3 ticker lease for ``root_id`` is held and live."""
     data = lock if lock is not None else read_ticker_lock(root_id)
     if data.get("holder") != f"ticker:{root_id}":
@@ -486,9 +485,7 @@ def release_ticker_lease(root: str, *, pid: int | None = -1) -> dict[str, Any]:
         caller = os.getpid() if pid == -1 else pid
         if caller is not None and lock_pid is None:
             return {"ok": False, "reason": "not_holder_process", "lock": current}
-        if caller is not None and lock_pid is not None and int(lock_pid) != int(
-            caller
-        ):
+        if caller is not None and lock_pid is not None and int(lock_pid) != int(caller):
             return {"ok": False, "reason": "not_holder_process", "lock": current}
     if current:
         ticker_lock_path(root).write_text(

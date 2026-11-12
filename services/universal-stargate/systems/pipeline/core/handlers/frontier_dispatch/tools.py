@@ -36,27 +36,21 @@ async def resolve_dispatch_tool_set(
     - Persona-bound: ``agent`` is set — hydrates agent and selects tool tier.
       Models with ``mcp_client_tool_loop=False`` get ``tools=[]`` (server-side
       built-ins are injected separately via the ``server_tools`` knob).
-    - Persona-free: no agent — full live MCP catalog when ``mcp_enabled``,
-      same surface as persona-bound dispatch. The dispatch path (frontier HTTP
-      vs team HTTP / MCP ``team_dispatch``) no longer determines the tool
-      surface; ``mcp=False`` or the card-selected remote-connector path is the
-      MCP-class suppression signal.
+    - Persona-free: no agent — in-process client tools when ``mcp_enabled`` and
+      not ``remote_mcp``. ``mcp=False`` or the card-selected remote-connector
+      path is the MCP-class suppression signal.
     """
-    from agent_seat import (
-        STATIC_TOOL_FALLBACK,
-        assemble_system_prompt,
-        get_mcp_tool_definitions,
-        hydrate_agent,
-    )
+    from agent_seat import assemble_system_prompt, hydrate_agent
+    from agent_seat.tools import in_process_client_tool_definitions
 
     from ...events.dispatch import (
+        PipelineFrontierDispatchClientMcpRegistryBound,
         PipelineFrontierDispatchHydrated,
         PipelineFrontierDispatchToolSuppressed,
     )
 
-    async def _full_mcp_catalog() -> list[dict[str, Any]]:
-        live = await get_mcp_tool_definitions()
-        return live or STATIC_TOOL_FALLBACK
+    async def _in_process_client_catalog() -> list[dict[str, Any]]:
+        return in_process_client_tool_definitions()
 
     if agent:
         # Case 1: persona-bound dispatch — hydrate agent and select tools by provider.
@@ -111,7 +105,17 @@ async def resolve_dispatch_tool_set(
         elif not mcp_client_tool_loop(model):
             tools = []
         else:
-            tools = await _full_mcp_catalog()
+            tools = await _in_process_client_catalog()
+            if tools:
+                publish(
+                    PipelineFrontierDispatchClientMcpRegistryBound(
+                        execution_id=execution_id,
+                        agent=agent,
+                        model=model,
+                        provider=provider,
+                        tool_names=[t["function"]["name"] for t in tools],
+                    )
+                )
         assembled_system = assemble_system_prompt(
             agent,
             briefing_card_md=bundle.briefing_card_md,
@@ -131,5 +135,15 @@ async def resolve_dispatch_tool_set(
     if not mcp_enabled or remote_mcp:
         tools = []
     else:
-        tools = await _full_mcp_catalog()
+        tools = await _in_process_client_catalog()
+        if tools:
+            publish(
+                PipelineFrontierDispatchClientMcpRegistryBound(
+                    execution_id=execution_id,
+                    agent=None,
+                    model=model,
+                    provider=provider,
+                    tool_names=[t["function"]["name"] for t in tools],
+                )
+            )
     return tools, system_prompt, {"agent": None}

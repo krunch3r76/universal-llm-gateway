@@ -37,6 +37,8 @@ def test_is_cursor_sdk_model_admitted_members(model: str) -> None:
     [
         "gemini-4-argon",
         "cursor/Gemini-4-Argon",
+        "gemini-4-carbon",
+        "cursor/gemini-4-carbon",
         "cursor/auto",
         "auto",
         "cursor/claude-sonnet-5",
@@ -83,6 +85,14 @@ def test_explicit_pin_admits_all_other_models_pool_including_advisor() -> None:
         is_cursor_sdk_model_admitted("cursor/gemini-4-argon", explicit_pin=True) is True
     )
     assert is_cursor_sdk_model_admitted("cursor/gemini-4-argon") is False
+
+
+def test_explicit_pin_admits_gemini_4_carbon_other_models_pool() -> None:
+    assert (
+        is_cursor_sdk_model_admitted("cursor/gemini-4-carbon", explicit_pin=True)
+        is True
+    )
+    assert is_cursor_sdk_model_admitted("cursor/gemini-4-carbon") is False
 
 
 @pytest.mark.parametrize("bare_id", sorted(OTHER_MODELS_BARE))

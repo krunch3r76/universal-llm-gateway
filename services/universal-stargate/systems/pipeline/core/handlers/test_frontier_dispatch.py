@@ -524,7 +524,7 @@ async def test_handler_mcp_false_suppresses_tools(
 
 
 @pytest.mark.asyncio
-async def test_handler_anthropic_agent_uses_live_mcp_tools(
+async def test_handler_anthropic_agent_uses_in_process_client_tools(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -538,26 +538,13 @@ async def test_handler_anthropic_agent_uses_live_mcp_tools(
     def fake_assemble(agent: str, **_k: Any) -> str:
         return f"SYSTEM[{agent}]"
 
-    async def fake_defs() -> list[dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": name,
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            }
-            for name in ["cortex", "fs", "agent_bus", "rag"]
-        ]
-
     async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
         captured["tools"] = kwargs["req"].tools
+        captured["mcp_tool_loop"] = kwargs["req"].mcp_tool_loop
         return _FakeLoopResult(provider="anthropic")
 
     monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
     monkeypatch.setattr(agent_seat, "assemble_system_prompt", fake_assemble)
-    monkeypatch.setattr(agent_seat, "get_mcp_tool_definitions", fake_defs)
     monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
     import systems.pipeline.core.handlers.frontier_dispatch.admission_gate as fd_adm_gate
 
@@ -571,14 +558,13 @@ async def test_handler_anthropic_agent_uses_live_mcp_tools(
 
     assert [t["function"]["name"] for t in captured["tools"]] == [
         "cortex",
-        "fs",
         "agent_bus",
-        "rag",
     ]
+    assert captured["mcp_tool_loop"] is True
 
 
 @pytest.mark.asyncio
-async def test_handler_non_anthropic_agent_uses_live_mcp_tools(
+async def test_handler_non_anthropic_agent_uses_in_process_client_tools(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -592,66 +578,37 @@ async def test_handler_non_anthropic_agent_uses_live_mcp_tools(
     def fake_assemble(agent: str, **_k: Any) -> str:
         return f"SYSTEM[{agent}]"
 
-    async def fake_defs() -> list[dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": "Search the web",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            }
-        ]
-
     async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
         captured["tools"] = kwargs["req"].tools
         return _FakeLoopResult(provider="openai")
 
     monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
     monkeypatch.setattr(agent_seat, "assemble_system_prompt", fake_assemble)
-    monkeypatch.setattr(agent_seat, "get_mcp_tool_definitions", fake_defs)
     monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(options={"model": "openai/gpt-5.4", "role": "gatherer"})
     await handler.execute(step, context)
 
-    assert [t["function"]["name"] for t in captured["tools"]] == ["web_search"]
+    assert [t["function"]["name"] for t in captured["tools"]] == [
+        "cortex",
+        "agent_bus",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_handler_persona_free_defaults_use_full_mcp_catalog(
+async def test_handler_persona_free_binds_in_process_client_registry(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
+    published_events: list[Any],
 ) -> None:
-    """Persona-free dispatch (no agent) gets the full live MCP catalog.
-
-    Closes the BOE-19-P-vintage divergence (assertion 7974, 2026-05-01) where
-    persona-free frontier HTTP (no agent) exposed only the curated read-only tier
-    while ``team_dispatch`` (with agent) exposed the full catalog. The
-    dispatch path no longer determines the tool surface.
-    """
+    """Persona-free client-side dispatch uses the in-process registry (C2)."""
     captured: dict[str, Any] = {}
-
-    async def fake_defs() -> list[dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": name,
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            }
-            for name in ["cortex", "rag", "agent_bus", "fs", "observability"]
-        ]
 
     async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
         captured["tools"] = kwargs["req"].tools
         return _FakeLoopResult(provider="openai")
 
-    monkeypatch.setattr(agent_seat, "get_mcp_tool_definitions", fake_defs)
     monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
@@ -660,11 +617,15 @@ async def test_handler_persona_free_defaults_use_full_mcp_catalog(
 
     assert [t["function"]["name"] for t in captured["tools"]] == [
         "cortex",
-        "rag",
         "agent_bus",
-        "fs",
-        "observability",
     ]
+    bound = [
+        e
+        for e in published_events
+        if e.signal == "pipeline.frontier.dispatch.clientmcp.registry_bound"
+    ]
+    assert bound
+    assert bound[0].payload["tool_names"] == ["cortex", "agent_bus"]
 
 
 @pytest.mark.asyncio
@@ -1788,14 +1749,6 @@ async def test_default_capability_tier_does_not_suppress(
     ) -> _FakeBundle:
         return _FakeBundle(capability_tier=None)
 
-    async def fake_defs() -> list[dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {"name": "fs", "description": "", "parameters": {}},
-            }
-        ]
-
     def fake_assemble(agent: str, **kwargs: Any) -> str:
         captured["include_quickref"] = kwargs.get("include_cortex_quickref")
         return f"SYSTEM[{agent}]"
@@ -1804,7 +1757,6 @@ async def test_default_capability_tier_does_not_suppress(
         return _FakeLoopResult(provider="openai")
 
     monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
-    monkeypatch.setattr(agent_seat, "get_mcp_tool_definitions", fake_defs)
     monkeypatch.setattr(agent_seat, "assemble_system_prompt", fake_assemble)
     monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 

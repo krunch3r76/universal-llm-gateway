@@ -13,9 +13,11 @@ and includes ``model_entity_id`` for post-hoc correlation when ``.started`` is
 absent (these branches fire during admission, before the started event would
 be emitted).
 
-Consumers: ``core/handlers/frontier_dispatch.py`` (Enabled, Misconfigured).
+Consumers: ``core/handlers/frontier_dispatch.py`` (Enabled, Misconfigured,
+RegistryBound).
 
-Signals: ``pipeline.frontier.dispatch.remotemcp.{enabled,misconfigured}``.
+Signals: ``pipeline.frontier.dispatch.remotemcp.{enabled,misconfigured}``,
+``pipeline.frontier.dispatch.clientmcp.registry_bound``.
 """
 
 from __future__ import annotations
@@ -53,6 +55,32 @@ def PipelineFrontierDispatchRemoteMcpEnabled(  # noqa: N802
             "model": model,
             "model_entity_id": model_entity_id,
             "provider": provider,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def PipelineFrontierDispatchClientMcpRegistryBound(  # noqa: N802
+    execution_id: str,
+    agent: str | None,
+    model: str,
+    provider: str,
+    tool_names: list[str],
+) -> Event:
+    """Emitted when client-side dispatch binds the in-process tool registry.
+
+    Stargate does not HTTP-dial MCP for these tools; full MCP catalog access
+  requires ``remote_mcp`` (provider connector).
+    """
+    return Event(
+        signal="pipeline.frontier.dispatch.clientmcp.registry_bound",
+        payload={
+            "execution_id": execution_id,
+            "agent": agent,
+            "model": model,
+            "provider": provider,
+            "tool_names": tool_names,
         },
         scope="node",
     )

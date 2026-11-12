@@ -22,18 +22,13 @@ Public surface (stable):
 ``NativeLoopResult`` / ``NativeToolCall`` — dataclasses
 ``NATIVE_PATHS``            — provider → native endpoint path map
 
-``execute_tool(name, args)`` — async dispatcher for local tools + live MCP tools
-``get_mcp_tool_definitions()`` — discover live MCP tool defs for client-side injection
-``resolve_tool_definitions(names)`` — resolve static or live MCP tool names
+``execute_tool(name, args)`` — async dispatcher for in-process tools only (C2)
+``in_process_client_tool_definitions()`` — in-process client tool defs (no MCP HTTP dial)
 """
 
 from __future__ import annotations
 
-from agent_seat.executor import (
-    execute_tool,
-    get_mcp_tool_definitions,
-    resolve_tool_definitions,
-)
+from agent_seat.executor import execute_tool
 from agent_seat.hydration import AgentMeta, HydrationBundle, hydrate_agent
 from agent_seat.native_loop import (
     NATIVE_PATHS,
@@ -63,24 +58,23 @@ from agent_seat.prompts import (
 )
 from agent_seat.registry import is_lead_agent, normalize_agent_slug
 from agent_seat.tools import (
-    BRAVE_SEARCH_TOOL_DEFINITION,
     STATIC_TOOL_FALLBACK,
     TEAM_TOOL_DEFINITIONS,
     TOOL_DEFINITIONS,
     TOOL_REGISTRY,
+    in_process_client_tool_definitions,
     resolve_tools,
 )
 
 # Harvest nominates these manage slugs when this lib lands (package-grain).
 CONSUMERS: tuple[str, ...] = (
-    'cloud_proxy',
-    'git_integration_worker',
-    'mcp',
-    'stargate',
+    "cloud_proxy",
+    "git_integration_worker",
+    "mcp",
+    "stargate",
 )
 
 __all__ = [
-    "BRAVE_SEARCH_TOOL_DEFINITION",
     "CapabilityProfile",
     "CORTEX_TOOL_QUICKREF",
     "HydrationBundle",
@@ -98,10 +92,10 @@ __all__ = [
     "derive_inline_only",
     "execute_tool",
     "family_anchor",
-    "get_mcp_tool_definitions",
     "get_profile",
     "get_role",
     "hydrate_agent",
+    "in_process_client_tool_definitions",
     "is_lead_agent",
     "known_families",
     "load_lead_agent_slugs",
@@ -109,7 +103,6 @@ __all__ = [
     "load_roles",
     "normalize_agent_slug",
     "resolve_seat",
-    "resolve_tool_definitions",
     "role_anchor",
     "run_native_tool_loop",
     "seat_to_family",
