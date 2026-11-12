@@ -777,6 +777,141 @@ async def test_reselect_reacquires_display_switch_lock(
 
 
 @pytest.mark.asyncio
+async def test_read_grok_honest_lag_baseline_prose_then_target_attributes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """F-J: post-select honest lag on baseline must still attribute once target prose is fresh."""
+    monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        title="Bot Y",
+        agent_id="bot-y",
+    )
+    pages = [{"title": "Grok Bot", "web_socket_debugger_url": "ws://fake"}]
+    shared = "shared line"
+    in_lock = _raw_probe(
+        active_agent_id="bot-x",
+        active_title="Bot X",
+        titles=["Bot X", "Bot Y"],
+        recent_messages=[shared],
+        generating=False,
+        has_active_chat=True,
+        agent_ids={"bot-x": "Bot X", "bot-y": "Bot Y"},
+    )
+    honest_lag = dict(in_lock)
+    final = _raw_probe(
+        active_agent_id="bot-y",
+        active_title="Bot Y",
+        titles=["Bot X", "Bot Y"],
+        recent_messages=["y fresh"],
+        generating=False,
+        has_active_chat=True,
+        agent_ids={"bot-x": "Bot X", "bot-y": "Bot Y"},
+    )
+    probes = [dict(in_lock), dict(in_lock), dict(honest_lag), dict(final)]
+
+    async def _eval(_ws: str, expression: str, **_: Any) -> Any:
+        if "sand-message-prose" not in expression:
+            return {"labels": [], "items": []}
+        return probes.pop(0) if probes else dict(final)
+
+    async def _rec_sleep(_delay: float) -> None:
+        return None
+
+    with (
+        patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
+        patch("cursor_bridge.chat_surface._evaluate_cdp_js", side_effect=_eval),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            new_callable=AsyncMock,
+            return_value={"ok": True, "currentAgentId": "bot-y"},
+        ),
+        patch(
+            "cursor_bridge.electron_chat_grok_wait.asyncio.sleep",
+            side_effect=_rec_sleep,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        snap = await read_endpoint_turn(ep, select=True)
+
+    assert snap["ok"] is True
+    assert snap["latest_message"] == "y fresh"
+
+
+@pytest.mark.asyncio
+async def test_read_grok_cdp_select_fail_verdict_ok_skips_sidebar(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """F-K: failed roster CDP select with in-lock wake ok must not sidebar-click."""
+    monkeypatch.setenv("ULG_SUPERVISION_GATE_MODE", "off")
+    monkeypatch.setenv("ULG_DISPLAY_LOCK_DIR", str(tmp_path))
+    ep = ElectronEndpoint(
+        label="gc2",
+        app="grok",
+        display="10",
+        title="Bot Y",
+        agent_id="bot-y",
+    )
+    pages = [{"title": "Grok Bot", "web_socket_debugger_url": "ws://fake"}]
+    pre_select = {
+        "state": "chat_list",
+        "active_title": "Bot X",
+        "active_agent_id": "bot-x",
+        "titles": ["Bot X", "Bot Y"],
+        "title_counts": {"Bot X": 1, "Bot Y": 1},
+        "agent_ids": {"bot-x": "Bot X", "bot-y": "Bot Y"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": ["pre select"],
+        "has_active_chat": True,
+    }
+    in_lock_ok = {
+        "state": "chat_list",
+        "active_title": "Bot Y",
+        "active_agent_id": "bot-y",
+        "titles": ["Bot X", "Bot Y"],
+        "title_counts": {"Bot X": 1, "Bot Y": 1},
+        "agent_ids": {"bot-x": "Bot X", "bot-y": "Bot Y"},
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": ["already on y"],
+        "has_active_chat": True,
+    }
+    probes = [dict(pre_select), dict(in_lock_ok)]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return probes.pop(0) if probes else dict(in_lock_ok)
+
+    sidebar = AsyncMock(return_value={"clicked": True})
+
+    with (
+        patch("cursor_bridge.electron_chat_relay.list_pages", return_value=pages),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface",
+            side_effect=_fake_probe,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_grok_agent_async",
+            new_callable=AsyncMock,
+            return_value={"ok": False, "reason": "cdp_fail"},
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.select_sidebar_target",
+            sidebar,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        snap = await read_endpoint_turn(ep, select=True)
+
+    assert snap["ok"] is True
+    assert snap["active_agent_id"] == "bot-y"
+    sidebar.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_grok_cdp_select_failure_falls_back_to_sidebar_click(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:

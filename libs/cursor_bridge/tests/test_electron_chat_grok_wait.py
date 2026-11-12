@@ -677,6 +677,321 @@ async def test_probe_baseline_grew_quiet_then_x_line_attributes() -> None:
     assert out["surface"]["recent_messages"][-1] == "X line"
 
 
+@pytest.mark.asyncio
+async def test_probe_s1_baseline_transient_then_target_shows_prior_fp_unconfirmed() -> (
+    None
+):
+    """F-G falsifier S1: prior fp must stay stale after baseline grows transient prose."""
+    prior_fp = messages_fingerprint({"recent_messages": ["B old"]})
+    tail = _b_x_surfaces(
+        active_agent_id="bot-x",
+        recent_messages=["B old"],
+        generating=False,
+        has_active_chat=True,
+    )
+    probes = [
+        _b_x_surfaces(
+            active_agent_id="bot-b",
+            recent_messages=["B transient"],
+            generating=True,
+            has_active_chat=True,
+        ),
+        dict(tail),
+    ]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        if probes:
+            return probes.pop(0)
+        return dict(tail)
+
+    with (
+        patch(
+            "cursor_bridge.electron_chat_grok_wait.probe_surface",
+            side_effect=_fake_probe,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_grok_wait.asyncio.sleep",
+            side_effect=lambda _d: None,
+        ),
+    ):
+        out = await probe_grok_after_select(
+            "ws://fake",
+            endpoint=_Ep(agent_id="bot-x", title="Bot X"),
+            expected_agent_id="bot-x",
+            baseline_agent_id="bot-b",
+            prior_message_fp=prior_fp,
+            prior_generating=False,
+        )
+    assert out["ok"] is False
+    assert out["code"] == "conversation_unconfirmed"
+
+
+@pytest.mark.asyncio
+async def test_probe_foreign_agent_on_first_probe_before_expected() -> None:
+    """F-H/B1: foreign marker on the first probe must fail-closed before expected is seen."""
+    shared = "shared stale line"
+    misattrib = _chat_surface(
+        active_agent_id="bot-z",
+        active_title="Bot Z",
+        titles=["Bot Z", "Bot Y"],
+        agent_ids={"bot-z": "Bot Z", "bot-y": "Bot Y"},
+        recent_messages=["z line"],
+        generating=False,
+        has_active_chat=True,
+    )
+    probes = [
+        _chat_surface(
+            active_agent_id="bot-z",
+            active_title="Bot Z",
+            titles=["Bot Z", "Bot Y"],
+            agent_ids={"bot-z": "Bot Z", "bot-y": "Bot Y"},
+            recent_messages=[shared],
+            generating=False,
+            has_active_chat=False,
+        ),
+        dict(misattrib),
+    ]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return probes.pop(0)
+
+    with patch(
+        "cursor_bridge.electron_chat_grok_wait.probe_surface",
+        side_effect=_fake_probe,
+    ):
+        out = await probe_grok_after_select(
+            "ws://fake",
+            endpoint=_Ep(agent_id="bot-y", title="Bot Y"),
+            expected_agent_id="bot-y",
+            baseline_agent_id="bot-x",
+            prior_message_fp=messages_fingerprint({"recent_messages": [shared]}),
+            prior_generating=False,
+        )
+    assert out["ok"] is False
+    assert out["code"] == "conversation_unconfirmed"
+    assert out.get("foreign_agent_id") == "bot-z"
+
+
+@pytest.mark.asyncio
+async def test_probe_foreign_agent_in_wait_loop_after_baseline() -> None:
+    """F-H/B1: foreign agent after baseline on probe 2 must not attribute on probe 3."""
+    shared = "shared stale line"
+    stale_y = _chat_surface(
+        active_agent_id="bot-y",
+        recent_messages=[shared],
+        generating=True,
+        has_active_chat=False,
+    )
+    bot_z = _chat_surface(
+        active_agent_id="bot-z",
+        active_title="Bot Z",
+        titles=["Bot Z", "Bot Y"],
+        agent_ids={"bot-z": "Bot Z", "bot-y": "Bot Y"},
+        recent_messages=[shared],
+        generating=False,
+        has_active_chat=False,
+    )
+    misattrib = _chat_surface(
+        active_agent_id="bot-y",
+        recent_messages=["z line"],
+        generating=False,
+        has_active_chat=True,
+    )
+    probes = [dict(stale_y), dict(bot_z), dict(misattrib)]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return probes.pop(0)
+
+    with patch(
+        "cursor_bridge.electron_chat_grok_wait.probe_surface",
+        side_effect=_fake_probe,
+    ):
+        out = await probe_grok_after_select(
+            "ws://fake",
+            endpoint=_Ep(agent_id="bot-y", title="Bot Y"),
+            expected_agent_id="bot-y",
+            baseline_agent_id="bot-x",
+            prior_message_fp=messages_fingerprint(stale_y),
+            prior_generating=True,
+        )
+    assert out["ok"] is False
+    assert out.get("foreign_agent_id") == "bot-z"
+
+
+@pytest.mark.asyncio
+async def test_probe_quiet_lag_target_streaming_x_line_attributes() -> None:
+    """B2: honest lag while target streams must still bind fresh prose."""
+    prior_fp = messages_fingerprint({"recent_messages": ["B old"]})
+    bound = _b_x_surfaces(
+        active_agent_id="bot-x",
+        recent_messages=["X line"],
+        generating=True,
+        has_active_chat=None,
+    )
+    probes = [
+        _b_x_surfaces(
+            active_agent_id="bot-b",
+            recent_messages=["B old"],
+            generating=False,
+            has_active_chat=True,
+        ),
+        dict(bound),
+    ]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return probes.pop(0) if probes else dict(bound)
+
+    with patch(
+        "cursor_bridge.electron_chat_grok_wait.probe_surface",
+        side_effect=_fake_probe,
+    ):
+        out = await probe_grok_after_select(
+            "ws://fake",
+            endpoint=_Ep(agent_id="bot-x", title="Bot X"),
+            expected_agent_id="bot-x",
+            baseline_agent_id="bot-b",
+            prior_message_fp=prior_fp,
+            prior_generating=False,
+        )
+    assert out["ok"] is True
+    assert out["surface"]["recent_messages"][-1] == "X line"
+
+
+@pytest.mark.asyncio
+async def test_probe_baseline_blank_pane_then_target_shows_prior_fp_unconfirmed() -> (
+    None
+):
+    """F-I: blank baseline pane must not waive empty-fingerprint stale guard."""
+    prior_fp = messages_fingerprint({"recent_messages": ["B old"]})
+    stale_target = _b_x_surfaces(
+        active_agent_id="bot-x",
+        recent_messages=["B old"],
+        generating=False,
+        has_active_chat=True,
+    )
+    tail = dict(stale_target)
+    probes = [
+        _b_x_surfaces(
+            active_agent_id="bot-b",
+            recent_messages=[],
+            generating=False,
+            has_active_chat=False,
+        ),
+        dict(stale_target),
+    ]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        if probes:
+            return probes.pop(0)
+        return dict(tail)
+
+    with (
+        patch(
+            "cursor_bridge.electron_chat_grok_wait.probe_surface",
+            side_effect=_fake_probe,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_grok_wait.asyncio.sleep",
+            side_effect=lambda _d: None,
+        ),
+    ):
+        out = await probe_grok_after_select(
+            "ws://fake",
+            endpoint=_Ep(agent_id="bot-x", title="Bot X"),
+            expected_agent_id="bot-x",
+            baseline_agent_id="bot-b",
+            prior_message_fp=prior_fp,
+            prior_generating=False,
+        )
+    assert out["ok"] is False
+    assert out["code"] == "conversation_unconfirmed"
+
+
+@pytest.mark.asyncio
+async def test_probe_empty_active_agent_then_target_fresh_line_attributes() -> None:
+    """B3/F-L: empty active marker on baseline must not be treated as foreign."""
+    prior_fp = messages_fingerprint({"recent_messages": ["B old"]})
+    bound = _b_x_surfaces(
+        active_agent_id="bot-x",
+        recent_messages=["X line"],
+        generating=False,
+        has_active_chat=True,
+    )
+    probes = [
+        _chat_surface(
+            active_agent_id="",
+            active_title="",
+            titles=["Bot B", "Bot X"],
+            agent_ids={"bot-b": "Bot B", "bot-x": "Bot X"},
+            recent_messages=["B old"],
+            generating=False,
+            has_active_chat=True,
+        ),
+        dict(bound),
+    ]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return probes.pop(0) if probes else dict(bound)
+
+    with patch(
+        "cursor_bridge.electron_chat_grok_wait.probe_surface",
+        side_effect=_fake_probe,
+    ):
+        out = await probe_grok_after_select(
+            "ws://fake",
+            endpoint=_Ep(agent_id="bot-x", title="Bot X"),
+            expected_agent_id="bot-x",
+            baseline_agent_id="bot-b",
+            prior_message_fp=prior_fp,
+            prior_generating=False,
+        )
+    assert out["ok"] is True
+    assert out["surface"]["recent_messages"][-1] == "X line"
+
+
+@pytest.mark.asyncio
+async def test_probe_baseline_equals_expected_does_not_track_stale_on_self() -> None:
+    """F-L: baseline-tracking must not run when baseline agent is also the expected agent."""
+    fp1 = messages_fingerprint({"recent_messages": ["line one"]})
+    bound = _chat_surface(
+        active_agent_id="bot-y",
+        active_title="Bot Y",
+        recent_messages=["line two"],
+        generating=False,
+        has_active_chat=True,
+    )
+    probes = [
+        _chat_surface(
+            active_agent_id="bot-y",
+            active_title="Bot Y",
+            recent_messages=["line one"],
+            generating=False,
+            has_active_chat=True,
+        ),
+        dict(bound),
+    ]
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        if probes:
+            return probes.pop(0)
+        return dict(bound)
+
+    with patch(
+        "cursor_bridge.electron_chat_grok_wait.probe_surface",
+        side_effect=_fake_probe,
+    ):
+        out = await probe_grok_after_select(
+            "ws://fake",
+            endpoint=_Ep(agent_id="bot-y", title="Bot Y"),
+            expected_agent_id="bot-y",
+            baseline_agent_id="bot-y",
+            prior_message_fp=fp1,
+            prior_generating=False,
+        )
+    assert out["ok"] is True
+    assert out["surface"]["recent_messages"][-1] == "line two"
+
+
 def test_classify_surface_output_feeds_attribution_binding() -> None:
     classified = classify_surface(
         [],
