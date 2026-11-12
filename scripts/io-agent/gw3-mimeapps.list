@@ -1,0 +1,13 @@
+[Default Applications]
+x-scheme-handler/grokbot=grok-bot-gw3.desktop
+x-scheme-handler/sand=grok-bot-gw3.desktop
+x-scheme-handler/http=gw3-browser-wrapper.desktop
+x-scheme-handler/https=gw3-browser-wrapper.desktop
+text/html=gw3-browser-wrapper.desktop
+
+[Added Associations]
+x-scheme-handler/grokbot=grok-bot-gw3.desktop;
+x-scheme-handler/sand=grok-bot-gw3.desktop;
+x-scheme-handler/http=gw3-browser-wrapper.desktop;
+x-scheme-handler/https=gw3-browser-wrapper.desktop;
+text/html=gw3-browser-wrapper.desktop;

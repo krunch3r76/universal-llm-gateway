@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=gw3 Chromium browser
+Exec=%h/.config/io-agent-gw3/bin/gw3-open-url.sh %u
+Terminal=false
+Type=Application
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;
+NoDisplay=true

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Grok Bot (gw3 :14)
+Exec=env DISPLAY=:14 "/opt/Grok Bot/grok-bot" --user-data-dir=%h/.gateway/grok-io-gw3 %U
+Terminal=false
+Type=Application
+Icon=grok-bot
+StartupWMClass=grok-bot
+Comment=Grok Bot window gw3 on display :14
+MimeType=x-scheme-handler/grokbot;x-scheme-handler/sand;
+Categories=Development;
