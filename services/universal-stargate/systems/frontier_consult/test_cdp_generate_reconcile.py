@@ -2241,6 +2241,10 @@ async def test_reconcile_leg_without_caller_agent_fails_closed(
         stalled.append({"event": event_cls.__name__, **kwargs})
 
     monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture_stall)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_reconcile_caller_missing.publish_cdp_kwargs",
+        _capture_stall,
+    )
     upsert_inflight_leg(
         execution_id="exec-no-caller",
         request_id="req-no-caller",
