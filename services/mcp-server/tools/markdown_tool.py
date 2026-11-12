@@ -636,6 +636,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         export: bool = False,
         chunk_cursor: int | None = None,
         expected_read_sha256: str | dict[str, str] = "",
+        workspaces_target_repo: str | None = None,
     ) -> dict[str, Any]:
         """Section-level markdown: list/read/replace/append/insert/delete/to_dict/from_dict.
 
@@ -686,6 +687,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 expected=expected_read_sha256,
                 path=path,
                 sandbox=sandbox,
+                workspaces_target_repo=workspaces_target_repo,
             )
             if exp_err is not None:
                 return exp_err

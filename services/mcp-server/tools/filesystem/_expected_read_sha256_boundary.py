@@ -17,21 +17,77 @@ def _single_path_expected_read_ops() -> frozenset[str]:
     return SINGLE_PATH_EXPECTED_READ_OPS
 
 
-def _workspaces_repo_segment(path: str) -> str | None:
+def _known_workspaces_repo_names() -> set[str]:
+    try:
+        from tools._project_paths import project_root, repo_roots
+
+        return {repo.name for repo in repo_roots(project_root())}
+    except Exception:
+        return set()
+
+
+def workspaces_target_repo_and_rel(
+    path: str,
+    *,
+    workspaces_target_repo: str | None = None,
+) -> tuple[str, str]:
+    """Resolve workspaces CAS target repo + repo-relative path for key matching."""
     bare = str(path or "").strip().lstrip("/")
-    if not bare or "/" not in bare:
-        return None
-    return bare.split("/", 1)[0]
+    if not bare:
+        return "", ""
+    known = _known_workspaces_repo_names()
+    if workspaces_target_repo:
+        repo = workspaces_target_repo.strip("/")
+        if bare == repo:
+            return repo, ""
+        if bare.startswith(f"{repo}/"):
+            return repo, bare[len(repo) + 1 :]
+        return repo, bare
+    if "/" in bare:
+        first, rest = bare.split("/", 1)
+        if first in known:
+            return first, rest
+    return "", bare
 
 
-def _workspaces_key_repo(key: str) -> str | None:
+def _workspaces_accepted_spellings(target_repo: str, target_rel: str) -> list[str]:
+    repo = target_repo.strip("/")
+    rel = target_rel.lstrip("/")
+    if not repo and not rel:
+        return []
+    if not rel:
+        return [repo, f"workspaces://{repo}"]
+    spellings = [rel, f"{repo}/{rel}", f"workspaces://{repo}/{rel}"]
+    out: list[str] = []
+    for item in spellings:
+        if item and item not in out:
+            out.append(item)
+    return out
+
+
+def _workspaces_key_matches(
+    key: str,
+    *,
+    target_repo: str,
+    target_rel: str,
+) -> bool:
     text = str(key).strip()
-    if not text.startswith("workspaces://"):
-        return None
-    rest = text.split("://", 1)[1]
-    if "/" not in rest:
-        return rest.strip("/") or None
-    return rest.split("/", 1)[0].strip("/") or None
+    repo = target_repo.strip("/")
+    rel = target_rel.lstrip("/")
+    if text.startswith("workspaces://"):
+        rest = text.split("://", 1)[1]
+        if "/" not in rest:
+            k_repo = rest.strip("/")
+            k_rel = ""
+        else:
+            k_repo, k_rel = rest.split("/", 1)
+            k_repo = k_repo.strip("/")
+            k_rel = k_rel.lstrip("/")
+        return k_repo == repo and k_rel == rel
+    bare = text.lstrip("/")
+    if bare == rel:
+        return True
+    return bool(repo) and bare == f"{repo}/{rel}"
 
 
 def _scheme_of_key(key: str) -> str | None:
@@ -42,41 +98,67 @@ def _scheme_of_key(key: str) -> str | None:
     return scheme.lower() if scheme in ("cortex", "workspaces") else None
 
 
-def _target_aliases(path: str, sandbox: str) -> set[str]:
+def _target_aliases(
+    path: str,
+    sandbox: str,
+    *,
+    workspaces_target_repo: str | None = None,
+) -> set[str]:
+    if sandbox == "workspaces":
+        repo, rel = workspaces_target_repo_and_rel(
+            path, workspaces_target_repo=workspaces_target_repo
+        )
+        return set(_workspaces_accepted_spellings(repo, rel))
     aliases = set(_path_match_keys(path))
     bare = str(path or "").strip().lstrip("/")
     if bare:
         aliases.add(bare)
     if bare and sandbox:
         aliases.add(f"{sandbox}://{bare}")
-        if sandbox == "workspaces":
-            aliases.update(_path_match_keys(f"workspaces://{bare}"))
     return aliases
 
 
-def accepted_key_spellings(path: str, sandbox: str) -> list[str]:
+def accepted_key_spellings(
+    path: str,
+    sandbox: str,
+    *,
+    workspaces_target_repo: str | None = None,
+) -> list[str]:
     """Spellings callers may use to name *path* under *sandbox*."""
-    aliases = sorted(_target_aliases(path, sandbox))
-    out: list[str] = []
-    for item in aliases:
-        if item not in out:
-            out.append(item)
-    return out
+    aliases = sorted(
+        _target_aliases(
+            path, sandbox, workspaces_target_repo=workspaces_target_repo
+        )
+    )
+    return list(aliases)
 
 
-def _key_matches_target(key: str, *, path: str, sandbox: str) -> bool:
+def _key_matches_target(
+    key: str,
+    *,
+    path: str,
+    sandbox: str,
+    workspaces_target_repo: str | None = None,
+) -> bool:
     key_scheme = _scheme_of_key(key)
     if key_scheme is not None and key_scheme != sandbox:
         return False
-    path_repo = _workspaces_repo_segment(path) if sandbox == "workspaces" else None
-    key_repo = _workspaces_key_repo(key)
-    if key_repo is not None and path_repo is not None and key_repo != path_repo:
-        return False
+    if sandbox == "workspaces":
+        target_repo, target_rel = workspaces_target_repo_and_rel(
+            path, workspaces_target_repo=workspaces_target_repo
+        )
+        if not target_repo and not target_rel:
+            return False
+        return _workspaces_key_matches(
+            key, target_repo=target_repo, target_rel=target_rel
+        )
     target_aliases = _target_aliases(path, sandbox)
     key_aliases = set(_path_match_keys(key))
     bare_key = str(key).strip().lstrip("/")
     if bare_key and "://" not in bare_key:
         key_aliases.add(bare_key)
+    if key_scheme:
+        key_aliases.add(f"{key_scheme}://{bare_key}")
     return bool(target_aliases & key_aliases)
 
 
@@ -105,6 +187,7 @@ def _resolve_map(
     *,
     path: str,
     sandbox: str,
+    workspaces_target_repo: str | None = None,
 ) -> tuple[str | None, dict[str, Any] | None]:
     if not exp_map:
         return None, expected_read_sha256_key_error(
@@ -113,13 +196,20 @@ def _resolve_map(
         )
     matched: dict[str, str] = {}
     for key, raw in exp_map.items():
-        if not _key_matches_target(str(key), path=path, sandbox=sandbox):
+        if not _key_matches_target(
+            str(key),
+            path=path,
+            sandbox=sandbox,
+            workspaces_target_repo=workspaces_target_repo,
+        ):
             continue
         digest, val_err = _normalize_digest_value(str(key), raw)
         if val_err is not None:
             return None, val_err
         matched[str(key)] = digest
-    accepted = accepted_key_spellings(path, sandbox)
+    accepted = accepted_key_spellings(
+        path, sandbox, workspaces_target_repo=workspaces_target_repo
+    )
     all_keys = [str(k) for k in exp_map]
     if not matched:
         return None, expected_read_sha256_key_error(
@@ -158,6 +248,7 @@ def coerce_expected_read_sha256_at_fs_boundary(
     expected: str | dict[str, str] | Any,
     path: str,
     sandbox: str,
+    workspaces_target_repo: str | None = None,
 ) -> tuple[str | dict[str, str], dict[str, Any] | None]:
     """Normalize a map precondition to a scalar for single-path fs ops."""
     single_path_ops = _single_path_expected_read_ops()
@@ -187,7 +278,12 @@ def coerce_expected_read_sha256_at_fs_boundary(
             return "", None
         text = str(expected).strip()
         return text, None
-    digest, err = _resolve_map(expected, path=path, sandbox=sandbox)
+    digest, err = _resolve_map(
+        expected,
+        path=path,
+        sandbox=sandbox,
+        workspaces_target_repo=workspaces_target_repo,
+    )
     if err is not None:
         return "", err
     assert digest is not None

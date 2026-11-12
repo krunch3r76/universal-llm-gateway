@@ -68,9 +68,7 @@ def read_file_impl(
         export=export,
         chunk_cursor=chunk_cursor,
         chunk_cursor_provided=chunk_cursor is not None,
-        expected_read_sha256=(
-            expected_read_sha256 if expected_read_sha256 else None
-        ),
+        expected_read_sha256=expected_read_sha256 or None,
     )
     # Template-token paths still need a `content` key for list/search helpers
     # that read the resolved on-disk file (sparse manifest omits bodies).

@@ -443,6 +443,7 @@ def dispatch_workspaces_op(
     export: bool = False,
     chunk_cursor: int | None = None,
     expected_read_sha256: str = "",
+    workspaces_target_repo: str | None = None,
 ) -> dict[str, Any]:
     """Dispatch a workspaces-sandbox fs op via the project adapter.
 
@@ -466,6 +467,7 @@ def dispatch_workspaces_op(
             expected=expected_read_sha256,
             path=path,
             sandbox="workspaces",
+            workspaces_target_repo=workspaces_target_repo,
         )
         if exp_err is not None:
             return exp_err
