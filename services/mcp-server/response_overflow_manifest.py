@@ -112,16 +112,16 @@ def _section_row_bytes(rows: list[dict[str, Any]]) -> int:
 
 
 def _normalize_section_rows(rows: list[dict[str, str | int]]) -> list[dict[str, Any]]:
-    """Keep only md_list keys with stable JSON-serializable values."""
+    """Keep only md_list-shaped keys with stable JSON-serializable values."""
     normalized: list[dict[str, Any]] = []
     for row in rows:
         normalized.append(
             {
+                "id": str(row.get("id", "")),
                 "heading": str(row.get("heading", "")),
                 "level": int(row.get("level", 0)),
-                "path": str(row.get("path", "")),
                 "line": int(row.get("line", 0)),
-                "chars": int(row.get("chars", 0)),
+                "char_count": int(row.get("char_count", 0)),
             }
         )
     return normalized
@@ -190,18 +190,18 @@ def _build_selective_options(
     if location:
         options.append(f'fs(op="md_list", path="{location}")')
         if sections:
-            section_path = str(sections[0].get("path", "")).strip()
-            if section_path:
+            section_id = str(sections[0].get("id", "")).strip()
+            if section_id:
                 options.append(
-                    f'fs(op="md_read", path="{location}", section="{section_path}")'
+                    f'fs(op="md_read", path="{location}", section="{section_id}")'
                 )
         options.append(
             f'fs(op="md_read", path="{location}", section="__preamble__")'
         )
     if not location and sections and text_basis == "content":
-        section_path = str(sections[0].get("path", "")).strip()
-        if section_path:
-            options.append(f'retrieve(id="{ref_id}", section="{section_path}")')
+        section_id = str(sections[0].get("id", "")).strip()
+        if section_id:
+            options.append(f'retrieve(id="{ref_id}", section="{section_id}")')
     options.append(f'retrieve(id="{ref_id}")')
     return options
 

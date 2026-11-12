@@ -53,7 +53,7 @@ def test_missing_section_typo_suggests_closest_id(md_tool) -> None:
 def test_nearest_ids_ranks_last_path_segment_for_install() -> None:
     """Bare ``Install`` resolves on the ok path; ranking still surfaces ``Setup/Install``."""
     atx = [s for s in parse_sections(SETUP_DOC) if s.level > 0]
-    indexed = _assign_section_ids(atx)
+    indexed = _assign_section_ids(atx, preamble_parent_id=None)
     assert "Setup/Install" in _nearest_section_ids("Install", indexed)
 
 

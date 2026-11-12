@@ -3073,7 +3073,7 @@ tools:
   flat_call_shape:
     tool: fs_md_list
     substrate_qualified: user-vortex__fs_md_list
-  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str:\n  fs_md_list(sandbox, path) ⟹ toc ∈ List[HeadingEntry].\nRead-only. TOC extraction. See agent_skill:fs.\n"
+  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str:\n  fs_md_list(sandbox, path, offset?) ⟹ manifest section descriptors (id, parent_id, line, char_count, children; descriptor cursor via offset; cap 32 KiB).\nRead-only. TOC extraction. See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:

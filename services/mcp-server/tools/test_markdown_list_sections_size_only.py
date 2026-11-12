@@ -93,8 +93,10 @@ def test_full_section_list_when_size_only_off(md_tool) -> None:
 
     assert res["total_chars"] == len(text)
     sections = res["sections"]
-    assert len(sections) == 81  # one h1 + 80 h2 rows
-    assert all("heading" in row and "path" in row for row in sections)
+    assert len(sections) == 81  # preamble + h1 + 80 h2 rows
+    assert res.get("selection") == "manifest"
+    assert all("heading" in row and "id" in row for row in sections)
+    assert "path" not in sections[0]
     assert len(json.dumps(res, sort_keys=True).encode()) > 1024
 
 

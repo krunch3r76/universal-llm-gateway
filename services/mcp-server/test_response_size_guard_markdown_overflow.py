@@ -98,7 +98,7 @@ def test_markdown_overflow_includes_sections_and_ref_id() -> None:
     emitted = manifest["sections"]
     assert len(emitted) == len(expected)
     for row in emitted:
-        assert set(row) == {"heading", "level", "path", "line", "chars"}
+        assert set(row) == {"id", "heading", "level", "line", "char_count"}
     assert any(row["level"] == 3 for row in emitted)
 
 
@@ -125,9 +125,9 @@ def test_structure_cap_sets_truncated_marker() -> None:
         {
             "heading": f"H{i}",
             "level": 1 if i % 2 == 0 else 3,
-            "path": f"H{i}",
+            "id": f"H{i}",
             "line": i + 1,
-            "chars": 500,
+            "char_count": 500,
         }
         for i in range(250)
     ]
@@ -230,7 +230,7 @@ def test_sections_match_list_sections_modulo_truncation() -> None:
     assert len(emitted) < len(full_rows)
     assert emitted == full_rows[: len(emitted)]
     for row in emitted:
-        assert set(row) == {"heading", "level", "path", "line", "chars"}
+        assert set(row) == {"id", "heading", "level", "line", "char_count"}
 
 
 def test_manifest_builder_returns_none_for_plain_text() -> None:

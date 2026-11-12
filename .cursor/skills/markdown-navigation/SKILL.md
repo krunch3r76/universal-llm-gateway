@@ -20,8 +20,8 @@ for cortex files.
 
 | Op | Required args | Use |
 |---|---|---|
-| `md_list` | `path` | List headings with path, level, line, chars. Always start here on unfamiliar docs. |
-| `md_read` | `path`, `section` | Read one section body. Empty `section` reads preamble. |
+| `md_list` | `path`, `offset?` | Manifest descriptors (`id`, `parent_id`, `line`, `char_count`, `children`). Page with `offset` cursor. |
+| `md_read` | `path`, `section` | Read one section by `id` from `md_list`. Empty `section` returns manifest (not body). |
 | `md_replace` | `path`, `section`, `target`, `content` | Patch substring within section body (`target` required). |
 | `md_rewrite_section` | `path`, `section`, `content` | Replace entire section body (explicit rewrite). |
 | `md_append` | `path`, `section`, `content` | Append to section body. |
@@ -50,7 +50,7 @@ Resolution order:
 2. suffix match for single-segment queries if unambiguous;
 3. bare heading text if unambiguous.
 
-Ambiguity returns full paths; copy the exact `path` from `md_list`. Literal `/` in a heading is escaped as `\/`. Preamble = `section:""`.
+Copy the exact `id` from `md_list` (`__preamble__` for pre-heading body; no `[Preamble]` alias). Literal `/` in headings is escaped as `\/` in ids. Duplicate headings use `#n`.
 
 ## Heading-less-content contract
 
@@ -67,13 +67,13 @@ For `md_replace`, `md_append`, `md_insert`: `content = body_only` (patch replace
 md_list(path) → inspect chars/tree → md_read(path, section) → md_replace/md_append/md_insert/md_delete if needed
 ```
 
-Use `chars` from `md_list` to decide whether to read a section directly or descend into children.
+Use `char_count` from `md_list` to decide whether to read a section directly or descend into children.
 
 ## Error recovery
 
 | Error | Fix |
 |---|---|
-| `Section not found` | Run `md_list`; copy exact `path`. |
+| `Section not found` | Run `md_list`; copy exact `id` (check `nearest_ids`). |
 | `Ambiguous section` | Use full hierarchical path from error. |
 | traversal rejected | Remove `../`; use sandbox-relative paths. |
 | file not found | Check sandbox + path with `fs(op="list")`. |

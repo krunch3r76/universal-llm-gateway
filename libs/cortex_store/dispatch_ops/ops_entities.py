@@ -121,7 +121,7 @@ def _entity_get_body_response(
         try:
             section_text = read_section(body_text, section)
         except SectionError:
-            available = [s["path"] for s in list_sections(body_text)]
+            available = [s["id"] for s in list_sections(body_text)]
             return {
                 "error": "section_not_found",
                 "section": section,

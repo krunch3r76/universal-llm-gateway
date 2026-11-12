@@ -8,15 +8,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from markdown_fence import is_closing_fence_line, parse_fence_open
-from markdown_sections import parse_sections
+from markdown_sections import PREAMBLE_ID, parse_sections
 
 from tools._hashing import sha256_hex_equal
 from tools._sparse_payload_envelope import _stale_read_root
 
-PREAMBLE_ID = "__preamble__"
 UNSECTIONED_ID = "__unsectioned__"
 MANIFEST_MAX_DESCRIPTORS = 200
-MANIFEST_MAX_DESCRIPTOR_JSON_BYTES = 16 * 1024
+MANIFEST_MAX_DESCRIPTOR_JSON_BYTES = 32 * 1024
 
 _MIN_FENCE_LEN = 3
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -31,18 +30,14 @@ class _IndexedSection:
     char_count: int
     path_key: str
     ordinal: int
+    line: int
     start: int
     end: int
 
 
-def _parent_id_for_path(path: str) -> str | None:
-    if not path or "/" not in path:
-        return None
-    parent = path.rsplit("/", 1)[0]
-    return parent
-
-
-def _assign_section_ids(sections: list[Any]) -> list[_IndexedSection]:
+def _assign_section_ids(
+    sections: list[Any], *, preamble_parent_id: str | None
+) -> list[_IndexedSection]:
     """Build stable ids with ``path#ordinal`` for duplicate paths."""
     body = [s for s in sections if s.level > 0]
     totals: dict[str, int] = {}
@@ -50,24 +45,30 @@ def _assign_section_ids(sections: list[Any]) -> list[_IndexedSection]:
         totals[sec.path] = totals.get(sec.path, 0) + 1
     seen: dict[str, int] = {}
     indexed: list[_IndexedSection] = []
+    stack: list[tuple[int, str]] = []
     for sec in body:
         path_key = sec.path
         seen[path_key] = seen.get(path_key, 0) + 1
         ord_n = seen[path_key]
         sid = path_key if totals[path_key] == 1 else f"{path_key}#{ord_n}"
+        while stack and stack[-1][0] >= sec.level:
+            stack.pop()
+        parent_id = stack[-1][1] if stack else preamble_parent_id
         indexed.append(
             _IndexedSection(
                 section_id=sid,
                 heading=sec.heading,
                 level=sec.level,
-                parent_id=_parent_id_for_path(path_key),
+                parent_id=parent_id,
                 char_count=sec.chars,
                 path_key=path_key,
                 ordinal=ord_n,
+                line=sec.line,
                 start=sec.start,
                 end=sec.end,
             )
         )
+        stack.append((sec.level, sid))
     return indexed
 
 
@@ -79,8 +80,17 @@ def _preamble_span_len(text: str) -> int:
     return 0
 
 
-def _direct_child_ids(indexed: list[_IndexedSection], parent_path: str) -> list[str]:
-    return [r.section_id for r in indexed if r.parent_id == parent_path]
+def _preamble_line(text: str) -> int:
+    for sec in parse_sections(text):
+        if sec.level == 0:
+            return sec.line
+    return 1
+
+
+def _direct_child_ids(
+    indexed: list[_IndexedSection], parent_section_id: str
+) -> list[str]:
+    return [r.section_id for r in indexed if r.parent_id == parent_section_id]
 
 
 def _resolve_section_object(text: str, row: _IndexedSection) -> Any | None:
@@ -166,12 +176,16 @@ def _subtree_char_count(text: str, row: _IndexedSection) -> int:
 
 def _page_descriptors(
     descriptors: list[dict[str, Any]],
+    *,
+    start: int = 0,
 ) -> tuple[list[dict[str, Any]], list[str], int | None, bool]:
     omitted: list[str] = []
     cursor: int | None = None
     truncated = False
     kept: list[dict[str, Any]] = []
-    for idx, row in enumerate(descriptors):
+    start = max(0, min(start, len(descriptors)))
+    for idx in range(start, len(descriptors)):
+        row = descriptors[idx]
         trial = kept + [row]
         if len(trial) > MANIFEST_MAX_DESCRIPTORS:
             truncated = True
@@ -185,6 +199,11 @@ def _page_descriptors(
             omitted.append("sections_tail")
             break
         kept = trial
+    if start > 0 and start < len(descriptors) and not truncated:
+        truncated = start + len(kept) < len(descriptors)
+        if truncated and cursor is None:
+            cursor = start + len(kept)
+            omitted.append("sections_tail")
     return kept, omitted, cursor, truncated
 
 
@@ -195,6 +214,7 @@ def build_document_manifest(
     text: str,
     read_sha256: str,
     expected_read_sha256: str | None = None,
+    descriptor_offset: int = 0,
 ) -> dict[str, Any]:
     if expected_read_sha256 and not sha256_hex_equal(read_sha256, expected_read_sha256):
         return _stale_read_root(
@@ -210,13 +230,16 @@ def build_document_manifest(
                 "heading": "",
                 "level": 0,
                 "parent_id": None,
+                "line": 1,
                 "char_count": len(text),
                 "children": [],
                 "subtree_char_count": len(text),
             }
         ]
         structure = "unsectioned"
-        paged, omitted, cursor, truncated = _page_descriptors(descriptors)
+        paged, omitted, cursor, truncated = _page_descriptors(
+            descriptors, start=descriptor_offset
+        )
         return {
             "path": path,
             "sandbox": sandbox,
@@ -231,7 +254,8 @@ def build_document_manifest(
             "truncated": truncated,
         }
 
-    indexed = _assign_section_ids(atx)
+    preamble_parent = PREAMBLE_ID if preamble_len > 0 else None
+    indexed = _assign_section_ids(atx, preamble_parent_id=preamble_parent)
     descriptors: list[dict[str, Any]] = []
     if preamble_len > 0:
         descriptors.append(
@@ -240,15 +264,16 @@ def build_document_manifest(
                 "heading": "[Preamble]",
                 "level": 0,
                 "parent_id": None,
+                "line": _preamble_line(text),
                 "char_count": preamble_len,
-                "children": [],
+                "children": _direct_child_ids(indexed, PREAMBLE_ID),
                 "subtree_char_count": preamble_len,
             }
         )
     for row in indexed:
         own = _section_own_body(text, row)
         own_len = len(own) if own is not None else row.char_count
-        child_ids = _direct_child_ids(indexed, row.path_key)
+        child_ids = _direct_child_ids(indexed, row.section_id)
         subtree = _subtree_char_count(text, row)
         descriptors.append(
             {
@@ -256,13 +281,16 @@ def build_document_manifest(
                 "heading": row.heading,
                 "level": row.level,
                 "parent_id": row.parent_id,
+                "line": row.line,
                 "char_count": own_len,
                 "children": child_ids,
                 "subtree_char_count": subtree,
             }
         )
-    paged, omitted, cursor, truncated = _page_descriptors(descriptors)
-    return {
+    paged, omitted, cursor, truncated = _page_descriptors(
+        descriptors, start=descriptor_offset
+    )
+    out: dict[str, Any] = {
         "path": path,
         "sandbox": sandbox,
         "read_sha256": read_sha256,
@@ -275,3 +303,6 @@ def build_document_manifest(
         "cursor": cursor,
         "truncated": truncated,
     }
+    if truncated and cursor is not None and descriptor_offset == 0:
+        out["_next"] = f'fs(op="md_list", path="{path}", offset={cursor})'
+    return out

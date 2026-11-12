@@ -511,17 +511,17 @@ class TestXmlBlockSections:
 
     def test_md_list_includes_six_blocks(self) -> None:
         rows = list_sections(_SIX_BLOCK_PACKET)
-        xml_rows = [row for row in rows if str(row["path"]).startswith("<")]
-        paths = [row["path"] for row in xml_rows]
-        assert paths == list(self.EXPECTED_TAGS)
+        xml_rows = [row for row in rows if str(row["id"]).startswith("<")]
+        ids = [row["id"] for row in xml_rows]
+        assert ids == list(self.EXPECTED_TAGS)
 
     def test_trailing_inner_atx_excluded_from_nav(self) -> None:
         """ATX headings wholly inside an XML block must not leak into md_list."""
         rows = list_sections(_SIX_BLOCK_PACKET)
-        paths = [str(row["path"]) for row in rows]
-        assert "<task_guidance>" in paths
-        assert "Phase 1" not in paths
-        assert not any(not p.startswith("<") and "Phase" in p for p in paths)
+        ids = [str(row["id"]) for row in rows]
+        assert "<task_guidance>" in ids
+        assert "Phase 1" not in ids
+        assert not any(not p.startswith("<") and "Phase" in p for p in ids)
 
     def test_md_read_angle_bracket_key(self) -> None:
         body = read_section(_SIX_BLOCK_PACKET, "<task_guidance>")
@@ -545,7 +545,7 @@ class TestXmlBlockSections:
     def test_xml_tags_inside_fence_ignored(self) -> None:
         doc = "# Doc\n\n```\n<scope>\nfake\n</scope>\n```\n\n<scope>\nreal\n</scope>\n"
         rows = list_sections(doc)
-        assert len([r for r in rows if r["path"] == "<scope>"]) == 1
+        assert len([r for r in rows if r["id"] == "<scope>"]) == 1
         assert read_section(doc, "<scope>").strip() == "real"
 
     def test_unknown_xml_section_raises(self) -> None:

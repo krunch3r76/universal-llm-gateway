@@ -17,12 +17,16 @@ from markdown_fence import (
 )
 
 # Harvest nominates these manage slugs when this lib lands (package-grain).
-CONSUMERS: tuple[str, ...] = ('mcp', 'rag')
+CONSUMERS: tuple[str, ...] = ("mcp", "rag")
+
+PREAMBLE_ID = "__preamble__"
 
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 
+
 class SectionError(Exception):
     """Invalid section path or ambiguous match."""
+
 
 @dataclass(slots=True, kw_only=True)
 class Section:
@@ -36,8 +40,10 @@ class Section:
     end: int
     chars: int = 0
 
+
 def _char_upto(lines: list[str], line_idx: int) -> int:
     return sum(len(lines[k]) for k in range(line_idx))
+
 
 def _document_sections(text: str) -> list[Section]:
     """ATX sections plus XML block sections sorted by document offset."""
@@ -52,14 +58,13 @@ def _document_sections(text: str) -> list[Section]:
         sec
         for sec in atx
         if sec.level > 0
-        and not any(
-            xml_sec.start <= sec.start < xml_sec.end for xml_sec in xml
-        )
+        and not any(xml_sec.start <= sec.start < xml_sec.end for xml_sec in xml)
     ] + xml
     body.sort(key=lambda sec: sec.start)
     if preamble is not None:
         return [preamble, *body]
     return body if body else atx
+
 
 def parse_sections(text: str) -> list[Section]:
     """Flat sections in document order; preamble is level 0 with empty path/heading."""
@@ -131,6 +136,7 @@ def parse_sections(text: str) -> list[Section]:
         sec.chars = max(0, sec.end - sec.start)
     return sections
 
+
 def _reject_xml_block_mutation(text: str, section_path: str) -> None:
     """v1 non-goal: XML block bodies are read-only via section mutation ops."""
     from markdown_xml_blocks import resolve_xml_section
@@ -140,6 +146,7 @@ def _reject_xml_block_mutation(text: str, section_path: str) -> None:
             f"XML block mutation via {section_path!r} is not supported in v1 "
             "(ATX-only md_replace/md_append/md_delete); use md_read for XML blocks"
         )
+
 
 def resolve_section(text: str, section_path: str) -> Section:
     """Resolve by full path, suffix, heading, or XML block tag."""
@@ -152,6 +159,11 @@ def resolve_section(text: str, section_path: str) -> Section:
                 return sec
         raise SectionError("No preamble found in document")
     normalized = section_path.strip()
+    if normalized == PREAMBLE_ID:
+        for sec in sections:
+            if sec.level == 0:
+                return sec
+        raise SectionError("No preamble found in document")
     exact = [s for s in sections if s.path == normalized]
     if len(exact) == 1:
         return exact[0]
@@ -215,23 +227,54 @@ def resolve_section(text: str, section_path: str) -> Section:
         return xml_sec
     raise SectionError(f"Section not found: {section_path!r}")
 
+
+def _atx_section_id(path_key: str, ordinal: int, *, path_total: int) -> str:
+    if path_total == 1:
+        return path_key
+    return f"{path_key}#{ordinal}"
+
+
 def list_sections(text: str) -> list[dict[str, str | int]]:
-    """Metadata rows for navigation (skips empty preamble)."""
-    return [
-        {
-            "heading": sec.heading if sec.heading else "[Preamble]",
-            "level": sec.level,
-            "path": sec.path,
-            "line": sec.line,
-            "chars": sec.chars,
-        }
-        for sec in _document_sections(text)
-        if not (sec.level == 0 and sec.chars == 0)
-    ]
+    """Metadata rows for navigation (skips empty preamble). Rows carry ``id`` (wire id)."""
+    body = [s for s in _document_sections(text) if s.level > 0]
+    totals: dict[str, int] = {}
+    for sec in body:
+        totals[sec.path] = totals.get(sec.path, 0) + 1
+    seen: dict[str, int] = {}
+    rows: list[dict[str, str | int]] = []
+    for sec in _document_sections(text):
+        if sec.level == 0 and sec.chars == 0:
+            continue
+        if sec.level == 0:
+            rows.append(
+                {
+                    "id": PREAMBLE_ID,
+                    "heading": "[Preamble]",
+                    "level": 0,
+                    "line": sec.line,
+                    "char_count": sec.chars,
+                }
+            )
+            continue
+        path_key = sec.path
+        seen[path_key] = seen.get(path_key, 0) + 1
+        sid = _atx_section_id(path_key, seen[path_key], path_total=totals[path_key])
+        rows.append(
+            {
+                "id": sid,
+                "heading": sec.heading,
+                "level": sec.level,
+                "line": sec.line,
+                "char_count": sec.chars,
+            }
+        )
+    return rows
+
 
 def read_section(text: str, section_path: str) -> str:
     sec = resolve_section(text, section_path)
     return text[sec.start : sec.end]
+
 
 def _strip_leading_heading(content: str, level: int, heading: str) -> tuple[str, bool]:
     """Strip a leading ATX heading from *content* when it matches *level* + *heading*."""
@@ -248,12 +291,15 @@ def _strip_leading_heading(content: str, level: int, heading: str) -> tuple[str,
         return content[first.start :], True
     return content, False
 
+
 def strip_redundant_leading_heading(content: str, section: Section) -> tuple[str, bool]:
     """Strip a leading ATX heading from *content* when it duplicates *section*."""
     return _strip_leading_heading(content, section.level, section.heading)
 
+
 def _doc_eol(text: str) -> str:
     return "\r\n" if "\r\n" in text else "\n"
+
 
 def _ensure_blank_before(prefix: str, eol: str) -> str:
     if not prefix:
@@ -264,10 +310,12 @@ def _ensure_blank_before(prefix: str, eol: str) -> str:
         prefix += eol
     return prefix
 
+
 def _ensure_blank_after(block: str, suffix: str, eol: str) -> str:
     if suffix and not block.endswith(eol * 2):
         block += eol
     return block
+
 
 def find_duplicate_section_headings(text: str) -> list[dict[str, str | int]]:
     """Detect ghost duplicate headings (empty first, identical sibling follows)."""
@@ -282,6 +330,7 @@ def find_duplicate_section_headings(text: str) -> list[dict[str, str | int]]:
         findings.append({"heading": cur.heading, "level": cur.level, "line": cur.line})
     return findings
 
+
 def _set_section_body(text: str, sec: Section, body: str) -> str:
     if body and not body.endswith("\n"):
         body += "\n"
@@ -289,6 +338,7 @@ def _set_section_body(text: str, sec: Section, body: str) -> str:
     if after and body and not body.endswith("\n\n"):
         body += "\n"
     return text[: sec.start] + body + after
+
 
 def replace_section(text: str, section_path: str, new_content: str) -> tuple[str, bool]:
     """Replace body only; returns (updated_text, heading_was_normalized)."""
@@ -325,7 +375,10 @@ def patch_section_body(
         new_body = body.replace(target, replacement, 1)
     return _set_section_body(text, sec, new_body), replacements
 
-def append_section(text: str, section_path: str, added_content: str) -> tuple[str, bool]:
+
+def append_section(
+    text: str, section_path: str, added_content: str
+) -> tuple[str, bool]:
     """Append to section body; normalizes only *added_content*, not existing body."""
     _reject_xml_block_mutation(text, section_path)
     sec = resolve_section(text, section_path)
@@ -334,6 +387,7 @@ def append_section(text: str, section_path: str, added_content: str) -> tuple[st
     if cur and not cur.endswith("\n"):
         cur += "\n"
     return _set_section_body(text, sec, cur + frag), normd
+
 
 def insert_section(
     text: str,
@@ -380,6 +434,7 @@ def insert_section(
         block += eol
     return prefix + block + text[offset:], normalized
 
+
 def delete_section(text: str, section_path: str) -> str:
     """Remove heading line and body (preamble: strip through `end` only)."""
     _reject_xml_block_mutation(text, section_path)
@@ -389,6 +444,7 @@ def delete_section(text: str, section_path: str) -> str:
     lines = text.splitlines(keepends=True)
     h0 = _char_upto(lines, sec.line - 1)
     return text[:h0] + text[sec.end :]
+
 
 def sections_to_dict(text: str) -> dict[str, Any]:
     """Nested dict by heading; `_preamble`; parents with body use `_content`."""
@@ -402,6 +458,7 @@ def sections_to_dict(text: str) -> dict[str, Any]:
         return root if preamble.strip() else {"_preamble": text}
     _build_dict_recursive(root, heading_sections, text, 0, len(heading_sections))
     return root
+
 
 def _build_dict_recursive(
     target: dict[str, Any],
@@ -430,6 +487,7 @@ def _build_dict_recursive(
             target[sec.heading] = child
         i = c1
 
+
 def dict_to_markdown(data: dict[str, Any], *, base_level: int = 1) -> str:
     """`_preamble` before headings; `_content` is parent body before children."""
     parts: list[str] = []
@@ -444,6 +502,7 @@ def dict_to_markdown(data: dict[str, Any], *, base_level: int = 1) -> str:
     if result and not result.endswith("\n"):
         result += "\n"
     return result
+
 
 def _render_key(parts: list[str], key: str, value: Any, level: int) -> None:
     parts.append(f"{'#' * level} {key}\n")
@@ -463,6 +522,7 @@ def _render_key(parts: list[str], key: str, value: Any, level: int) -> None:
         for ck, cv in value.items():
             if ck not in ("_preamble", "_content"):
                 _render_key(parts, ck, cv, level + 1)
+
 
 def dict_from_json(json_str: str) -> dict[str, Any]:
     try:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from markdown_sections import (
+    PREAMBLE_ID,
     SectionError,
     dict_from_json,
     dict_to_markdown,
@@ -21,9 +22,6 @@ from markdown_sections import (
 )
 from markdown_sections import (
     insert_section as md_insert_section,
-)
-from markdown_sections import (
-    list_sections as md_list_sections,
 )
 from markdown_sections import (
     patch_section_body as md_patch_section_body,
@@ -476,6 +474,13 @@ def _section_delete_result(
     sandbox: str,
     section: str,
 ) -> dict[str, Any]:
+    if section.strip() == PREAMBLE_ID:
+        return {
+            "error": (
+                f"Refusing to delete preamble section {PREAMBLE_ID!r}; "
+                "use op='write' for whole-file edits."
+            )
+        }
     if is_converted_format(resolved):
         return {
             "error": (
@@ -632,6 +637,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         target: str = "",
         all_occurrences: bool = False,
         size_only: bool = False,
+        offset: int = 0,
         sections: list[str] | None = None,
         export: bool = False,
         chunk_cursor: int | None = None,
@@ -641,9 +647,10 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         """Section-level markdown: list/read/replace/append/insert/delete/to_dict/from_dict.
 
         Sandboxes: context → tasks/; cortex → /data/files; workspaces → project root.
-        Section path from list_sections; read ops with empty/omitted section return
-        a manifest (``selection=manifest``) without inline body text; use ``section``,
-        ``sections``, or ``export=true`` to expand. Write ops use "" for the preamble.
+        Section id from md_list (``id`` rows, preamble ``__preamble__``); read ops
+        with empty/omitted section return a manifest (``selection=manifest``) without
+        inline body text; use ``section``, ``sections``, or ``export=true`` to expand.
+        Write ops reject an empty section and ``__preamble__``.
         from_dict: content is JSON.
         Prefer over whole-file context/cortex/workspaces for long structured docs.
         Use workspaces sandbox for tmp/ files (debrief log, phase docs, handoff docs).
@@ -729,23 +736,23 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                         "total_chars": len(text),
                         "read_sha256": read_sha256,
                     }
-                try:
-                    sections = md_list_sections(text)
-                except SectionError as e:
-                    return {"error": str(e)}
+                from tools._document_manifest import build_document_manifest
+
+                start = max(0, int(offset or 0))
+                manifest = build_document_manifest(
+                    path=path,
+                    sandbox=sandbox,
+                    text=text,
+                    read_sha256=read_sha256,
+                    descriptor_offset=start,
+                )
                 record(
                     "mcp.tool.markdown.sections.listed",
                     path=path,
                     sandbox=sandbox,
-                    count=len(sections),
+                    count=len(manifest.get("sections") or []),
                 )
-                return {
-                    "path": path,
-                    "sandbox": sandbox,
-                    "total_chars": len(text),
-                    "read_sha256": read_sha256,
-                    "sections": sections,
-                }
+                return manifest
             if op == "read_section":
                 result = resolve_document_read(
                     path=path,

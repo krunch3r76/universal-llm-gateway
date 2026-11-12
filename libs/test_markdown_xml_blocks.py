@@ -24,7 +24,7 @@ def test_outer_scan_xml_inside_fenced_body_ignored() -> None:
     assert xml_secs[0].path == "<scope>"
     assert read_section(doc, "<scope>").strip() == "real block"
     rows = list_sections(doc)
-    scope_rows = [r for r in rows if r["path"] == "<scope>"]
+    scope_rows = [r for r in rows if r["id"] == "<scope>"]
     assert len(scope_rows) == 1
 
 

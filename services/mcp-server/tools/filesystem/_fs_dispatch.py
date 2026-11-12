@@ -117,7 +117,10 @@ OP_DOC: dict[str, tuple[str, str]] = {
         "(content)",
         "check whether a cited sha256 digest resolves in the content store",
     ),
-    "md_list": ("(path)", "list sections/TOC (see Markdown section ops below)"),
+    "md_list": (
+        "(path, offset?, size_only?)",
+        "manifest section index (descriptor cursor via offset; see Markdown section ops below)",
+    ),
     "md_read": (
         "(path, section?, sections?, export?, chunk_cursor?, expected_read_sha256?)",
         "read manifest or expand sections (see Markdown section ops below)",
@@ -189,6 +192,7 @@ PARAM_PURPOSE: dict[str, str] = {
         "when true, fs find and search include .worktrees and ulg-arc-worktrees paths"
     ),
     "size_only": "size-only list_sections flag for md_list",
+    "offset": "descriptor cursor for md_list pagination (not line offset)",
     "sections": "batched section ids for document read expansion",
     "export": (
         "sanctioned override: explicit whole-document export in bounded chunks; "
@@ -227,7 +231,7 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "move": frozenset({"target"}),
     "copy": frozenset({"target"}),
     "delete": frozenset(),
-    "md_list": frozenset({"size_only"}),
+    "md_list": frozenset({"size_only", "offset"}),
     "md_read": frozenset(
         {"section", "sections", "export", "chunk_cursor", "expected_read_sha256"}
     ),
@@ -282,17 +286,17 @@ REQUIRED_HINTS: dict[tuple[str, str], str] = {
     ("md_replace", "section"): (
         "an empty section targets the file preamble (YAML frontmatter / "
         "pre-heading body) and would silently overwrite it. Pass "
-        "section=<heading> (from md_list), or use op='write' for the whole file."
+        "section=<id> (from md_list), or use op='write' for the whole file."
     ),
     ("md_append", "section"): (
         "an empty section targets the file preamble (YAML frontmatter / "
         "pre-heading body) and would silently append into it. Pass "
-        "section=<heading> (from md_list)."
+        "section=<id> (from md_list)."
     ),
     ("md_delete", "section"): (
         "an empty section targets the file preamble (YAML frontmatter / "
         "pre-heading body) and would silently delete it. Pass "
-        "section=<heading> (from md_list)."
+        "section=<id> (from md_list); __preamble__ is refused."
     ),
 }
 
@@ -384,7 +388,7 @@ def md_section_op_doc() -> str:
     """Build the fs tool docstring 'Markdown section ops' section."""
     return (
         "Markdown section ops (for large docs):\n"
-        "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` on six-block handoff packets)\n"
+        "  md_list    (path, offset?, size_only?) — manifest section index (PDFs: embedded outline; markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` on six-block handoff packets; offset pages descriptors)\n"
         "  md_read    (path, section?, sections?, export?, expected_read_sha256?) — default manifest; section/sections/export expand. XML block keys: `<tag>` or bare `tag`\n"
         "  md_to_dict (path, expected_read_sha256?) — heading tree manifest without bodies; expected_read_sha256 is param_not_applicable\n"
         "  md_replace (path, section, target, content, all_occurrences?)  — patch target substring within the section body only; target required; cannot truncate unmentioned content; the section span includes child headings\n"

@@ -5,10 +5,14 @@ from __future__ import annotations
 import difflib
 from typing import Any
 
-from markdown_sections import SectionError, parse_sections, resolve_section
+from markdown_sections import (
+    PREAMBLE_ID,
+    SectionError,
+    parse_sections,
+    resolve_section,
+)
 
 from tools._document_manifest import (
-    PREAMBLE_ID,
     UNSECTIONED_ID,
     _assign_section_ids,
     _direct_child_ids,
@@ -26,8 +30,8 @@ BATCH_MAX_SECTIONS = 16
 BATCH_MAX_CONTENT_CHARS = 64 * 1024
 
 _ID_FORMAT_HINT = (
-    "Section ids are heading paths 'Parent/Child'; duplicate headings get '#n'. "
-    "Call md_list to enumerate ids."
+    "Section ids come from md_list (heading paths 'Parent/Child', duplicate "
+    "headings get '#n', preamble is '__preamble__'). Call md_list to enumerate."
 )
 
 _WINDOW_GATE_NEXT = (
@@ -103,6 +107,13 @@ def is_sparse_document_suffix(suffix: str) -> bool:
     }
 
 
+def _preamble_parent_id(text: str) -> str | None:
+    for sec in parse_sections(text):
+        if sec.level == 0 and sec.chars > 0:
+            return PREAMBLE_ID
+    return None
+
+
 def _id_last_segment(section_id: str) -> str:
     """Last heading label in a section id, without ``#ordinal`` or parent path."""
     base = section_id.rsplit("#", 1)[0]
@@ -133,6 +144,8 @@ def _nearest_section_ids(
             if len(ranked) >= limit:
                 return
 
+    if sid in ("[Preamble]", "Preamble"):
+        return [PREAMBLE_ID][:limit]
     lower = sid.lower()
     _append([i for i in doc_ids if i.lower() == lower])
     if len(ranked) < limit:
@@ -277,7 +290,7 @@ def _span_meta_for_section_id(
             return _honest_span_meta(body=text, children=[], subtree=len(text))
         return _empty_span_meta()
     row, err = _resolve_indexed(indexed, section_id)
-    if err is not None:
+    if err == "duplicate_ambiguous":
         return _empty_span_meta()
     if row is None:
         try:
@@ -344,7 +357,11 @@ def build_section_batch_response(
             "sparse_section_batch": True,
         }
     atx = [s for s in parse_sections(text) if s.level > 0]
-    indexed = _assign_section_ids(atx) if atx else []
+    indexed = (
+        _assign_section_ids(atx, preamble_parent_id=_preamble_parent_id(text))
+        if atx
+        else []
+    )
     items: list[dict[str, Any]] = []
     omitted: list[str] = []
     budget_cursor: int | None = None
@@ -545,7 +562,11 @@ def resolve_document_read(
     if has_section:
         sid = str(section).strip()
         atx = [s for s in parse_sections(text) if s.level > 0]
-        indexed = _assign_section_ids(atx) if atx else []
+        indexed = (
+            _assign_section_ids(atx, preamble_parent_id=_preamble_parent_id(text))
+            if atx
+            else []
+        )
         span_meta = _span_meta_for_section_id(text, indexed, sid)
         if expected_read_sha256 and not sha256_hex_equal(
             read_sha256, expected_read_sha256
