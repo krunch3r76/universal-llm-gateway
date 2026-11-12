@@ -36,8 +36,7 @@ def _ledger_check_predicate(payload: dict) -> bool:
     land = dispatches[0].get("land") or {}
     budget = payload.get("budget") or {}
     return (
-        land.get("landed_now") is True
-        and int(budget.get("actual_bytes") or 0) <= 5120
+        land.get("landed_now") is True and int(budget.get("actual_bytes") or 0) <= 5120
     )
 
 
@@ -395,9 +394,7 @@ def test_work_key_ledger_lists_cdp_row_without_cost_usd() -> None:
         contract="code-review",
     )
     payload = work_key_ledger_projection(_KEY, ledger=ledger)
-    row = next(
-        r for r in payload["dispatches"] if r["dispatch_id"] == "disp-cdp-econ"
-    )
+    row = next(r for r in payload["dispatches"] if r["dispatch_id"] == "disp-cdp-econ")
     assert row.get("prompt_bytes") == 2048
     assert row.get("harvest_chars") == 400
     assert row.get("substrate") == "cdp"

@@ -33,7 +33,9 @@ async def finalize_caller_agent_missing(
     if not try_claim_proof_publish(execution_id=result.execution_id, holder=holder):
         return
     if terminate_dispatch_link is not None:
-        await terminate_dispatch_link(terminal_status="failed")
+        terminated = await terminate_dispatch_link(terminal_status="failed")
+        if terminated is False:
+            return
     sat_id = result.satellite_execution_id
     publish_cdp_kwargs(
         CdpGenerateStalled,

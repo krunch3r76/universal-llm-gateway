@@ -2307,6 +2307,44 @@ async def test_caller_missing_terminates_dispatch_link_before_proof(
 
 
 @pytest.mark.asyncio
+async def test_caller_missing_skips_proof_when_terminate_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failed dispatch-link terminate leaves the leg retryable (no proof_emitted)."""
+    from systems.frontier_consult.cdp_reconcile_caller_missing import (
+        finalize_caller_agent_missing,
+    )
+
+    terminate = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_reconcile_caller_missing.publish_cdp_kwargs",
+        lambda event_cls, **kwargs: None,
+    )
+    upsert_inflight_leg(
+        execution_id="exec-no-caller-term-fail",
+        request_id="req-no-caller-term-fail",
+        thread_id="99003",
+        pointer_turn=1,
+        caller_agent="",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_caller_agent_missing(
+        result=_ok_result(execution_id="exec-no-caller-term-fail"),
+        request_id="req-no-caller-term-fail",
+        thread_id="99003",
+        pointer_turn=1,
+        via="reconcile",
+        terminate_dispatch_link=terminate,
+    )
+    terminate.assert_awaited_once()
+    leg = reconcile.read_inflight_leg("exec-no-caller-term-fail")
+    assert leg is not None
+    assert not leg.proof_emitted
+
+
+@pytest.mark.asyncio
 async def test_cdp_terminal_stores_harvest_chars_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

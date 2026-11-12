@@ -14,6 +14,7 @@ from agent_bus_store.turns_models import (
     MAX_LONG_TURN_BODY_CHARS,
     MAX_TURN_BODY_CHARS,
 )
+from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_prompt
 from contract_vocab import CANONICAL_CONTRACTS
 from hop_handoff import (
     ArcHubTip,
@@ -23,13 +24,14 @@ from hop_handoff import (
 )
 from hop_handoff.body import parse_hop_admitted_at, parse_responsibility
 
-from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_prompt
-
 from tools.agent_bus.hop import (
     _hop_dispatch,
     hop_generate_payload,
-    resolve_hop_cdp_caller_agent,
     resolve_hop_successor_model,
+)
+from tools.agent_bus.hop_cdp_caller import (
+    hop_caller_agent_required_response,
+    resolve_hop_cdp_caller_agent,
 )
 from tools.agent_bus.request_intake import reset_request_id_registry_for_tests
 
@@ -179,8 +181,61 @@ def test_resolve_hop_successor_model_rejects_whitespace() -> None:
         resolve_hop_successor_model("opus 5")
 
 
-def test_hop_cdp_caller_from_web_anthropic_uses_cursor_mailbox() -> None:
-    assert resolve_hop_cdp_caller_agent("web-anthropic") == "cursor"
+def test_hop_cdp_caller_explicit_valid_passthrough() -> None:
+    assert resolve_hop_cdp_caller_agent("cursor-sdk-lane") == "cursor-sdk-lane"
+
+
+def test_hop_cdp_caller_missing_explicit_returns_none() -> None:
+    assert resolve_hop_cdp_caller_agent(None) is None
+    assert resolve_hop_cdp_caller_agent("") is None
+
+
+def test_hop_cdp_caller_undeliverable_explicit_returns_none() -> None:
+    assert resolve_hop_cdp_caller_agent("team") is None
+
+
+def test_hop_dispatch_refuses_web_anthropic_without_explicit_caller() -> None:
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay"),
+        ):
+            return await _hop_dispatch(
+                thread="77",
+                reason="context-pressure",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    assert result["code"] == "HOP_CALLER_AGENT_REQUIRED"
+    assert result["reason"] == "hop_caller_agent_required"
+
+
+def test_hop_dispatch_refuses_undeliverable_explicit_caller() -> None:
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay"),
+        ):
+            return await _hop_dispatch(
+                thread="77",
+                reason="context-pressure",
+                from_agent="web-anthropic",
+                caller_agent="team",
+            )
+
+    result = asyncio.run(run())
+    assert result["code"] == hop_caller_agent_required_response()["code"]
 
 
 def test_hop_generate_payload_explicit_caller_passthrough() -> None:
@@ -223,6 +278,7 @@ def test_hop_dispatch_sends_caller_model() -> None:
                 thread="77",
                 reason="context-pressure",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
                 desired_model="fable-5.1-high",
             )
 
@@ -230,6 +286,7 @@ def test_hop_dispatch_sends_caller_model() -> None:
     assert result["model"] == "cdp/fable-5.1-high"
     assert captured["body"]["model"] == "cdp/fable-5.1-high"
     assert captured["body"]["caller_agent"] == "cursor"
+    assert "error" not in result
     assert result["continuity_hop"] is True
 
 
@@ -261,6 +318,7 @@ def test_hop_relay_body_wires_mission_kind_and_predecessor_registration() -> Non
                 thread="12286",
                 reason="context-pressure-self-handoff",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
                 desired_model="cdp/opus-5.5-extra",
                 cse_registration_id="c1caf180",
             )
@@ -296,6 +354,7 @@ def test_hop_relay_mission_kind_with_hop_kind_housekeeping() -> None:
                 thread="12286",
                 reason="housekeeping: budget_exceeded",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
                 hop_kind="housekeeping",
             )
 
@@ -325,6 +384,7 @@ def test_hop_relay_mission_kind_when_hop_kind_omitted() -> None:
                 thread="12286",
                 reason="context-pressure",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     asyncio.run(run())
@@ -350,6 +410,7 @@ def test_hop_rejects_invalid_hop_kind_before_relay() -> None:
                 thread="12286",
                 reason="housekeeping",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
                 hop_kind="bogus",
             )
 
@@ -379,6 +440,7 @@ def test_hop_relay_body_omits_predecessor_when_registration_absent() -> None:
                 thread="12286",
                 reason="context-pressure",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     asyncio.run(run())
@@ -408,6 +470,7 @@ def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
                 thread="77",
                 reason="mcp-restart-healthy",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -454,6 +517,7 @@ def test_hop_passes_relay_payload_through() -> None:
                 thread=77,
                 reason="mcp-restart-healthy",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -481,6 +545,7 @@ def test_hop_relay_error_returns_without_continuity_hop() -> None:
                 thread="77",
                 reason="mcp-restart-healthy",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -510,6 +575,7 @@ def test_hop_commission_refused_when_contract_job_unknown() -> None:
                 thread="77",
                 reason="mcp-restart-healthy",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -572,6 +638,7 @@ def test_hop_relays_full_handoff_prompt(reason: str, tmp_path) -> None:
                 thread="12286",
                 reason=reason,
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -641,6 +708,7 @@ def test_hop_emits_inflight_rows_when_sidecar_has_in_flight(tmp_path) -> None:
                 thread="12286",
                 reason="relay-inflight-count",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -677,6 +745,7 @@ def test_hop_emits_arc_hub_pair_when_lane_tagged() -> None:
                 thread="21744",
                 reason="arc-hub-bind",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -714,6 +783,7 @@ def test_hop_emits_consumption_missing_when_window_has_unconsumed() -> None:
                 thread="21744",
                 reason="consumption-missing-bind",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -744,6 +814,7 @@ def test_hop_omits_consumption_missing_when_window_unavailable() -> None:
                 thread="21744",
                 reason="no-consumption-window",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -777,6 +848,7 @@ def test_hop_omits_consumption_missing_when_load_raises() -> None:
                 thread="21744",
                 reason="consumption-load-fail",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -807,6 +879,7 @@ def test_hop_omits_arc_hub_when_lane_untagged() -> None:
                 thread="21744",
                 reason="no-arc-hub",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -856,6 +929,7 @@ def test_hop_relays_prompt_past_long_turn_cap() -> None:
                 thread="12286",
                 reason=reason,
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -904,6 +978,7 @@ def test_hop_body_carries_admit_stamp_and_responsibility_from_summary() -> None:
                 thread="77",
                 reason="stamp-responsibility",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -955,6 +1030,7 @@ def test_hop_verbal_stamp_renders_on_opening_paste() -> None:
                 thread="77",
                 reason="stamp-responsibility-paste",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -998,6 +1074,7 @@ def test_hop_admits_when_thread_read_raises() -> None:
                 thread="77",
                 reason="thread-read-fail",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -1038,6 +1115,7 @@ def test_hop_thread_read_fail_responsibility_not_recorded_on_paste() -> None:
                 thread="77",
                 reason="thread-read-fail-paste",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -1098,6 +1176,7 @@ def test_hop_null_summary_omits_responsibility_line() -> None:
                 thread="77",
                 reason="null-summary",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -1147,6 +1226,7 @@ def test_hop_responsibility_from_relay_when_sqlite_get_thread_fails() -> None:
                 thread="22824",
                 reason="relay-responsibility-sqlite-dead",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -1194,6 +1274,7 @@ def test_hop_relay_raises_records_thread_read_failed_event() -> None:
                 thread="77",
                 reason="relay-raises-event",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())
@@ -1253,6 +1334,7 @@ def test_hop_relay_error_dict_records_thread_read_failed_on_paste() -> None:
                 thread="77",
                 reason="relay-error-dict",
                 from_agent="web-anthropic",
+                caller_agent="cursor",
             )
 
     result = asyncio.run(run())

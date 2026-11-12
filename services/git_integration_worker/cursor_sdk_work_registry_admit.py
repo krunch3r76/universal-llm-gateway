@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from universal_logging import get_logger
@@ -52,13 +52,13 @@ WORK_REGISTRY_RULE = (
     'WORK REGISTRY RULE: Before acting on a work_key, read team_dispatch(op="registry", '
     "work_key_prefix=<key>). If another live row holds it, coordinate on its thread "
     "instead of duplicating. If you are not already auto-recorded (team_dispatch generate "
-    "auto-records with an address), claim it: team_dispatch(op=\"claim\", work_key, thread, "
-    "seat_name, address). Keep it current with op=\"claim_update\" (work_status, "
-    'address_patch, note); finish with work_status=landed or abandoned.'
+    'auto-records with an address), claim it: team_dispatch(op="claim", work_key, thread, '
+    'seat_name, address). Keep it current with op="claim_update" (work_status, '
+    "address_patch, note); finish with work_status=landed or abandoned."
 )
 
 _REGISTRY_NEXT_TEMPLATE = (
-    'Work registry: read team_dispatch(op=registry, work_key_prefix=<key>) before starting '
+    "Work registry: read team_dispatch(op=registry, work_key_prefix=<key>) before starting "
     "work on a work_key; claim with op=claim (seat_name, address) and keep it current with "
     "op=claim_update (acting-row updates require the bridge caller_dispatch_id stamp — "
     "unstamped callers get 409); this dispatch was auto-recorded as {row_id}."
@@ -528,7 +528,10 @@ def record_dispatch_registry_best_effort(**kwargs: Any) -> str | None:
                 "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                 (fp,),
             ).fetchone()
-            if exists is not None and str(exists["status"]) in _FRONTIER_TERMINAL_STATUSES:
+            if (
+                exists is not None
+                and str(exists["status"]) in _FRONTIER_TERMINAL_STATUSES
+            ):
                 return fp
         if exists is not None:
             return stamp_registry_on_dispatch_row(

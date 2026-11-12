@@ -48,9 +48,10 @@ def _cdp_generate_admit_test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def _work_key(body: Any, contract: str | None, *, request_id: str) -> None:
         key = (contract or "").strip().lower()
-        if key in REVIEW_CLASS_CONTRACTS and not str(
-            getattr(body, "work_key", "") or ""
-        ).strip():
+        if (
+            key in REVIEW_CLASS_CONTRACTS
+            and not str(getattr(body, "work_key", "") or "").strip()
+        ):
             body.work_key = _TEST_WORK_KEY
         return orig_work_key(body, contract, request_id=request_id)
 
@@ -2769,7 +2770,6 @@ async def test_review_prompt_staged_digest_on_admit(
     review_body = _review_body_over_min()
     _plant_sidecar(monkeypatch, tmp_path, review_body)
     _stub_cdp_generate_after_gate(monkeypatch, tmp_path / "cortex")
-    import systems.frontier_consult.cdp_generate as cdp_gen_mod
 
     body = TeamDispatchGenerateBody(
         op="generate",
