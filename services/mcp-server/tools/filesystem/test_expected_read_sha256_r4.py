@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from fs_impl import fs_impl
 from lane_branch_root import GATEWAY_REPO_DIRNAME
+
 from tools._hashing import sha256_hex_of_file
 from tools.filesystem._expected_read_sha256_boundary import (
     accepted_key_spellings,
@@ -97,7 +97,7 @@ def test_thread_repo_relative_accepted_keys(
     [
         "agent-guides/README.md",
         "workspaces://docs/agent-guides/README.md",
-        f"workspaces://other-repo/docs/agent-guides/README.md",
+        "workspaces://other-repo/docs/agent-guides/README.md",
     ],
 )
 def test_thread_repo_relative_rejected_keys(

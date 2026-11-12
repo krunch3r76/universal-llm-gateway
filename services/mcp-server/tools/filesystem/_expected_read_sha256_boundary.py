@@ -126,9 +126,7 @@ def accepted_key_spellings(
 ) -> list[str]:
     """Spellings callers may use to name *path* under *sandbox*."""
     aliases = sorted(
-        _target_aliases(
-            path, sandbox, workspaces_target_repo=workspaces_target_repo
-        )
+        _target_aliases(path, sandbox, workspaces_target_repo=workspaces_target_repo)
     )
     return list(aliases)
 
