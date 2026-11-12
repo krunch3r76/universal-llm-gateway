@@ -58,7 +58,11 @@ def roster_snapshot_for(key: str, token: str) -> frozenset[str] | None:
 
 
 def begin(key: str, digest: str) -> dict[str, Any]:
-    """Claim ``key``. A second owner receives ``idempotency_in_flight``."""
+    """Claim ``key``. A second owner receives ``idempotency_in_flight``.
+
+    If another seat already owns the slot while steer is in progress, ``in_flight``
+    is returned before ``blocked`` / ``initial_text_unconfirmed``.
+    """
     token = uuid.uuid4().hex
     with _LOCK:
         slot = _SLOTS.get(key)

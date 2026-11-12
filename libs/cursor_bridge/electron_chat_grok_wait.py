@@ -26,9 +26,13 @@ def grok_conversation_attributed(
     *,
     expected_agent_id: str,
     prior_message_fp: str,
-    prior_generating: bool | None = None,
+    prior_generating: bool,
 ) -> bool:
-    """True when sidebar selection and message pane belong to ``expected_agent_id``."""
+    """Heuristic: ``has_active_chat`` only means a composer is present, not pane binding.
+
+    With no pane-owner signal, prose first seen while any marker other than the
+    expected agent is active is refused once the expected marker is required —
+    fail-closed attribution."""
     expected = (expected_agent_id or "").strip()
     active = str(surface.get("active_agent_id") or "").strip()
     if not expected or active != expected:
@@ -38,12 +42,25 @@ def grok_conversation_attributed(
         return True
     if prior_message_fp and fp == prior_message_fp:
         return False
-    positive_binding = surface.get("has_active_chat") is True
-    if prior_generating:
-        return False
-    if positive_binding:
+    if not prior_generating:
         return True
-    if prior_generating is False:
+    return surface.get("has_active_chat") is True and surface.get("generating") is False
+
+
+def _foreign_active_agent(
+    active: str,
+    *,
+    expected_agent_id: str,
+    baseline_agent_id: str,
+    saw_expected_active: bool,
+) -> bool:
+    if not active:
+        return False
+    expected = (expected_agent_id or "").strip()
+    baseline = (baseline_agent_id or "").strip()
+    if active != expected and active != baseline:
+        return True
+    if saw_expected_active and active != expected:
         return True
     return False
 
@@ -53,17 +70,32 @@ async def probe_grok_after_select(
     *,
     endpoint: Any,
     expected_agent_id: str,
+    baseline_agent_id: str,
     prior_message_fp: str,
-    prior_generating: bool | None = None,
+    prior_generating: bool,
 ) -> dict[str, Any]:
-    """Re-probe until the conversation DOM matches ``expected_agent_id`` or idles out."""
+    """Heuristic wait: re-probe until attribution or idle rounds exhaust.
+
+    ``has_active_chat`` signals a composer, not which agent owns the pane; without a
+    pane-owner signal, new prose that first appeared while any marker other than the
+    expected agent was active is treated as unconfirmed for the expected agent
+    (fail-closed)."""
     meta = {
         "thread": endpoint.thread,
         "slug": endpoint.slug,
         "title": endpoint.title or None,
     }
+    saw_expected_active = False
+    baseline_moved = False
+    stale_fps: set[str] = set()
+    if prior_message_fp:
+        stale_fps.add(prior_message_fp)
 
     async def _classify(surface: dict[str, Any]) -> dict[str, Any]:
+        nonlocal saw_expected_active
+        active = str(surface.get("active_agent_id") or "").strip()
+        if active == (expected_agent_id or "").strip():
+            saw_expected_active = True
         verdict = wake_decision(
             surface,
             thread=str(meta["thread"] or ""),
@@ -75,26 +107,51 @@ async def probe_grok_after_select(
             surface,
             expected_agent_id=expected_agent_id,
             prior_message_fp=prior_message_fp,
-            prior_generating=prior_generating,
+            prior_generating=prior_generating or baseline_moved,
         )
+        pane_fp = messages_fingerprint(surface)
+        if pane_fp and pane_fp in stale_fps:
+            attributed = False
         return {"surface": surface, "verdict": verdict, "attributed": attributed}
 
-    first = await probe_surface(ws_url)
-    state = await _classify(first)
+    async def _probe_round() -> dict[str, Any]:
+        nonlocal baseline_moved
+        surface = await probe_surface(ws_url)
+        active = str(surface.get("active_agent_id") or "").strip()
+        if _foreign_active_agent(
+            active,
+            expected_agent_id=expected_agent_id,
+            baseline_agent_id=baseline_agent_id,
+            saw_expected_active=saw_expected_active,
+        ):
+            state = await _classify(surface)
+            return {
+                **state,
+                "ok": False,
+                "stale_dom": True,
+                "code": "conversation_unconfirmed",
+                "foreign_agent_id": active,
+            }
+        if active != (expected_agent_id or "").strip():
+            fp = messages_fingerprint(surface)
+            if fp and fp not in stale_fps:
+                stale_fps.add(fp)
+                baseline_moved = True
+        return await _classify(surface)
+
+    state = await _probe_round()
+    if state.get("foreign_agent_id") is not None:
+        return state
     if state["attributed"] and state["verdict"].get("ok"):
         return {**state, "ok": True, "stale_dom": False}
 
-    prev = messages_fingerprint(first)
     for _ in range(GROK_CONVERSATION_IDLE_ROUNDS):
-        await asyncio.sleep(0)
-        nxt = await probe_surface(ws_url)
-        state = await _classify(nxt)
+        await asyncio.sleep(0.25)
+        state = await _probe_round()
+        if state.get("foreign_agent_id") is not None:
+            return state
         if state["attributed"] and state["verdict"].get("ok"):
             return {**state, "ok": True, "stale_dom": False}
-        fp = messages_fingerprint(nxt)
-        if fp == prev:
-            break
-        prev = fp
 
     stale = not state["attributed"]
     return {
