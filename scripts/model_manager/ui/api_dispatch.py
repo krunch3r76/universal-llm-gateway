@@ -54,6 +54,9 @@ if TYPE_CHECKING:
     from .controller.service_ctl.core import ServiceController
     from .model.service_state import ServiceInfo, ServiceState
 
+# Must match ``deploy_state_gate._MANAGE_TIMEOUT_S`` (single manage health deadline).
+_MANAGE_HEALTH_DEADLINE_S = 5.0
+
 # Service whitelists — kept local to dispatch to avoid cross-module mutation.
 VALID_SERVICES = frozenset(
     {
@@ -174,6 +177,7 @@ async def execute(
 
         case "health":
             require_service(service)
+            health_deadline = time.monotonic() + _MANAGE_HEALTH_DEADLINE_S
             info = await asyncio.to_thread(_check_one, svc, service)
             result = {
                 "service": service,
@@ -181,8 +185,10 @@ async def execute(
                 "detail": info.detail,
             }
             if service == "mcp":
+                stamp_budget_s = max(0.0, health_deadline - time.monotonic())
                 stamp_fields, stamp_reason = await asyncio.to_thread(
-                    read_mcp_container_deploy_identity
+                    read_mcp_container_deploy_identity,
+                    budget_s=stamp_budget_s,
                 )
                 if stamp_fields:
                     result.update(stamp_fields)

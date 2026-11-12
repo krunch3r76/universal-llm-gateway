@@ -56,7 +56,7 @@ def _read_container_started_at(
     """Read docker State.StartedAt; return (parsed, reason) when unknown."""
     timeout = _remaining_budget(deadline, cap=_DOCKER_TIMEOUT_S)
     if timeout <= 0:
-        return None, "stamp_exec:TimeoutExpired"
+        return None, "stamp_budget_exhausted"
     try:
         proc = subprocess.run(
             [
@@ -95,7 +95,7 @@ def read_mcp_container_deploy_identity(
     deadline = time.monotonic() + budget_s
     timeout = _remaining_budget(deadline, cap=_DOCKER_TIMEOUT_S)
     if timeout <= 0:
-        return {}, "stamp_exec:TimeoutExpired"
+        return {}, "stamp_budget_exhausted"
     try:
         proc = subprocess.run(
             ["docker", "exec", container, "cat", stamp_path],

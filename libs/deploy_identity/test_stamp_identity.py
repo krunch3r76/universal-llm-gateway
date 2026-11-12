@@ -188,5 +188,5 @@ def test_read_mcp_shared_budget_omits_inspect_when_budget_exhausted(
     with patch("deploy_identity.stamp_identity.subprocess.run", side_effect=_run):
         fields, reason = read_mcp_container_deploy_identity(budget_s=1.0)
     assert fields == {}
-    assert reason == "stamp_exec:TimeoutExpired"
+    assert reason == "stamp_budget_exhausted"
     assert len(calls) == 1
