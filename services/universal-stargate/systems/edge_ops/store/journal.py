@@ -32,7 +32,7 @@ from ..model import (
     Redelivery,
     system_clock,
 )
-from ..waiter import QUEUED_CHANNEL, TRANSITION_CHANNEL
+from ..waiter import QUEUED_CHANNEL, TRANSITION_CHANNEL, WakeRegistry
 from . import journal_thread
 from . import lease as lease_ops
 from .admission import admit_sync, fetch_sync
@@ -56,11 +56,9 @@ class EdgeOpsJournal:
         path: Path | None = None,
         clock: Clock = system_clock,
         event_bus: EventBusProtocol | None = None,
-        waiter: Any | None = None,
+        waiter: WakeRegistry | None = None,
         lease_ttl_s: float = config.LEASE_TTL_SECONDS,
     ) -> None:
-        from ..waiter import WakeRegistry
-
         self._path = path if path is not None else config.journal_path()
         self._clock = clock
         self._event_bus = event_bus
@@ -73,7 +71,7 @@ class EdgeOpsJournal:
         return self._path
 
     @property
-    def waiter(self):
+    def waiter(self) -> WakeRegistry:
         return self._waiter
 
     @property

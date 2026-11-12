@@ -97,6 +97,8 @@ _INDEX_DDL = (
     "ON edge_ops(state, admitted_at_epoch);",
     "CREATE INDEX IF NOT EXISTS idx_edge_op_transitions_op "
     "ON edge_op_transitions(op_id, at_epoch);",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_edge_op_directives_op_type "
+    "ON edge_op_directives(op_id, type);",
 )
 
 _ALL_DDL = (

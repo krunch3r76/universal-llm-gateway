@@ -1,4 +1,9 @@
-"""Reads against ``edge_op_directives``."""
+"""Reads and writes against ``edge_op_directives``.
+
+At most one row per ``(op_id, type)`` is enforced by
+``idx_edge_op_directives_op_type`` so concurrent folds cannot insert duplicate
+``cancel`` directives.
+"""
 
 from __future__ import annotations
 
@@ -37,21 +42,16 @@ def write_cancel_directive_sync(
     now: float,
 ) -> bool:
     """Write one ``cancel`` directive when none exists yet. True when inserted."""
-    existing = connection.execute(
-        "SELECT 1 FROM edge_op_directives WHERE op_id = ? AND type = 'cancel' LIMIT 1",
-        (op_id,),
-    ).fetchone()
-    if existing is not None:
-        return False
     row = connection.execute(
         "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM edge_op_directives "
         "WHERE op_id = ?",
         (op_id,),
     ).fetchone()
     seq = int(row["next_seq"])
-    connection.execute(
-        "INSERT INTO edge_op_directives (op_id, seq, type, payload_json, at_epoch) "
+    cursor = connection.execute(
+        "INSERT OR IGNORE INTO edge_op_directives "
+        "(op_id, seq, type, payload_json, at_epoch) "
         "VALUES (?, ?, 'cancel', '{}', ?)",
         (op_id, seq, now),
     )
-    return True
+    return cursor.rowcount > 0

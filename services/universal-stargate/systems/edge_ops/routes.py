@@ -9,6 +9,9 @@ Each handler is a wrapper: validate, call one service function, render. The
 error envelope is the canonical ``{"error": {code, message}}`` for
 ``/api/v1/*`` — never ``HTTPException(detail=...)``. Every route refuses with
 ``edge_ops_disabled`` while ``EDGE_OPS_ENABLED`` is off, which is the default.
+
+Lease-bound POST bodies carry ``lease_id`` in JSON; ``GET …/directives`` takes
+``lease_id`` as a query parameter (see ``wire.py``).
 """
 
 from __future__ import annotations
@@ -236,7 +239,8 @@ async def get_op_directives(
     """Long-poll for server-to-edge directives. 204 when none arrive.
 
     This is the only path from Stargate to the edge, and the edge opens it.
-    A1 ships no directive producer, so the hold elapses and answers 204.
+    Fold-on-touch may enqueue a ``cancel`` directive for a started op past its
+    deadline; the edge consumes those on this long-poll (A2 wires the client).
     Only the op's lease holder may attach: another configured edge is refused
     with 409, the same answer an unknown op id gets.
     """

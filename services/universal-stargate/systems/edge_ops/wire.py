@@ -4,6 +4,10 @@ Kept apart from the route handlers so the HTTP shape reads in one place. The
 field names follow the dispatch design's resource table; ``kinds`` replaces
 that table's ``displays``/``health`` pair because A1 leases by op kind and the
 edge opens no window.
+
+``lease_id`` travels on lease-bound POST bodies (``EventBody``, ``ResultBody``,
+``ReleaseBody``). The directives long-poll is a GET and carries ``lease_id`` as a
+query parameter on the route, not in these models.
 """
 
 from __future__ import annotations

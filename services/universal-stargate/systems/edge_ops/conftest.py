@@ -13,15 +13,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from systems.edge_ops.model import LeaseGrant
 from systems.edge_ops.store import EdgeOpsJournal
-
-
-def lease_key(grant: LeaseGrant | None) -> str:
-    """Return ``lease_id`` from a grant fixture; assert when missing."""
-    assert grant is not None
-    return grant.lease_id
-
 
 LEASE_TTL_SECONDS = 30.0
 

@@ -8,15 +8,14 @@ import uuid
 from typing import Any
 
 from ..model import (
-    CODE_LEASE_STALE,
     CODE_NOT_STARTED,
-    CODE_TERMINAL,
     TERMINAL_STATES,
     EdgeOpRefusedError,
     LeaseGrant,
     Outcome,
 )
 from .lease_events import append_event_sync
+from .lease_row import owned_row_sync, refuse_started_terminal_sync, row_after_sync
 from .schema import record_transition_sync
 
 __all__ = [
@@ -35,7 +34,11 @@ def claim_lease_sync(
     now: float,
     lease_ttl_s: float,
 ) -> LeaseGrant | None:
-    """Claim the oldest queued op whose kind this edge serves, or ``None``."""
+    """Claim the oldest queued op whose kind this edge serves, or ``None``.
+
+    Raises:
+        EdgeOpRefusedError: not used; mismatched rows are skipped with ``None``.
+    """
     if not kinds:
         return None
     placeholders = ", ".join("?" for _ in kinds)
@@ -80,53 +83,6 @@ def claim_lease_sync(
     )
 
 
-def _owned_row_sync(
-    connection: sqlite3.Connection,
-    op_id: str,
-    edge_id: str,
-    lease_id: str,
-) -> sqlite3.Row | None:
-    """Return the op row when *edge_id* holds *lease_id*, else refuse or ``None``."""
-    row = connection.execute(
-        "SELECT state, kind, redelivery, lease_id FROM edge_ops "
-        "WHERE op_id = ? AND leased_by = ?",
-        (op_id, edge_id),
-    ).fetchone()
-    if row is None:
-        return None
-    if row["lease_id"] != lease_id:
-        raise EdgeOpRefusedError(
-            409,
-            CODE_LEASE_STALE,
-            f"Edge op {op_id!r}: lease {lease_id!r} is stale for edge {edge_id!r}.",
-        )
-    return row
-
-
-def _row_after_sync(
-    connection: sqlite3.Connection,
-    op_id: str,
-) -> sqlite3.Row | None:
-    return connection.execute(
-        "SELECT state, kind, redelivery, lease_id, leased_by FROM edge_ops "
-        "WHERE op_id = ?",
-        (op_id,),
-    ).fetchone()
-
-
-def _refuse_started_terminal_sync(
-    connection: sqlite3.Connection,
-    op_id: str,
-    state: str,
-) -> None:
-    raise EdgeOpRefusedError(
-        409,
-        CODE_TERMINAL,
-        f"Edge op {op_id!r} is {state!r}: a terminal op cannot be "
-        "started, and its handler must not run.",
-    )
-
-
 def renew_and_start_sync(
     connection: sqlite3.Connection,
     *,
@@ -145,15 +101,20 @@ def renew_and_start_sync(
     names the terminal outcome so the edge learns the op closed without
     treating a 2xx as permission to run. Only ``started`` on a terminal op is
     refused (``edge_op_terminal``).
+
+    Raises:
+        EdgeOpRefusedError: ``edge_lease_stale`` when *lease_id* does not match,
+            or ``edge_op_terminal`` when *event_type* is ``started`` on a
+            terminal op.
     """
-    row = _owned_row_sync(connection, op_id, edge_id, lease_id)
+    row = owned_row_sync(connection, op_id, edge_id, lease_id)
     if row is None:
         return None
     state = row["state"]
     kind = row["kind"]
     if state in TERMINAL_STATES:
         if event_type == started_event_type:
-            _refuse_started_terminal_sync(connection, op_id, state)
+            refuse_started_terminal_sync(connection, op_id, state)
         seq = append_event_sync(connection, op_id, event_type, payload, now)
         connection.commit()
         return state, seq, kind
@@ -166,9 +127,9 @@ def renew_and_start_sync(
             (now, now + lease_ttl_s, now, op_id, lease_id),
         ).rowcount
         if not updated:
-            fresh = _row_after_sync(connection, op_id)
+            fresh = row_after_sync(connection, op_id)
             if fresh is not None and fresh["state"] in TERMINAL_STATES:
-                _refuse_started_terminal_sync(connection, op_id, fresh["state"])
+                refuse_started_terminal_sync(connection, op_id, fresh["state"])
             return None
         state = "started"
         record_transition_sync(
@@ -187,13 +148,11 @@ def renew_and_start_sync(
             (now + lease_ttl_s, now, op_id, lease_id, *allowed),
         ).rowcount
         if not updated:
-            fresh = _row_after_sync(connection, op_id)
-            if (
-                fresh is not None
-                and event_type == started_event_type
-                and fresh["state"] in TERMINAL_STATES
-            ):
-                _refuse_started_terminal_sync(connection, op_id, fresh["state"])
+            fresh = row_after_sync(connection, op_id)
+            if fresh is not None and fresh["state"] in TERMINAL_STATES:
+                if event_type == started_event_type:
+                    refuse_started_terminal_sync(connection, op_id, fresh["state"])
+                return fresh["state"], 0, fresh["kind"]
             return None
 
     seq = append_event_sync(connection, op_id, event_type, payload, now)
@@ -211,8 +170,13 @@ def finish_sync(
     result: Any,
     now: float,
 ) -> tuple[str, str] | None:
-    """Store the handler result verbatim and set the terminal state."""
-    row = _owned_row_sync(connection, op_id, edge_id, lease_id)
+    """Store the handler result verbatim and set the terminal state.
+
+    Raises:
+        EdgeOpRefusedError: ``edge_lease_stale`` or ``edge_not_started`` when
+            the op is not in a finishable state for this lease holder.
+    """
+    row = owned_row_sync(connection, op_id, edge_id, lease_id)
     if row is None:
         return None
     state = row["state"]
@@ -232,7 +196,7 @@ def finish_sync(
         (outcome, json.dumps(result), now, op_id, lease_id, state),
     ).rowcount
     if not updated:
-        fresh = _row_after_sync(connection, op_id)
+        fresh = row_after_sync(connection, op_id)
         if fresh is not None and fresh["state"] in TERMINAL_STATES:
             return fresh["state"], fresh["kind"]
         return None
@@ -255,8 +219,12 @@ def release_sync(
     lease_id: str,
     now: float,
 ) -> tuple[str, str] | None:
-    """Hand a leased op back to the queue, or mark a started one ``unknown``."""
-    row = _owned_row_sync(connection, op_id, edge_id, lease_id)
+    """Hand a leased op back to the queue, or mark a started one ``unknown``.
+
+    Raises:
+        EdgeOpRefusedError: ``edge_lease_stale`` when *lease_id* does not match.
+    """
+    row = owned_row_sync(connection, op_id, edge_id, lease_id)
     if row is None:
         return None
     state = row["state"]
@@ -279,7 +247,7 @@ def release_sync(
         ).rowcount
         new_state = "queued" if updated else state
     if not updated:
-        fresh = _row_after_sync(connection, op_id)
+        fresh = row_after_sync(connection, op_id)
         if fresh is not None and fresh["state"] in TERMINAL_STATES:
             return fresh["state"], fresh["kind"]
         return None
