@@ -60,8 +60,11 @@ def gc2_service_environment(*, home: Path | None = None) -> dict[str, str]:
     config = home / ".config" / "io-agent-gc2"
     bin_dir = config / "bin"
     path = os.pathsep.join([str(bin_dir), "/usr/local/bin", "/usr/bin", "/bin"])
+    udd = home / ".gateway" / "grok-io-gc2"
     return {
         "DISPLAY": ":10",
+        "GROK_AGENT_DATA_DIR": str(udd),
+        "XDG_CONFIG_HOME": str(udd / ".config"),
         "XDG_CONFIG_DIRS": f"{config}:/etc/xdg",
         "PATH": path,
         "BROWSER": str(bin_dir / "gc2-open-url.sh"),

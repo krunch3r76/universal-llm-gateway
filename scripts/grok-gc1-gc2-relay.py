@@ -25,71 +25,25 @@ from cursor_bridge.electron_chat_relay import (
     run_one_to_one_relay,
 )
 from cursor_bridge.grok_window_bindings import promote, status, write_routing
-from io_agent_gc2_browser import (
-    format_systemd_environment_block,
-    gc2_service_environment,
-    provision_gc2_browser_config,
-)
+from grokbot_box_mcp.provision import provision_box_mcp_artifacts
+from grokbot_box_mcp.window_units import load_window_profile
+from io_agent_grok_window import provision_browser_for_profile, systemd_grok_bundle
 
 _SYSTEMD_USER_DIR = Path.home() / ".config/systemd/user"
-_GC2_DATA_DIR = Path.home() / ".gateway/grok-io-gc2"
-
-_XVFB_10_UNIT = """[Unit]
-Description=Agent Xvfb :10 (Grok gc2) 1920x1200
-After=network.target
-
-[Service]
-EnvironmentFile=/home/io/.config/io-agent-display.env
-ExecStart=/usr/bin/Xvfb :10 -screen 0 ${IO_AGENT_GEOMETRY} -ac -nolisten tcp
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target
-"""
-
-_VNC_5910_UNIT = """[Unit]
-Description=x11vnc for agent display :10 (port 5910)
-After=io-agent-xvfb-10.service
-Requires=io-agent-xvfb-10.service
-
-[Service]
-ExecStart=/usr/bin/x11vnc -display :10 -localhost -no6 -rfbport 5910 -nopw -shared -forever -noxdamage -skip_lockkeys -clear_all
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target
-"""
-
-def _grok_gc2_unit_body(*, home: Path) -> str:
-    env_block = format_systemd_environment_block(gc2_service_environment(home=home))
-    return f"""[Unit]
-Description=Grok Bot gc2 agent profile on display :10 (CDP 9340)
-After=io-agent-xvfb-10.service
-Requires=io-agent-xvfb-10.service
-
-[Service]
-{env_block}
-ExecStart="/opt/Grok Bot/grok-bot" --user-data-dir={home}/.gateway/grok-io-gc2 --remote-debugging-port=9340 --window-size=1920,1200 --window-position=0,0
-ExecStartPost={home}/.venvs/universal/bin/python {home}/.config/io-agent-maximize.py :10
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=default.target
-"""
 
 
-def _provision_gc2(*, start: bool) -> dict[str, object]:
+def _provision_gc2(*, start: bool, seed_mcp: bool = True) -> dict[str, object]:
     _SYSTEMD_USER_DIR.mkdir(parents=True, exist_ok=True)
-    _GC2_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    browser = provision_gc2_browser_config()
-    units = {
-        "io-agent-xvfb-10.service": _XVFB_10_UNIT,
-        "io-agent-vnc-5910.service": _VNC_5910_UNIT,
-        "io-agent-grok-gc2.service": _grok_gc2_unit_body(home=Path.home()),
-    }
+    profile = load_window_profile("gc2")
+    profile.user_data_dir.mkdir(parents=True, exist_ok=True)
+    browser = provision_browser_for_profile(profile)
+    units = systemd_grok_bundle("gc2")
+    mcp: dict[str, object] | None = None
+    if seed_mcp:
+        try:
+            mcp = provision_box_mcp_artifacts(profile)
+        except RuntimeError as exc:
+            mcp = {"ok": False, "error": str(exc)}
     written: list[str] = []
     for name, body in units.items():
         path = _SYSTEMD_USER_DIR / name
@@ -103,8 +57,9 @@ def _provision_gc2(*, start: bool) -> dict[str, object]:
             started.append(name)
     return {
         "ok": True,
-        "data_dir": str(_GC2_DATA_DIR),
+        "data_dir": str(profile.user_data_dir),
         "browser_config": browser,
+        "box_mcp": mcp,
         "units_written": written,
         "units_started": started,
     }
@@ -116,6 +71,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     prov = sub.add_parser("provision-gc2", help="Write and optionally start gc2 (:10 / :9340) systemd user units")
     prov.add_argument("--start", action="store_true", help="Enable and start the systemd user units immediately")
+    prov.add_argument(
+        "--no-seed-mcp",
+        action="store_true",
+        help="Skip sand-data MCP launcher/header seed (token or launcher-only failures)",
+    )
 
     rd = sub.add_parser("read", help="Select sidebar agent and read latest settled prose")
     rd.add_argument("--label", default="gc1")
@@ -173,7 +133,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _build_parser().parse_args()
     if args.cmd == "provision-gc2":
-        out = _provision_gc2(start=bool(args.start))
+        out = _provision_gc2(start=bool(args.start), seed_mcp=not args.no_seed_mcp)
         print(json.dumps(out, indent=2))
         return 0
     if args.cmd == "read":
