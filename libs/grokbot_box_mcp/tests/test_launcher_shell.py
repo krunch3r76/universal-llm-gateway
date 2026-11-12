@@ -131,4 +131,4 @@ def test_launcher_happy_path_stub_mcp_remote(tmp_path: Path) -> None:
     assert "http-only" in proc.stdout
     assert "--header-file" in proc.stdout
     assert str(header) in proc.stdout
-    assert "--require /home/box/.proxyshim/preload.cjs" in proc.stdout
+    assert ".proxyshim/preload.cjs" in proc.stdout

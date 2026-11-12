@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from grokbot_box_mcp.provision import provision_box_mcp_artifacts, provision_window_mcp
+from grokbot_box_mcp.provision import provision_box_mcp_artifacts
 from grokbot_box_mcp.window_units import load_window_profile
 from io_agent_grok_window import provision_browser_for_profile, systemd_grok_bundle
 
