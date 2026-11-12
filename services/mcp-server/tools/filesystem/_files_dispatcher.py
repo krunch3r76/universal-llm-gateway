@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from tools.filesystem._expected_read_sha256_boundary import (
+    coerce_expected_read_sha256_at_fs_boundary,
+)
+
 from ._content_store import resolve_sha256_impl
 from ._fs_dispatch import sandbox_op_names
 from ._ops_binary import append_binary_impl, write_binary_impl
@@ -55,6 +59,14 @@ def dispatch_files_op(
     if op == "read":
         if not path:
             raise ValueError("'path' is required for read")
+        bound_expected, exp_err = coerce_expected_read_sha256_at_fs_boundary(
+            op="read",
+            expected=expected_read_sha256,
+            path=path,
+            sandbox="cortex",
+        )
+        if exp_err is not None:
+            return exp_err
         result = read_file_impl(
             path,
             binary=binary,
@@ -64,7 +76,7 @@ def dispatch_files_op(
             sections=sections,
             export=export,
             chunk_cursor=chunk_cursor,
-            expected_read_sha256=expected_read_sha256 or None,
+            expected_read_sha256=bound_expected if bound_expected else None,
         )
         if path.startswith("dropbox/"):
             result["_next"] = DROPBOX_READ_HINT

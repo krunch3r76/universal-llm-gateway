@@ -424,9 +424,9 @@ def register_project_tools(mcp: FastMCP) -> None:
             export=export,
             chunk_cursor=chunk_cursor,
             chunk_cursor_provided=chunk_cursor is not None,
-            expected_read_sha256=expected_read_sha256
-            if not isinstance(expected_read_sha256, dict)
-            else expected_read_sha256.get(rel_path),
+            expected_read_sha256=(
+                expected_read_sha256 if expected_read_sha256 else None
+            ),
         )
         result["path"] = rel_path
         result["uri"] = workspaces_share_uri(src, _PROJECT_ROOT.resolve())

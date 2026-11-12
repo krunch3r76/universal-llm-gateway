@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from tools.filesystem._expected_read_sha256_boundary import (
+    coerce_expected_read_sha256_at_fs_boundary,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -306,7 +310,7 @@ def _param_provided(name: str, value: Any) -> bool:
         if value is None:
             return False
         if isinstance(value, dict):
-            return bool(value)
+            return True
         return bool(str(value).strip())
     if name == "section":
         return bool(str(value).strip())
@@ -450,6 +454,17 @@ def dispatch_workspaces_op(
     if op not in OP_SANDBOXES or "workspaces" not in OP_SANDBOXES[op]:
         return unknown_op_error(op, "workspaces")
 
+    bound_expected = expected_read_sha256
+    if op == "read" and path:
+        bound_expected, exp_err = coerce_expected_read_sha256_at_fs_boundary(
+            op=op,
+            expected=expected_read_sha256,
+            path=path,
+            sandbox="workspaces",
+        )
+        if exp_err is not None:
+            return exp_err
+
     if op == "read":
         fn = overflow_registry.get("read_project_file")
         if fn is None:
@@ -463,7 +478,7 @@ def dispatch_workspaces_op(
             sections=sections,
             export=export,
             chunk_cursor=chunk_cursor,
-            expected_read_sha256=expected_read_sha256 or None,
+            expected_read_sha256=bound_expected,
         )
 
     if op == "read_multi":

@@ -21,9 +21,6 @@ from tools.filesystem._batch_ingress import (
     resolve_copy_target_ingress,
 )
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
-from tools.filesystem._expected_read_sha256_boundary import (
-    coerce_expected_read_sha256_for_md,
-)
 from tools.filesystem._fs_dispatch import (
     SEARCH_MODES,
     dispatch_workspaces_op,
@@ -233,17 +230,6 @@ def fs_impl(
     if contract_error is not None:
         return contract_error
 
-    md_expected_read_sha256 = expected_read_sha256
-    if op.startswith("md_"):
-        md_expected_read_sha256, md_exp_error = coerce_expected_read_sha256_for_md(
-            op=op,
-            expected=expected_read_sha256,
-            path=effective_path,
-            sandbox=effective_sandbox,
-        )
-        if md_exp_error is not None:
-            return md_exp_error
-
     if op.startswith("md_"):
         md_fn = overflow_registry.get("markdown")
         if md_fn is None:
@@ -283,7 +269,7 @@ def fs_impl(
                     sections=sections,
                     export=export,
                     chunk_cursor=chunk_cursor,
-                    expected_read_sha256=md_expected_read_sha256,
+                    expected_read_sha256=expected_read_sha256,
                 )
             if isinstance(result, dict) and "error" not in result:
                 result.update(ingress_meta)
@@ -310,7 +296,7 @@ def fs_impl(
             sections=sections,
             export=export,
             chunk_cursor=chunk_cursor,
-            expected_read_sha256=md_expected_read_sha256,
+            expected_read_sha256=expected_read_sha256,
         )
         if isinstance(result, dict) and "error" not in result:
             result.update(ingress_meta)
