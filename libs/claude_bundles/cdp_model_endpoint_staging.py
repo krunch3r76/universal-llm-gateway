@@ -110,34 +110,23 @@ def _stamp_owned_ephemeral_notice(
     *,
     contract: str | None = None,
 ) -> None:
-    """Append the libs/pipeline notice onto an ephemeral prompt we already own.
-
-    Prompt-expand restages ``prompt.md`` and the worker then passes that URI
-    through. The stamp has to land on that file or the rewrite drops it.
-    """
-    if not substrate_notice_warrants(purpose=purpose):
-        return
+    """Append substrate notice and review footer onto an owned ephemeral prompt."""
     rel = uri.removeprefix("cortex://").lstrip("/")
     path = cortex_files_root() / rel
     if path.is_dir():
         path = path / "prompt.md"
     if not path.is_file():
         return
-    from claude_bundles.sealed_cdp_prefix import (
-        REVIEW_CLASS_CONTRACTS,
-        ensure_review_delivery_footer,
-    )
+    from claude_bundles.sealed_cdp_prefix import restamp_owned_ephemeral_prompt
 
     text = path.read_text(encoding="utf-8")
-    updated = ensure_substrate_notice(text)
-    contract_key = (contract or "").strip().lower()
-    if contract_key in REVIEW_CLASS_CONTRACTS:
-        updated = ensure_review_delivery_footer(
-            updated,
-            purpose,
-            author_body=text,
-            contract=contract,
-        )
+    updated = restamp_owned_ephemeral_prompt(
+        text,
+        purpose,
+        author_body=text,
+        contract=contract,
+        substrate_notice=substrate_notice_warrants(purpose=purpose),
+    )
     if updated == text:
         return
     durable_write_text(path, updated, retain_store_root=cortex_files_root())
@@ -630,19 +619,14 @@ def stage_cdp_prompt_with_skills(
             raise CdpStagingError(exc.reason, code=exc.code) from exc
         if substrate_notice_warrants(purpose=purpose):
             merged = ensure_substrate_notice(merged)
-        from claude_bundles.sealed_cdp_prefix import (
-            REVIEW_CLASS_CONTRACTS,
-            ensure_review_delivery_footer,
-        )
+        from claude_bundles.sealed_cdp_prefix import merge_review_class_staging_footer
 
-        contract_key = (contract or "").strip().lower()
-        if contract_key in REVIEW_CLASS_CONTRACTS:
-            merged = ensure_review_delivery_footer(
-                merged,
-                purpose,
-                author_body=author_for_gate,
-                contract=contract,
-            )
+        merged = merge_review_class_staging_footer(
+            merged,
+            purpose=purpose,
+            author_body=author_for_gate,
+            contract=contract,
+        )
     except KeyError as exc:
         raise CdpStagingError(
             f"unknown skill in skills=: {exc.args[0] if exc.args else exc}",

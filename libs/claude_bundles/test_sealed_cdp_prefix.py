@@ -131,6 +131,24 @@ def test_delivery_footer_skips_skeptic_shaped_body() -> None:
     )
 
 
+def test_restamp_ephemeral_footer_when_substrate_notice_unwarranted() -> None:
+    from claude_bundles.sealed_cdp_prefix import (
+        REVIEW_DELIVERY_FOOTER,
+        restamp_owned_ephemeral_prompt,
+    )
+
+    base = "x" * 520 + "\n# review body\n"
+    out = restamp_owned_ephemeral_prompt(
+        base,
+        "confer",
+        author_body=base,
+        contract="code-review",
+        substrate_notice=False,
+    )
+    assert REVIEW_DELIVERY_FOOTER.strip() in out
+    assert out.rstrip().endswith(REVIEW_DELIVERY_FOOTER.strip())
+
+
 def test_delivery_footer_absent_on_non_review_contract() -> None:
     from claude_bundles.sealed_cdp_prefix import ensure_review_delivery_footer
 

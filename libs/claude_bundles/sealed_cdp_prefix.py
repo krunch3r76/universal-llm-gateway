@@ -289,3 +289,44 @@ def ensure_review_reading_charter(
     if end == -1:
         return f"{text}\n{REVIEW_READING_CHARTER}"
     return f"{text[: end + 1]}{REVIEW_READING_CHARTER}{text[end + 1 :]}"
+
+
+def merge_review_class_staging_footer(
+    merged: str,
+    *,
+    purpose: str | None,
+    author_body: str | None,
+    contract: str | None,
+) -> str:
+    """Append review delivery footer when ``contract`` is review-class."""
+    contract_key = (contract or "").strip().lower()
+    if contract_key not in REVIEW_CLASS_CONTRACTS:
+        return merged
+    return ensure_review_delivery_footer(
+        merged,
+        purpose,
+        author_body=author_body,
+        contract=contract,
+    )
+
+
+def restamp_owned_ephemeral_prompt(
+    text: str,
+    purpose: str | None,
+    *,
+    author_body: str | None,
+    contract: str | None,
+    substrate_notice: bool,
+) -> str:
+    """Re-apply substrate notice and review footer on an owned ephemeral prompt."""
+    updated = text
+    if substrate_notice:
+        from consult_substrate_notice import ensure_substrate_notice
+
+        updated = ensure_substrate_notice(updated)
+    return merge_review_class_staging_footer(
+        updated,
+        purpose=purpose,
+        author_body=author_body,
+        contract=contract,
+    )
