@@ -278,6 +278,186 @@ def _normalize_refresh_text(text: str) -> str:
     return text
 
 
+def _gateway_fixture_doc(prior_commit: str | None) -> str:
+    stamp = (
+        "<!-- GENERATED:START generated=2020-01-01 method=targeted-refresh "
+        f"inventory_sha=abc source_commit={prior_commit or '000000000000'} "
+        "refreshed_by=fixture packages=1/1 modules=1/1 -->"
+        if prior_commit
+        else "<!-- GENERATED:START generated=2020-01-01 method=targeted-refresh "
+        "inventory_sha=abc refreshed_by=fixture packages=1/1 modules=1/1 -->"
+    )
+    return "\n".join(
+        [
+            "# Gateway fixture",
+            "",
+            stamp,
+            "",
+            "> disclaimer",
+            "",
+            "## 1. Section one",
+            "",
+            "Authored prose for sections 1-10.",
+            "",
+            "## 11. Per-package module inventory",
+            "",
+            "Generated §11 placeholder.",
+            "",
+            "<!-- GENERATED:END -->",
+            "",
+            "---",
+            "",
+            "### missing_coverage",
+            "",
+            "Stale missing_coverage body.",
+            "",
+            "### unsupported_claims",
+            "",
+            "tail",
+        ]
+    )
+
+
+def _normalize_gateway_output(text: str) -> str:
+    text = re.sub(r"generated=\d{4}-\d{2}-\d{2}", "generated=DATE", text)
+    text = re.sub(r"source_commit=[0-9a-f]{7,40}", "source_commit=COMMIT", text)
+    text = re.sub(
+        r"inventory_sha=[0-9a-f]{12}",
+        "inventory_sha=SHA",
+        text,
+    )
+    return text
+
+
+def _carried_from_value(text: str) -> str:
+    m = re.search(
+        r"<!-- AUTHORED carried_from=([^\s>]+) -->",
+        text,
+    )
+    assert m is not None
+    return m.group(1)
+
+
+def test_refresh_gateway_twice_idempotent_carried_from_and_markers(
+    hermetic_workspace: Path,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    prior = "0d45bbef52c8"
+    gw_dir = hermetic_workspace / "services/_universal-llm-gateway"
+    gw_dir.mkdir(parents=True)
+    (gw_dir / "mod.py").write_text('"""Gateway module."""\n', encoding="utf-8")
+    docs = hermetic_workspace / "docs/architecture"
+    docs.mkdir(parents=True)
+    doc_path = docs / "gateway.md"
+    doc_path.write_text(_gateway_fixture_doc(prior), encoding="utf-8")
+
+    run1 = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    doc_path.write_text(run1, encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "docs/architecture/gateway.md"],
+        cwd=hermetic_workspace,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "refresh gateway once"],
+        cwd=hermetic_workspace,
+        check=True,
+        capture_output=True,
+    )
+
+    run2 = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    doc_path.write_text(run2, encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "docs/architecture/gateway.md"],
+        cwd=hermetic_workspace,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "refresh gateway twice"],
+        cwd=hermetic_workspace,
+        check=True,
+        capture_output=True,
+    )
+
+    run3 = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+
+    assert _normalize_gateway_output(run1) == _normalize_gateway_output(run2)
+    assert _normalize_gateway_output(run2) == _normalize_gateway_output(run3)
+    assert _carried_from_value(run1) == prior
+    assert _carried_from_value(run2) == prior
+    assert _carried_from_value(run3) == prior
+    assert run3.count("<!-- AUTHORED carried_from=") == 1
+    assert run3.count("<!-- /AUTHORED carried_from=") == 1
+
+
+def test_refresh_gateway_no_prior_stamp_carried_from_unknown(
+    hermetic_workspace: Path,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    gw_dir = hermetic_workspace / "services/_universal-llm-gateway"
+    gw_dir.mkdir(parents=True)
+    (gw_dir / "mod.py").write_text('"""Gateway module."""\n', encoding="utf-8")
+    docs = hermetic_workspace / "docs/architecture"
+    docs.mkdir(parents=True)
+    doc_path = docs / "gateway.md"
+    doc_path.write_text(_gateway_fixture_doc(prior_commit=None), encoding="utf-8")
+    text = refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+    assert _carried_from_value(text) == "unknown"
+
+
+def test_refresh_gateway_unmatched_authored_open_raises(
+    hermetic_workspace: Path,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    gw_dir = hermetic_workspace / "services/_universal-llm-gateway"
+    gw_dir.mkdir(parents=True)
+    (gw_dir / "mod.py").write_text('"""m"""\n', encoding="utf-8")
+    body = _gateway_fixture_doc("aaaaaaaabbbb")
+    body = body.replace(
+        "## 1. Section one",
+        "<!-- AUTHORED carried_from=aaaaaaaabbbb -->\n## 1. Section one",
+    )
+    docs = hermetic_workspace / "docs/architecture"
+    docs.mkdir(parents=True)
+    (docs / "gateway.md").write_text(body, encoding="utf-8")
+    with pytest.raises(TargetedRefreshError, match="carried_from"):
+        refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+
+
+@pytest.mark.parametrize(
+    "body_mutator,match",
+    [
+        (lambda b: b.replace("<!-- GENERATED:END -->", ""), "GENERATED:END"),
+        (
+            lambda b: b.replace(
+                "<!-- GENERATED:END -->",
+                "<!-- GENERATED:END -->\n<!-- GENERATED:END -->",
+            ),
+            "multiple",
+        ),
+    ],
+)
+def test_refresh_gateway_generated_end_marker_raises(
+    hermetic_workspace: Path,
+    body_mutator,
+    match: str,
+) -> None:
+    _init_git_repo(hermetic_workspace)
+    gw_dir = hermetic_workspace / "services/_universal-llm-gateway"
+    gw_dir.mkdir(parents=True)
+    (gw_dir / "mod.py").write_text('"""m"""\n', encoding="utf-8")
+    docs = hermetic_workspace / "docs/architecture"
+    docs.mkdir(parents=True)
+    (docs / "gateway.md").write_text(
+        body_mutator(_gateway_fixture_doc("cccccccccccc")),
+        encoding="utf-8",
+    )
+    with pytest.raises(TargetedRefreshError, match=match):
+        refresh_gateway(hermetic_workspace, refreshed_by=_REFRESHED_BY)
+
+
 def test_refresh_twice_is_idempotent_ignoring_date(hermetic_workspace: Path) -> None:
     _init_git_repo(hermetic_workspace)
     routing_root = hermetic_workspace / "services/universal-stargate/systems/routing"

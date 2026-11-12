@@ -31,6 +31,8 @@ _MARKER_GATEWAY_SECTION_11 = re.compile(r"\n## 11\. ")
 _MARKER_ROUTING_KEY_FUNCTIONS = "## Key Functions"
 _MARKER_ROUTING_MODULE_INVENTORY = "## Module Inventory"
 _MARKER_GENERATED_END = "<!-- GENERATED:END -->"
+_CARRIED_FROM_OPEN = re.compile(r"<!-- AUTHORED carried_from=([^\s>]+) -->")
+_CARRIED_FROM_CLOSE = re.compile(r"<!-- /AUTHORED carried_from=([^\s>]+) -->")
 
 
 class TargetedRefreshError(ValueError):
@@ -172,11 +174,44 @@ def _narrative_through_section_10(existing: str) -> str:
     return existing[m_start.start() + 1 : m_end.start()].strip()
 
 
+def _gateway_narrative_and_carried_from(existing: str) -> tuple[str, str]:
+    opens = list(_CARRIED_FROM_OPEN.finditer(existing))
+    closes = list(_CARRIED_FROM_CLOSE.finditer(existing))
+    if not opens and not closes:
+        return (
+            _narrative_through_section_10(existing),
+            _prior_source_commit(existing) or "unknown",
+        )
+    if len(opens) != 1 or len(closes) != 1:
+        raise TargetedRefreshError(
+            "gateway.md must have zero or exactly one AUTHORED carried_from block"
+        )
+    open_m, close_m = opens[0], closes[0]
+    carried = open_m.group(1)
+    if close_m.group(1) != carried:
+        raise TargetedRefreshError(
+            "gateway.md AUTHORED carried_from open/close markers mismatch"
+        )
+    if close_m.start() <= open_m.end():
+        raise TargetedRefreshError(
+            "gateway.md AUTHORED carried_from close precedes open"
+        )
+    narrative = existing[open_m.end() : close_m.start()].strip()
+    return narrative, carried
+
+
 def _gateway_tail_after_generated_end(existing: str) -> str:
-    parts = existing.rsplit(_MARKER_GENERATED_END, 1)
-    if len(parts) < 2:
-        return "\n\n---\n\n## Coverage Notes\n"
-    return parts[1]
+    count = existing.count(_MARKER_GENERATED_END)
+    if count == 0:
+        raise TargetedRefreshError(
+            "gateway.md missing required <!-- GENERATED:END --> marker"
+        )
+    if count > 1:
+        raise TargetedRefreshError(
+            "gateway.md has multiple <!-- GENERATED:END --> markers"
+        )
+    _prefix, tail = existing.split(_MARKER_GENERATED_END, 1)
+    return tail
 
 
 def refresh_gateway(workspace: Path, refreshed_by: str) -> str:
@@ -185,8 +220,7 @@ def refresh_gateway(workspace: Path, refreshed_by: str) -> str:
     existing = doc_path.read_text(encoding="utf-8")
     py_files = _gateway_py_files(gateway_dir)
 
-    narrative = _narrative_through_section_10(existing)
-    carried_from = _prior_source_commit(existing) or _git_head(workspace)
+    narrative, carried_from = _gateway_narrative_and_carried_from(existing)
     narrative_wrapped = (
         f"<!-- AUTHORED carried_from={carried_from} -->\n"
         f"{narrative.strip()}\n"
@@ -212,7 +246,7 @@ def refresh_gateway(workspace: Path, refreshed_by: str) -> str:
         "Claims reflect declarations, not verified runtime behavior."
     )
     tail = _gateway_tail_after_generated_end(existing)
-    tail = re.sub(
+    tail, subs = re.subn(
         r"### missing_coverage\n\n.*?(?=### |\Z)",
         (
             "### missing_coverage\n\n"
@@ -223,6 +257,10 @@ def refresh_gateway(workspace: Path, refreshed_by: str) -> str:
         count=1,
         flags=re.DOTALL,
     )
+    if subs == 0:
+        raise TargetedRefreshError(
+            "gateway.md tail missing ### missing_coverage section"
+        )
 
     body = "\n".join(
         [
@@ -348,41 +386,35 @@ def _replace_routing_module_inventory(pre_key: str, inventory_block: str) -> str
     return pattern.sub(inventory_block.rstrip(), pre_key, count=1)
 
 
-def _routing_authored_synthesis(existing: str, mod_n: int) -> str:
+def _routing_authored_synthesis(
+    existing: str, mod_n: int, inventory_rows: int
+) -> str:
     post_match = re.search(
         r"(<!-- AUTHORED -->.*?<!-- GENERATED:END -->)\s*\Z",
         existing,
         re.DOTALL,
     )
-    if post_match:
-        block = post_match.group(1)
-        block = re.sub(
-            r"full module inventory \(\d+/\d+\)",
-            f"full module inventory ({mod_n}/{mod_n})",
-            block,
+    if not post_match:
+        raise TargetedRefreshError(
+            "routing.md missing AUTHORED synthesis block before GENERATED:END"
         )
-        block = re.sub(
-            r"Module Inventory \(\d+/\d+\)",
-            f"Module Inventory ({mod_n}/{mod_n})",
-            block,
-        )
-        block = re.sub(
-            r"grounded in staged modules only",
-            f"grounded in the full {mod_n}/{mod_n} module tree",
-            block,
-        )
-        return block
-    return (
-        "<!-- AUTHORED -->\n"
-        f"## Synthesis: eviction confirmation path (full routing tree)\n\n"
-        "See **Key Functions** and **Module Inventory** for the full routing tree; "
-        "this synthesis summarizes the typed eviction confirmation path declared in "
-        "`eviction/executor.py` and `eviction/event_waiter.py`.\n"
-        f"End-to-end flow beyond this synthesis also involves capacity admission and "
-        f"selection — summarized in **Module Inventory ({mod_n}/{mod_n})** with module "
-        "docstrings as authority.\n"
-        "<!-- GENERATED:END -->"
+    block = post_match.group(1)
+    block = re.sub(
+        r"full module inventory \(\d+/\d+\)",
+        f"full module inventory ({inventory_rows}/{mod_n})",
+        block,
     )
+    block = re.sub(
+        r"Module Inventory \(\d+/\d+\)",
+        f"Module Inventory ({inventory_rows}/{mod_n})",
+        block,
+    )
+    block = re.sub(
+        r"grounded in staged modules only",
+        f"grounded in the full {inventory_rows}/{mod_n} module tree",
+        block,
+    )
+    return block
 
 
 def refresh_routing(workspace: Path, refreshed_by: str) -> str:
@@ -480,7 +512,7 @@ def refresh_routing(workspace: Path, refreshed_by: str) -> str:
         *_render_function_inventory(inv),
     ]
 
-    authored_synthesis = _routing_authored_synthesis(existing, mod_n)
+    authored_synthesis = _routing_authored_synthesis(existing, mod_n, inventory_rows)
 
     body = (
         pre_key.rstrip()
@@ -497,6 +529,7 @@ def refresh_routing(workspace: Path, refreshed_by: str) -> str:
 
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    prior_mode = path.stat().st_mode if path.exists() else None
     fd, tmp_name = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
     )
@@ -505,6 +538,8 @@ def _atomic_write_text(path: Path, text: str) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
         os.replace(tmp_path, path)
+        if prior_mode is not None:
+            os.chmod(path, prior_mode)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
