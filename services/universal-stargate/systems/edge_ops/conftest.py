@@ -78,6 +78,15 @@ async def journal(
     yield store
 
 
-async def seen_edge(store: EdgeOpsJournal, edge_id: str = "edge-a") -> None:
-    """Make an edge present so ``admit`` does not fail fast."""
-    await store.record_poll(edge_id=edge_id, kinds=("ping",))
+async def seen_edge(
+    store: EdgeOpsJournal,
+    edge_id: str = "edge-a",
+    kinds: tuple[str, ...] = ("ping",),
+) -> None:
+    """Make an edge present so ``admit`` does not fail fast.
+
+    ``kinds`` has to name the kind about to be admitted: presence is per kind,
+    so an edge polling for ``ping`` does not make a ``fixture-never`` op
+    admissible.
+    """
+    await store.record_poll(edge_id=edge_id, kinds=kinds)

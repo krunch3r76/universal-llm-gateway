@@ -14,7 +14,7 @@ from systems.edge_ops.model import (
 )
 from systems.edge_ops.store import EdgeOpsJournal
 
-from .conftest import ManualClock, seen_edge
+from .conftest import NEVER_KIND, ManualClock, seen_edge
 
 
 @pytest.mark.asyncio
@@ -45,6 +45,33 @@ async def test_admit_fails_fast_when_the_last_poll_is_stale(
             journal, kind="ping", op="ping", args={}, idempotency_key="k1"
         )
     assert refusal.value.code == CODE_EDGE_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_admit_fails_fast_when_no_present_edge_serves_the_kind(
+    journal: EdgeOpsJournal,
+) -> None:
+    """Presence is per kind: a ping-only edge does not make another kind admit.
+
+    Before this, ``admit`` asked only whether *some* edge had polled, so once
+    the kinds are split across sibling edges an op nobody serves would sit
+    queued until its deadline instead of failing fast.
+    """
+    await seen_edge(journal, kinds=("ping",))
+    with pytest.raises(EdgeOpRefusedError) as refusal:
+        await admission.admit(
+            journal, kind=NEVER_KIND, op=NEVER_KIND, args={}, idempotency_key="k1"
+        )
+    assert refusal.value.code == CODE_EDGE_UNAVAILABLE
+    assert NEVER_KIND in refusal.value.message
+
+    await seen_edge(journal, edge_id="edge-b", kinds=(NEVER_KIND,))
+    op_id = await admission.admit(
+        journal, kind=NEVER_KIND, op=NEVER_KIND, args={}, idempotency_key="k1"
+    )
+    record = await journal.get(op_id)
+    assert record is not None
+    assert record.state == "queued"
 
 
 @pytest.mark.asyncio

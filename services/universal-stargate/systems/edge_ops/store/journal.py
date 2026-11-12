@@ -167,10 +167,10 @@ class EdgeOpsJournal:
             await self._waiter.notify(QUEUED_CHANNEL)
         return record, created
 
-    async def edge_seen_recently(self) -> bool:
-        """True when some edge polled inside the presence window."""
+    async def edge_seen_recently(self, *, kind: str) -> bool:
+        """True when an edge serving *kind* polled inside the presence window."""
         since = self.now() - config.edge_presence_window_seconds()
-        return await self._in_store(lease_ops.edge_seen_since_sync, since)
+        return await self._in_store(lease_ops.edge_seen_since_sync, since, kind=kind)
 
     async def record_poll(self, *, edge_id: str, kinds: tuple[str, ...]) -> None:
         """Stamp this edge's presence for the ``edge_unavailable`` check."""
@@ -217,7 +217,12 @@ class EdgeOpsJournal:
         event_type: str,
         payload: dict[str, Any],
     ) -> tuple[str, int] | None:
-        """Append an edge event, renewing the lease. ``None`` on a lease mismatch."""
+        """Append an edge event, renewing the lease. ``None`` on a lease mismatch.
+
+        Raises:
+            EdgeOpRefusedError: 409 ``edge_op_terminal`` when a ``started``
+                event arrives for an op that is already in a terminal state.
+        """
         outcome = await self._in_store(
             lease_ops.renew_and_start_sync,
             op_id=op_id,
@@ -296,27 +301,47 @@ class EdgeOpsJournal:
         )
 
     async def _in_store(self, operation: Any, *args: Any, **kwargs: Any) -> Any:
-        """Run *operation* on a worker thread with due transitions folded first."""
-        folded, result = await asyncio.to_thread(
-            self._fold_then, operation, args, kwargs
-        )
+        """Run *operation* on a worker thread with due transitions folded first.
+
+        The folds publish from a ``finally`` because a store operation may
+        refuse: a ``started`` ack arriving after its op folded ``expired``
+        answers 409, and that fold still owes its lifecycle event and its
+        transition wake-up. A caller parked in ``await_result`` is waiting on
+        exactly that notify, so dropping it would leave the caller holding its
+        whole budget open while the authority had already said ``expired``.
+        """
+        folded: list[tuple[str, str, str, str]] = []
+        try:
+            return await asyncio.to_thread(
+                self._fold_then, operation, args, kwargs, folded
+            )
+        finally:
+            await self._publish_folds(folded)
+
+    async def _publish_folds(self, folded: list[tuple[str, str, str, str]]) -> None:
+        """Emit one lifecycle event per folded row and wake the long-polls."""
+        if not folded:
+            return
         for op_id, kind, state, reason in folded:
             factory = _FOLD_EVENT_FACTORIES.get(state)
             if factory is not None:
                 self._emit(factory(op_id=op_id, kind=kind, reason=reason))
-        if folded:
-            await self._waiter.notify(TRANSITION_CHANNEL)
-            if any(state == "queued" for _, _, state, _ in folded):
-                await self._waiter.notify(QUEUED_CHANNEL)
-        return result
+        await self._waiter.notify(TRANSITION_CHANNEL)
+        if any(state == "queued" for _, _, state, _ in folded):
+            await self._waiter.notify(QUEUED_CHANNEL)
 
     def _fold_then(
         self,
         operation: Any,
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
-    ) -> tuple[list[tuple[str, str, str, str]], Any]:
-        """Fold due transitions, then run *operation*, on one connection.
+        folded: list[tuple[str, str, str, str]],
+    ) -> Any:
+        """Fold due transitions into *folded*, then run *operation*.
+
+        The fold list is an out-parameter rather than a second return value so
+        that the caller still holds it when *operation* raises: the fold is
+        committed by then, and its events are owed either way.
 
         The schema is ensured once per instance rather than assumed, because a
         journal can be reached by a request before any boot sequence called
@@ -327,8 +352,8 @@ class EdgeOpsJournal:
             if not self._schema_ready:
                 ensure_schema_sync(connection)
                 self._schema_ready = True
-            folded = fold_due_sync(connection, self._clock())
-            return folded, operation(connection, *args, **kwargs)
+            folded.extend(fold_due_sync(connection, self._clock()))
+            return operation(connection, *args, **kwargs)
 
     def _emit(self, event: Event) -> None:
         """Fire-and-forget publish. Events are advisory, so failures only log."""

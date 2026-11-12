@@ -13,12 +13,14 @@ from systems.edge_ops.auth import require_internal_caller
 from systems.edge_ops.model import (
     CODE_DISABLED,
     CODE_IDENTITY_REFUSED,
+    CODE_LEASE_MISMATCH,
     CODE_NOT_STARTED,
+    CODE_TERMINAL,
 )
 from systems.edge_ops.routes import router
 from systems.edge_ops.store import EdgeOpsJournal
 
-from .conftest import NEVER_KIND
+from .conftest import LEASE_TTL_SECONDS, NEVER_KIND, ManualClock
 
 EDGE_ID = "edge-a"
 EDGE_TOKEN = "test-edge-token"
@@ -165,17 +167,61 @@ def test_admit_without_a_present_edge_fails_fast(
     assert response.json()["error"]["code"] == "edge_unavailable"
 
 
-def test_directives_answer_204_in_a1(
+def test_directives_answer_204_to_the_lease_holder_in_a1(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(config.ENABLED_ENV_KEY, "true")
+    lease_body = {"kinds": ["ping"], "wait_s": 0}
+    assert (
+        client.post("/edge/leases", json=lease_body, headers=EDGE_HEADERS).status_code
+        == 204
+    )
+    admitted = client.post(
+        "/edge/ops",
+        json={"kind": "ping", "op": "ping", "idempotency_key": "k1"},
+    )
+    assert admitted.status_code == 202
+    op_id = admitted.json()["op_id"]
+    granted = client.post("/edge/leases", json=lease_body, headers=EDGE_HEADERS)
+    assert granted.status_code == 200
+
     response = client.get(
-        "/edge/ops/edgeop-x/directives",
+        f"/edge/ops/{op_id}/directives",
         params={"after": 0, "wait": 0},
         headers=EDGE_HEADERS,
     )
     assert response.status_code == 204
+
+
+def test_directives_refuse_a_configured_edge_that_holds_no_lease(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``edge-b`` authenticates and still may not attach to ``edge-a``'s op."""
+    monkeypatch.setenv(config.ENABLED_ENV_KEY, "true")
+    lease_body = {"kinds": ["ping"], "wait_s": 0}
+    assert (
+        client.post("/edge/leases", json=lease_body, headers=EDGE_HEADERS).status_code
+        == 204
+    )
+    admitted = client.post(
+        "/edge/ops",
+        json={"kind": "ping", "op": "ping", "idempotency_key": "k1"},
+    )
+    op_id = admitted.json()["op_id"]
+    assert (
+        client.post("/edge/leases", json=lease_body, headers=EDGE_HEADERS).status_code
+        == 200
+    )
+
+    response = client.get(
+        f"/edge/ops/{op_id}/directives",
+        params={"after": 0, "wait": 0},
+        headers={"X-Edge-Id": "edge-b", "Authorization": "Bearer other"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == CODE_LEASE_MISMATCH
 
 
 def test_a_never_kind_result_before_started_is_refused_over_http(
@@ -214,3 +260,46 @@ def test_a_never_kind_result_before_started_is_refused_over_http(
     record = client.get(f"/edge/ops/{op_id}")
     assert record.json()["status"] == "leased"
     assert record.json()["result"] is None
+
+
+def test_a_started_ack_on_an_expired_op_is_refused_over_http(
+    client: TestClient,
+    clock: ManualClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The late ack reaches the edge as 409 in the canonical envelope."""
+    monkeypatch.setenv(config.ENABLED_ENV_KEY, "true")
+    lease_body = {"kinds": [NEVER_KIND], "wait_s": 0}
+    assert (
+        client.post("/edge/leases", json=lease_body, headers=EDGE_HEADERS).status_code
+        == 204
+    )
+    admitted = client.post(
+        "/edge/ops",
+        json={
+            "kind": NEVER_KIND,
+            "op": NEVER_KIND,
+            "idempotency_key": "k-never",
+            "deadline_s": 5.0,
+        },
+    )
+    assert admitted.status_code == 202
+    op_id = admitted.json()["op_id"]
+    assert (
+        client.post("/edge/leases", json=lease_body, headers=EDGE_HEADERS).status_code
+        == 200
+    )
+
+    clock.advance(LEASE_TTL_SECONDS + 1.0)
+    refused = client.post(
+        f"/edge/ops/{op_id}/events", json={"type": "started"}, headers=EDGE_HEADERS
+    )
+    assert refused.status_code == 409
+    envelope = refused.json()
+    assert set(envelope) == {"error"}
+    assert set(envelope["error"]) == {"code", "message"}
+    assert envelope["error"]["code"] == CODE_TERMINAL
+
+    record = client.get(f"/edge/ops/{op_id}")
+    assert record.json()["status"] == "expired"
+    assert record.json()["started_at_epoch"] is None

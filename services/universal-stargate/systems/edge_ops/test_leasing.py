@@ -16,6 +16,7 @@ from systems.edge_ops import admission, leasing
 from systems.edge_ops.model import (
     CODE_LEASE_MISMATCH,
     CODE_NOT_STARTED,
+    CODE_TERMINAL,
     EdgeOpRefusedError,
 )
 from systems.edge_ops.store import EdgeOpsJournal
@@ -30,8 +31,8 @@ async def _queued(
     key: str = "k1",
     deadline_s: float = 300.0,
 ) -> str:
-    """Admit one op with an edge already present."""
-    await seen_edge(journal)
+    """Admit one op with an edge already present for its kind."""
+    await seen_edge(journal, kinds=(kind,))
     return await admission.admit(
         journal,
         kind=kind,
@@ -250,7 +251,29 @@ async def test_directives_long_poll_answers_empty_in_a1(
     journal: EdgeOpsJournal,
 ) -> None:
     op_id = await _queued(journal)
-    assert await leasing.directives(journal, op_id=op_id, wait_s=0.0) == []
+    await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
+    pending = await leasing.directives(
+        journal, op_id=op_id, edge_id="edge-a", wait_s=0.0
+    )
+    assert pending == []
+
+
+@pytest.mark.asyncio
+async def test_directives_refuse_everyone_but_the_lease_holder(
+    journal: EdgeOpsJournal,
+) -> None:
+    """Being a configured edge is not enough to attach to an op's stream.
+
+    An unknown op id refuses identically, so the answer says nothing about
+    which ops exist.
+    """
+    op_id = await _queued(journal)
+    await leasing.lease(journal, edge_id="edge-a", kinds=("ping",), wait_s=0.0)
+    for target, edge in ((op_id, "edge-b"), ("edgeop-missing", "edge-a")):
+        with pytest.raises(EdgeOpRefusedError) as refusal:
+            await leasing.directives(journal, op_id=target, edge_id=edge, wait_s=0.0)
+        assert refusal.value.status_code == 409
+        assert refusal.value.code == CODE_LEASE_MISMATCH
 
 
 @pytest.mark.asyncio
@@ -360,3 +383,106 @@ async def test_a_safe_kind_may_result_straight_from_leased(
     record = await journal.get(op_id)
     assert record is not None
     assert record.started_at_epoch is None
+
+
+@pytest.mark.asyncio
+async def test_a_started_ack_on_an_expired_op_is_refused(
+    journal: EdgeOpsJournal,
+    clock: ManualClock,
+) -> None:
+    """The late-ack path: a stalled edge is not told to run after expiry.
+
+    The lease and the short deadline both elapse while the op is leased, so
+    the fold on this very call writes ``expired``. Answering 2xx here is what
+    let a ``never`` handler run after its caller had been told
+    ``edge_op_expired``.
+    """
+    op_id = await _queued(journal, kind=NEVER_KIND, key="k-never", deadline_s=5.0)
+    grant = await leasing.lease(
+        journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0
+    )
+    assert grant is not None
+    clock.advance(LEASE_TTL_SECONDS + 1.0)
+
+    with pytest.raises(EdgeOpRefusedError) as refusal:
+        await leasing.post_event(
+            journal, op_id=op_id, edge_id="edge-a", event_type="started"
+        )
+    assert refusal.value.status_code == 409
+    assert refusal.value.code == CODE_TERMINAL
+    assert "expired" in refusal.value.message
+
+    record = await journal.get(op_id)
+    assert record is not None
+    assert record.state == "expired"
+    assert record.started_at_epoch is None
+    assert record.result is None
+
+
+@pytest.mark.asyncio
+async def test_the_expiry_fold_still_publishes_when_the_ack_is_refused(
+    journal: EdgeOpsJournal,
+    clock: ManualClock,
+    event_bus: object,
+) -> None:
+    """The refusal must not swallow the fold's own lifecycle event.
+
+    ``await_result`` parks on the transition channel, so a touch that folds an
+    op to ``expired`` and then refuses the ack still owes the event and the
+    wake-up — otherwise the caller holds its whole budget open while the
+    authority has already answered.
+    """
+    op_id = await _queued(journal, kind=NEVER_KIND, key="k-never", deadline_s=5.0)
+    await leasing.lease(journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0)
+    clock.advance(LEASE_TTL_SECONDS + 1.0)
+    with pytest.raises(EdgeOpRefusedError):
+        await leasing.post_event(
+            journal, op_id=op_id, edge_id="edge-a", event_type="started"
+        )
+    await asyncio.sleep(0)
+    assert "edge.op.expired" in set(getattr(event_bus, "signals", []))
+
+
+@pytest.mark.asyncio
+async def test_posting_started_twice_on_a_live_op_renews_the_lease(
+    journal: EdgeOpsJournal,
+    clock: ManualClock,
+) -> None:
+    """The ack stays idempotent on a live op: same state, lease pushed out."""
+    op_id = await _queued(journal, kind=NEVER_KIND, key="k-never")
+    await leasing.lease(journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0)
+    first = await leasing.post_event(
+        journal, op_id=op_id, edge_id="edge-a", event_type="started"
+    )
+    assert first["status"] == "started"
+
+    clock.advance(LEASE_TTL_SECONDS - 1.0)
+    again = await leasing.post_event(
+        journal, op_id=op_id, edge_id="edge-a", event_type="started"
+    )
+    assert again["status"] == "started"
+    assert again["seq"] == first["seq"] + 1
+
+    clock.advance(LEASE_TTL_SECONDS - 1.0)
+    record = await journal.get(op_id)
+    assert record is not None
+    assert record.state == "started"
+
+
+@pytest.mark.asyncio
+async def test_a_progress_event_on_a_terminal_op_still_records(
+    journal: EdgeOpsJournal,
+    clock: ManualClock,
+) -> None:
+    """Only the ack is refused: narration grants no permission to run.
+
+    The reply names the terminal state, so an edge posting progress into a
+    closed op learns it closed without being handed a 2xx that means ``run``.
+    """
+    op_id = await _queued(journal, kind=NEVER_KIND, key="k-never", deadline_s=5.0)
+    await leasing.lease(journal, edge_id="edge-a", kinds=(NEVER_KIND,), wait_s=0.0)
+    clock.advance(LEASE_TTL_SECONDS + 1.0)
+    noted = await leasing.post_event(
+        journal, op_id=op_id, edge_id="edge-a", event_type="progress"
+    )
+    assert noted["status"] == "expired"

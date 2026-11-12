@@ -4,12 +4,14 @@ Edge-initiated only: every function here runs because the edge called a
 Stargate resource. Nothing in this module dials outward.
 
 The edge identity is checked on every write, so one edge cannot renew, start,
-finish or release another edge's op. A write against an op that already
-reached a terminal state is a no-op that returns the stored state — the
+finish or release another edge's op. A result or a release against an op that
+already reached a terminal state is a no-op returning the stored state — the
 substrate never retries, reopens or overwrites a completed op.
 
-The one ordering rule enforced here is on the terminal write: a ``never`` op's
-result is refused until its ``started`` event has landed.
+Two ordering rules are enforced here, both on the ``started`` ack a ``never``
+handler treats as its permission to run: the op's result is refused until that
+ack has landed, and the ack itself is refused once the op is terminal. Between
+them, neither end can run work the caller was already told had expired.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from typing import Any
 
 from ..model import (
     CODE_NOT_STARTED,
+    CODE_TERMINAL,
     TERMINAL_STATES,
     EdgeOpRefusedError,
     LeaseGrant,
@@ -47,13 +50,27 @@ def record_poll_sync(
     connection.commit()
 
 
-def edge_seen_since_sync(connection: sqlite3.Connection, since: float) -> bool:
-    """True when any edge has polled at or after *since*."""
-    row = connection.execute(
-        "SELECT 1 FROM edge_polls WHERE last_poll_epoch >= ? LIMIT 1",
+def edge_seen_since_sync(
+    connection: sqlite3.Connection,
+    since: float,
+    *,
+    kind: str,
+) -> bool:
+    """True when an edge serving *kind* has polled at or after *since*.
+
+    Presence is per kind, not per process. "Some edge polled" answers the
+    question ``admit`` is asking only while one edge serves every kind: the
+    plan names four and binding 2 contemplates a sibling-edge split, and the
+    moment kinds are split an unserved kind would queue into silence until its
+    deadline instead of failing fast with ``edge_unavailable``. The served
+    kinds are already on the poll row, so the filter costs one JSON decode per
+    present edge.
+    """
+    rows = connection.execute(
+        "SELECT kinds_json FROM edge_polls WHERE last_poll_epoch >= ?",
         (since,),
-    ).fetchone()
-    return row is not None
+    ).fetchall()
+    return any(kind in json.loads(row["kinds_json"]) for row in rows)
 
 
 def claim_lease_sync(
@@ -147,7 +164,20 @@ def renew_and_start_sync(
     ``None`` means this edge does not hold the op's lease. An event whose type
     is *started_event_type* also moves ``leased`` to ``started``; the 2xx this
     produces is what a ``never`` handler waits for before it runs. Posting
-    ``started`` twice renews without changing state.
+    ``started`` twice on a live op renews the lease without changing state.
+
+    A ``started`` ack for an op that already reached a terminal state is
+    refused and nothing is written. That is the stalled-edge path: the fold
+    runs on every touch of the store, so a process suspended past both its
+    lease and the op's deadline finds the op already ``expired`` here, and
+    answering 2xx would hand it permission to run work the caller was told had
+    expired — the late paste binding 3 exists to prevent. A non-``started``
+    event on a terminal op is still appended: it narrates, it grants no
+    permission, and the reply names the terminal state.
+
+    Raises:
+        EdgeOpRefusedError: 409 ``edge_op_terminal`` when a ``started`` event
+            arrives for an op in a terminal state.
     """
     row = _owned_row_sync(connection, op_id, edge_id)
     if row is None:
@@ -155,6 +185,13 @@ def renew_and_start_sync(
     state = row["state"]
     kind = row["kind"]
     if state in TERMINAL_STATES:
+        if event_type == started_event_type:
+            raise EdgeOpRefusedError(
+                409,
+                CODE_TERMINAL,
+                f"Edge op {op_id!r} is {state!r}: a terminal op cannot be "
+                "started, and its handler must not run.",
+            )
         seq = _append_event_sync(connection, op_id, event_type, payload, now)
         return state, seq, kind
 

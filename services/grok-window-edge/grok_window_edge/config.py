@@ -6,9 +6,10 @@ the cursor kinds go live in a later phase, by editing this set — not by
 widening a bound.
 
 Hard denies are separate from "not allowlisted" because they must survive
-someone adding a port later: display :11 and the
+someone adding a port later: CDP ports 9341 and 9314, display :11 and the
 ``~/.gateway/chrome-playground`` profile belong to the cookie-sustain owner,
-and this process must never touch them.
+and this process must never touch them. ``DENIED_PORTS`` is therefore checked
+before ``CDP_PORT_ALLOWLIST`` is consulted at all, not merely left out of it.
 
 Environment keys:
 
@@ -38,7 +39,12 @@ import os
 # handler is shown to dial it.
 CDP_PORT_ALLOWLIST: frozenset[int] = frozenset({9339, 9340})
 
-# Never reachable from this process, whatever else is added above.
+# Never reachable from this process, whatever else is added above. The port
+# denies are checked before the allowlist, so releasing 9341 into it later —
+# which binding 8's flips-if explicitly contemplates — still cannot reach the
+# cookie-sustain window; 9314 (display :14) appeared after A1 and sits on the
+# same footing.
+DENIED_PORTS: frozenset[int] = frozenset({9314, 9341})
 DENIED_DISPLAYS: frozenset[str] = frozenset({":11"})
 DENIED_PROFILE_DIRS: tuple[str, ...] = ("~/.gateway/chrome-playground",)
 

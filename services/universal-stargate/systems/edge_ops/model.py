@@ -9,7 +9,10 @@ other half of that contract: a ``never`` op's result is refused with
 ``edge_not_started`` until its ``started`` event has landed, because without
 that ack the fold would have re-leased work the handler had already done. A
 ``safe`` op may result straight from ``leased`` — a second delivery of a safe
-kind is harmless, so its handler never has to wait for the ack.
+kind is harmless, so its handler never has to wait for the ack. The ack is
+refusable in its own right: a ``started`` event for an op that already reached
+a terminal state is refused with ``edge_op_terminal``, so an edge that stalled
+past the deadline learns the op closed instead of being told to run it late.
 
 Terminal status is separate from the handler result. A handler that answers
 ``{"ok": false, ...}`` still ends ``completed`` — ``failed`` is reserved for an
@@ -59,6 +62,7 @@ CODE_EXPIRED = "edge_op_expired"
 CODE_UNRESOLVED = "edge_op_unknown"
 CODE_LEASE_MISMATCH = "edge_lease_mismatch"
 CODE_NOT_STARTED = "edge_not_started"
+CODE_TERMINAL = "edge_op_terminal"
 CODE_IDENTITY_REFUSED = "edge_identity_refused"
 
 # Reasons carried on fold transitions and on the matching lifecycle events.

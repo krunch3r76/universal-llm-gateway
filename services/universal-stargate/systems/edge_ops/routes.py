@@ -227,14 +227,20 @@ async def get_op_directives(
 
     This is the only path from Stargate to the edge, and the edge opens it.
     A1 ships no directive producer, so the hold elapses and answers 204.
+    Only the op's lease holder may attach: another configured edge is refused
+    with 409, the same answer an unknown op id gets.
     """
     refused = _gate()
     if refused is not None:
         return refused
     try:
-        await require_edge_identity(request)
+        edge_id = await require_edge_identity(request)
         pending = await leasing.directives(
-            journal_for(request), op_id=op_id, after=after, wait_s=wait
+            journal_for(request),
+            op_id=op_id,
+            edge_id=edge_id,
+            after=after,
+            wait_s=wait,
         )
     except EdgeOpRefusedError as error:
         return _refusal_response(error)

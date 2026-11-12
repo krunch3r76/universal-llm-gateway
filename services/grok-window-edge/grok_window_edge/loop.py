@@ -6,9 +6,11 @@ connection and nothing dials a browser in A1.
 
 Redelivery is the op's, not the loop's. A ``never`` kind may not run until
 Stargate has acknowledged its ``started`` event, so a lease lost before that
-ack is safe to re-lease; a ``safe`` kind runs regardless. Either way the loop
-never re-runs an op itself — the only retry on this side is the backoff around
-an unreachable Stargate.
+ack is safe to re-lease; a ``safe`` kind may run even when the ack's delivery
+failed. What neither kind does is run on a *refused* ack: the answer is read,
+not assumed, and a 409 or any status other than ``started`` means the op is
+closed. Either way the loop never re-runs an op itself — the only retry on
+this side is the backoff around an unreachable Stargate.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from typing import Any
 from universal_logging import get_logger
 
 from . import config
-from .client import EdgeTransportError, StargateEdgeClient
+from .client import EdgeConflictError, EdgeTransportError, StargateEdgeClient
 from .registry import HANDLERS, Handler
 
 logger = get_logger(__name__)
@@ -63,7 +65,12 @@ class EdgeLoop:
         *,
         should_stop: Callable[[], bool] = lambda: False,
     ) -> None:
-        """Run until *should_stop*, backing off while Stargate is unreachable."""
+        """Run until *should_stop*, backing off while Stargate is unreachable.
+
+        A refused write is not unreachability. Stargate answered, so the
+        backoff stays reset and the next lease is issued immediately; only a
+        transport fault earns a wait.
+        """
         while not should_stop():
             try:
                 await self.run_once()
@@ -78,6 +85,8 @@ class EdgeLoop:
                     self._backoff_s * 2, config.DEFAULT_BACKOFF_MAX_SECONDS
                 )
                 continue
+            except EdgeConflictError as exc:
+                logger.warning("Stargate refused a write, dropping the op: %s", exc)
             self._backoff_s = config.DEFAULT_BACKOFF_INITIAL_SECONDS
 
     async def _execute(self, grant: dict[str, Any]) -> None:
@@ -89,11 +98,32 @@ class EdgeLoop:
         an unsupported kind acks and then fails once, rather than posting a
         result Stargate refuses and sitting leased until the fold handed it
         back to the same handler-less edge.
+
+        A write Stargate refuses on the op's state ends the attempt here: the
+        op is closed or no longer ours, so there is nowhere to post and
+        nothing to retry.
         """
         op_id = str(grant.get("op_id"))
         kind = str(grant.get("kind"))
         if not await self._acknowledge(grant, op_id, kind):
             return
+        try:
+            await self._dispatch(grant, op_id, kind)
+        except EdgeConflictError as exc:
+            logger.warning(
+                "Stargate refused a write for %s (%s), dropping the op: %s",
+                op_id,
+                kind,
+                exc,
+            )
+
+    async def _dispatch(
+        self,
+        grant: dict[str, Any],
+        op_id: str,
+        kind: str,
+    ) -> None:
+        """Run the registered handler, or report the kind as unsupported."""
         handler = self._handlers.get(kind)
         if handler is None:
             await self._client.post_result(
@@ -114,12 +144,31 @@ class EdgeLoop:
         op_id: str,
         kind: str,
     ) -> bool:
-        """Post ``started``. False means a ``never`` kind must not run."""
+        """Post ``started`` and read the answer. False means do not run.
+
+        The ack is the permission, so its answer has to be read rather than
+        assumed. Stargate refuses it with 409 once the op is terminal — the
+        deadline passed while this process was stalled, or a lost lease folded
+        it to ``unknown`` — and a 2xx carrying any status other than
+        ``started`` is not permission either. Both stop every kind, ``safe``
+        included: the op is closed, so the result would be refused or dropped
+        and the work is waste. Only the transport fault still turns on the
+        class, because there Stargate may have recorded the ack before the
+        connection broke: a ``never`` kind must not run, a ``safe`` kind may.
+        """
         redelivery = str(grant.get("redelivery") or "never")
         try:
-            await self._client.post_event(
+            accepted = await self._client.post_event(
                 op_id=op_id, event_type=STARTED_EVENT_TYPE, payload={"kind": kind}
             )
+        except EdgeConflictError as exc:
+            logger.warning(
+                "started ack refused for %s (%s); not running: %s",
+                op_id,
+                kind,
+                exc,
+            )
+            return False
         except EdgeTransportError as exc:
             if redelivery == "never":
                 logger.warning(
@@ -135,6 +184,17 @@ class EdgeLoop:
                 kind,
                 exc,
             )
+            return True
+        status = accepted.get("status")
+        if status != STARTED_EVENT_TYPE:
+            logger.warning(
+                "started ack for %s (%s) answered status %r, not 'started'; "
+                "not running",
+                op_id,
+                kind,
+                status,
+            )
+            return False
         return True
 
     async def _report(

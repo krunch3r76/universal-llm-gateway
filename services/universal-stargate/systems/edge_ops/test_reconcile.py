@@ -133,4 +133,4 @@ async def test_a_journal_reached_without_initialize_still_answers(
     """
     fresh = _reopened(tmp_path / "unborn.db", clock)
     assert await fresh.get("edgeop-missing") is None
-    assert await fresh.edge_seen_recently() is False
+    assert await fresh.edge_seen_recently(kind="ping") is False

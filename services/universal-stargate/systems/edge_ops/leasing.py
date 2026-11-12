@@ -138,6 +138,7 @@ async def directives(
     journal: EdgeOpsJournal,
     *,
     op_id: str,
+    edge_id: str,
     after: int = 0,
     wait_s: float | None = None,
 ) -> list[dict[str, Any]]:
@@ -147,7 +148,19 @@ async def directives(
     the edge holds one of these open per live op and Stargate answers into it.
     A1 ships no directive producer, so the list is empty until the cancel and
     nudge writers land; the read itself is already against the authority store.
+
+    Only the lease holder may read an op's stream. Being a configured edge is
+    not enough: directives will carry cancel and nudge payloads, and a stream
+    any edge could attach to would leak them the moment a producer lands. An
+    unknown op id refuses the same way a wrong edge does, so the refusal says
+    nothing about which ops exist.
+
+    Raises:
+        EdgeOpRefusedError: 409 when *edge_id* does not hold the op's lease.
     """
+    record = await journal.get(op_id)
+    if record is None or record.leased_by != edge_id:
+        raise _lease_mismatch(op_id, edge_id)
     budget = config.clamp_long_poll_seconds(wait_s)
     hold_until = time.monotonic() + budget
     while True:

@@ -6,15 +6,20 @@ through, proven now by their own tests rather than after a window is already
 being driven.
 
 Deny-by-default: a port outside ``CDP_PORT_ALLOWLIST`` is refused, and the
-denied display and profile directory are refused even if someone widens that
-set.
+denied ports, display and profile directory are refused even if someone widens
+that set.
 """
 
 from __future__ import annotations
 
 import os
 
-from .config import CDP_PORT_ALLOWLIST, DENIED_DISPLAYS, DENIED_PROFILE_DIRS
+from .config import (
+    CDP_PORT_ALLOWLIST,
+    DENIED_DISPLAYS,
+    DENIED_PORTS,
+    DENIED_PROFILE_DIRS,
+)
 
 
 class CdpPortRefusedError(Exception):
@@ -26,9 +31,18 @@ def cdp_endpoint(port: int) -> str:
 
     Building the URL is the whole operation; no socket is opened here.
 
+    The hard deny is checked before the allowlist is consulted, so a port on
+    ``DENIED_PORTS`` stays refused even once someone adds it to the allowlist.
+    That ordering is the whole reason the two lists are separate.
+
     Raises:
-        CdpPortRefusedError: when *port* is not in the explicit allowlist.
+        CdpPortRefusedError: when *port* is hard-denied, or is not in the
+            explicit allowlist.
     """
+    if port in DENIED_PORTS:
+        raise CdpPortRefusedError(
+            f"CDP port {port} is hard-denied for grok-window-edge"
+        )
     if port not in CDP_PORT_ALLOWLIST:
         allowed = ", ".join(
             str(allowed_port) for allowed_port in sorted(CDP_PORT_ALLOWLIST)

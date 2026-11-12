@@ -4,8 +4,9 @@ Stargate exposes resources; it never dials the edge and never dials MCP. These
 are the three a caller (an MCP tool, or a Stargate pipeline step) uses, and the
 HTTP routes in ``routes.py`` are thin wrappers over them.
 
-``admit`` fails fast rather than queueing into silence: when no edge has polled
-inside the presence window the caller gets ``edge_unavailable`` immediately.
+``admit`` fails fast rather than queueing into silence: when no edge serving
+the op's kind has polled inside the presence window the caller gets
+``edge_unavailable`` immediately.
 ``await_result`` is bounded by plan binding 3 at 30 s and answers
 ``edge_pending`` on timeout — never ``ok: true``. Terminal status stays separate
 from the handler result: a handler that answered ``ok: false`` is ``completed``,
@@ -65,14 +66,15 @@ async def admit(
     the edge may run the handler before Stargate acknowledges ``started``.
 
     Raises:
-        EdgeOpRefusedError: 503 ``edge_unavailable`` when no edge has polled
-            within two long-poll intervals.
+        EdgeOpRefusedError: 503 ``edge_unavailable`` when no edge serving
+            *kind* has polled within two long-poll intervals.
     """
-    if not await journal.edge_seen_recently():
+    if not await journal.edge_seen_recently(kind=kind):
         raise EdgeOpRefusedError(
             503,
             CODE_EDGE_UNAVAILABLE,
-            "No edge has polled for leases within two long-poll intervals.",
+            f"No edge serving kind {kind!r} has polled for leases within two "
+            "long-poll intervals.",
         )
     record, _created = await journal.admit(
         kind=kind,

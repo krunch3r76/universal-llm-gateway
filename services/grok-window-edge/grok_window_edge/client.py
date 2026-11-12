@@ -7,7 +7,10 @@ about URLs and tokens.
 
 ``HttpEdgeClient`` raises ``EdgeTransportError`` on anything that is not a
 success, including a Stargate restart. That is what the loop's backoff reacts
-to; there is no retry anywhere else, by design.
+to; there is no retry anywhere else, by design. One status is carved out of
+that rule: a 409 is the authority's verdict on this op rather than a fault to
+wait out, so it raises ``EdgeConflictError`` and the loop drops the op instead
+of backing off against a Stargate that answered perfectly well.
 """
 
 from __future__ import annotations
@@ -24,6 +27,26 @@ _EDGE_BASE_PATH = "/api/v1/edge"
 
 class EdgeTransportError(Exception):
     """Stargate was unreachable or answered with an error status."""
+
+
+class EdgeConflictError(Exception):
+    """Stargate refused this write on the op's state, not on transport.
+
+    A 409 says the authority disagrees about this op — it is terminal, or the
+    lease is no longer ours — and no amount of waiting changes that answer.
+    Keeping it off ``EdgeTransportError`` is what stops the loop treating a
+    settled refusal as an outage and backing off against a healthy Stargate.
+
+    Args:
+        message: What was refused.
+        code: The ``{"error": {code}}`` value when the envelope carried one,
+            so a caller can tell ``edge_op_terminal`` from
+            ``edge_lease_mismatch`` without matching on message text.
+    """
+
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class StargateEdgeClient(Protocol):
@@ -151,6 +174,8 @@ class HttpEdgeClient:
                 )
         except httpx.HTTPError as exc:
             raise EdgeTransportError(f"{method} {path} failed: {exc}") from exc
+        if response.status_code == 409:
+            raise _conflict(method, path, response)
         if response.status_code >= 400:
             raise EdgeTransportError(f"{method} {path} returned {response.status_code}")
         return response
@@ -165,3 +190,28 @@ class HttpEdgeClient:
         if not isinstance(decoded, dict):
             raise EdgeTransportError("Stargate returned a non-object body")
         return decoded
+
+
+def _conflict(
+    method: str,
+    path: str,
+    response: httpx.Response,
+) -> EdgeConflictError:
+    """Build the semantic refusal for a 409, carrying its envelope code.
+
+    The code is best-effort: a 409 whose body is missing or malformed is still
+    a 409, and the loop's decision — drop the op, do not back off — does not
+    depend on reading it.
+    """
+    code: str | None = None
+    try:
+        decoded = response.json()
+    except ValueError:
+        decoded = None
+    if isinstance(decoded, dict):
+        error = decoded.get("error")
+        if isinstance(error, dict) and isinstance(error.get("code"), str):
+            code = error["code"]
+    return EdgeConflictError(
+        f"{method} {path} refused with 409 ({code or 'no code'})", code=code
+    )
