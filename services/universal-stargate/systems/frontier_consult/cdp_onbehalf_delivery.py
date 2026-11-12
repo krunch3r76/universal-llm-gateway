@@ -6,9 +6,14 @@ import asyncio
 import re
 from dataclasses import dataclass
 
-from services.git_integration_worker.cursor_sdk_closeout_harvest import _fenced_spans
-
+from bus_compact_pointer import (
+    BodyMode,
+    build_section_map,
+    compact_pointer_body,
+    extract_verdict_line,
+)
 from claude_bundles.cdp_model_endpoint import CdpGenerateResult
+from services.git_integration_worker.cursor_sdk_closeout_harvest import _fenced_spans
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
@@ -83,6 +88,10 @@ def extract_pointer_summary(content: str, *, max_chars: int = 300) -> str | None
     return out[:max_chars].rstrip()
 
 
+def _metadata_protected_lines(format_metadata: str) -> list[str]:
+    return [ln.strip() for ln in format_metadata.splitlines() if ln.strip()]
+
+
 def build_relocation_pointer(
     result: CdpGenerateResult,
     *,
@@ -90,24 +99,40 @@ def build_relocation_pointer(
     sha256: str,
     body_chars: int,
     summary: str | None,
+    sidecar_markdown: str | None = None,
+    format_metadata: str = "",
 ) -> str:
     """Compact bus turn body citing durable harvest archive."""
-    parts = [
-        "**Full CDP harvest relocated to cortex (not lost).** "
-        f"Body was {body_chars} chars (bus limit {BUS_MAX_BODY_CHARS}).",
-        "",
-        f"- Durable copy: `{sidecar_uri}`",
-        f"- sha256: `{sha256}`",
-        f"- execution: `{result.execution_id}`",
+    text = sidecar_markdown or ""
+    section_map, hidden = build_section_map(text) if text else ([], 0)
+    original_rows = len(section_map) + hidden
+    tail: str | None = None
+    if hidden:
+        rel = sidecar_uri.removeprefix("cortex://")
+        tail = f"+{hidden} more (md_list {rel})"
+    verdict = extract_verdict_line(text) if text else None
+    if verdict is None:
+        verdict = "RELOCATED"
+    context: list[str] = [
+        f"harvest_chars: {body_chars}",
+        f"picker: {result.picker_model}",
     ]
     if summary:
-        parts += ["", "**Summary:**", "", summary]
-    rel = sidecar_uri.removeprefix("cortex://")
-    parts += [
-        "",
-        f"_Read the full content: fs(cortex, read, {rel})_",
-    ]
-    return "\n".join(parts)
+        context.append(summary[:240])
+    return compact_pointer_body(
+        verdict=verdict,
+        execution_id=result.execution_id,
+        satellite_execution_id=result.satellite_execution_id,
+        archive_uri=result.archive_uri,
+        content_proof_uri=result.content_proof_uri,
+        protected_lines=_metadata_protected_lines(format_metadata),
+        sidecar_uri=sidecar_uri,
+        sidecar_sha256=sha256,
+        section_map=section_map,
+        context_lines=context,
+        section_tail=tail,
+        section_map_source_rows=original_rows if text else 0,
+    )
 
 
 async def write_cdp_harvest_sidecar(
@@ -140,10 +165,21 @@ async def write_cdp_harvest_sidecar(
             sidecar_result.get("error"),
         )
         return None
+    sha = sidecar_result.get("sha256")
+    uri = sidecar_result.get("uri")
+    body_chars = sidecar_result.get("body_chars")
+    if not sha or not uri or body_chars is None:
+        logger.error(
+            "CDP on-behalf sidecar write incomplete: execution_id=%s thread=%s keys=%s",
+            result.execution_id,
+            thread_id,
+            sorted(sidecar_result.keys()),
+        )
+        return None
     return SidecarResult(
-        uri=sidecar_result["uri"],
-        sha256=sidecar_result["sha256"],
-        body_chars=sidecar_result["body_chars"],
+        uri=str(uri),
+        sha256=str(sha),
+        body_chars=int(body_chars),
     )
 
 
@@ -154,82 +190,95 @@ async def build_cdp_success_delivery_body(
     subject: str,
     format_metadata: str,
     pointer_only: bool = False,
+    body_mode: BodyMode = "compact",
 ) -> str | None:
     """Build ok=True delivery body; None when oversized sidecar write failed.
 
-    ``pointer_only`` writes the harvest to cortex and posts uri, sha256, and
-    execution id. The bus body has no harvest text and no summary.
+  ``body_mode=compact`` (default) always sidecars harvest and posts a compact
+    pointer. ``inline`` preserves legacy inline harvest up to ``BUS_MAX_BODY_CHARS``.
+    ``pointer_only`` keeps the legacy minimal pointer (no section map / summary).
     """
+    if pointer_only and body_mode == "compact":
+        body_mode = "pointer_only"
     raw_harvest = result.body
     harvest = (
         collapse_identical_unfenced_canonical_verdicts(raw_harvest)
         if raw_harvest
         else "_empty harvest_"
     )
-    if pointer_only:
+    if body_mode == "inline":
+        inline_body = f"{format_metadata}\n\n{harvest}"
+        if len(inline_body) <= BUS_MAX_BODY_CHARS:
+            return inline_body
+        body_mode = "compact"
+
+    if body_mode in ("compact", "pointer_only"):
         body_chars = len(result.body or "")
-        if result.archive_uri:
-            pointer = build_relocation_pointer(
+        store_content = harvest
+        sidecar_uri: str
+        sidecar_sha: str
+        map_source = store_content
+        if result.archive_uri and result.content_proof_sha256:
+            sidecar_uri = result.archive_uri
+            sidecar_sha = result.content_proof_sha256
+            map_source = store_content
+        else:
+            sidecar = await write_cdp_harvest_sidecar(
+                result=result,
+                thread_id=thread_id,
+                subject=subject,
+                content=store_content,
+                oversized=body_mode == "compact",
+            )
+            if sidecar is None:
+                return None
+            sidecar_uri = sidecar.uri
+            sidecar_sha = sidecar.sha256
+            map_source = store_content
+
+        meta_lines = _metadata_protected_lines(format_metadata)
+
+        if body_mode == "pointer_only":
+            return build_relocation_pointer(
                 result,
-                sidecar_uri=result.archive_uri,
-                sha256=result.content_proof_sha256 or "unavailable",
+                sidecar_uri=sidecar_uri,
+                sha256=sidecar_sha,
                 body_chars=body_chars,
                 summary=None,
+                sidecar_markdown=None,
+                format_metadata=format_metadata,
             )
-            return f"{format_metadata}\n\n{pointer}"
-        sidecar = await write_cdp_harvest_sidecar(
-            result=result,
-            thread_id=thread_id,
-            subject=subject,
-            content=result.body or "",
-            oversized=True,
+
+        section_map, hidden = (
+            build_section_map(map_source) if map_source else ([], 0)
         )
-        if sidecar is None:
-            return None
-        pointer = build_relocation_pointer(
-            result,
-            sidecar_uri=sidecar.uri,
-            sha256=sidecar.sha256,
-            body_chars=body_chars,
-            summary=None,
+        original_rows = len(section_map) + hidden
+        tail: str | None = None
+        if hidden:
+            rel = sidecar_uri.removeprefix("cortex://")
+            tail = f"+{hidden} more (md_list {rel})"
+        verdict = extract_verdict_line(store_content) or "OK"
+        context = [
+            f"picker: {result.picker_model}",
+            f"harvest_chars: {body_chars}",
+        ]
+        pointer = compact_pointer_body(
+            verdict=verdict,
+            execution_id=result.execution_id,
+            satellite_execution_id=result.satellite_execution_id,
+            archive_uri=result.archive_uri,
+            content_proof_uri=result.content_proof_uri,
+            protected_lines=meta_lines,
+            sidecar_uri=sidecar_uri,
+            sidecar_sha256=sidecar_sha,
+            section_map=section_map,
+            context_lines=context,
+            section_tail=tail,
+            section_map_source_rows=original_rows,
         )
-        return f"{format_metadata}\n\n{pointer}"
-    inline_body = f"{format_metadata}\n\n{harvest}"
-    if len(inline_body) <= BUS_MAX_BODY_CHARS:
-        return inline_body
+        return pointer
 
-    body_chars = len(harvest)
-    summary = extract_pointer_summary(harvest)
-
-    if result.archive_uri:
-        sha256 = result.content_proof_sha256 or "unavailable"
-        pointer = build_relocation_pointer(
-            result,
-            sidecar_uri=result.archive_uri,
-            sha256=sha256,
-            body_chars=body_chars,
-            summary=summary,
-        )
-        return f"{format_metadata}\n\n{pointer}"
-
-    sidecar = await write_cdp_harvest_sidecar(
-        result=result,
-        thread_id=thread_id,
-        subject=subject,
-        content=harvest,
-        oversized=True,
-    )
-    if sidecar is None:
-        return None
-
-    pointer = build_relocation_pointer(
-        result,
-        sidecar_uri=sidecar.uri,
-        sha256=sidecar.sha256,
-        body_chars=body_chars,
-        summary=summary,
-    )
-    return f"{format_metadata}\n\n{pointer}"
+    return None
 
 
 async def deliver_cdp_result_turn(
@@ -240,6 +289,7 @@ async def deliver_cdp_result_turn(
     request_id: str,
     pointer_turn: int = 1,
     pointer_only: bool = False,
+    body_mode: BodyMode = "compact",
 ) -> bool:
     """Post CDP result with spill/pointer for oversized ok=True harvests."""
     from .cdp_events import CdpGenerateDeliveryFailed, publish_cdp_kwargs
@@ -260,6 +310,7 @@ async def deliver_cdp_result_turn(
             subject=subject,
             format_metadata=metadata,
             pointer_only=pointer_only,
+            body_mode=body_mode,
         )
         if body is None:
             fail_subject = f"cdp DELIVERY FAILED — {result.execution_id[:8]}"
@@ -295,6 +346,9 @@ async def deliver_cdp_result_turn(
     else:
         body = format_cdp_result_body(result)
 
+    compact_pointer = "sidecar_ref:" in body
+    allow_long = not compact_pointer and len(body) > 1500
+    post_extra = {"allow_long_body": True} if allow_long else {}
     last_outcome = await post_cdp_turn(
         thread_id=thread_id,
         to_agent=to_agent,
@@ -302,6 +356,7 @@ async def deliver_cdp_result_turn(
         body=body,
         request_id=request_id,
         pointer_turn=pointer_turn,
+        **post_extra,
     )
     if last_outcome.ok:
         return True
@@ -313,6 +368,7 @@ async def deliver_cdp_result_turn(
         body=body,
         request_id=request_id,
         pointer_turn=pointer_turn,
+        **post_extra,
     )
     if last_outcome.ok:
         return True
