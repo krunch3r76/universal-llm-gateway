@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -9,6 +10,12 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+from services.git_integration_worker.giw_land_pytest import (
+    run_land_gate_pytest,
+    suite_digest_pytest_argv,
+    universal_python,
+)
 
 ANCHOR_PATH = Path("services/git_integration_worker/suite_failure_anchor.json")
 _EXIT_OK, _EXIT_MISMATCH, _EXIT_UNCOMPUTABLE = 0, 2, 3
@@ -18,7 +25,6 @@ _FAILED_COUNT = re.compile(r"\b(\d+)\s+failed\b")
 _PASSED_COUNT = re.compile(r"\b(\d+)\s+passed\b")
 _FAILED_WORD = re.compile(r"\bfailed\b")
 _PASSED_WORD = re.compile(r"\bpassed\b")
-_PYTEST_TAIL = "services/git_integration_worker/tests -q --tb=no -p no:cacheprovider"
 
 
 def failure_digest(nodeids: list[str]) -> str:
@@ -194,15 +200,17 @@ def git_is_ancestor(commit: str) -> bool:
 
 def run_frozen_pytest() -> tuple[str, str] | None:
     base = tempfile.mkdtemp(prefix="giw-suite-digest-")
-    python = str(Path.home() / ".venvs/universal/bin/python")
-    cmd = [python, "-m", "pytest", *_PYTEST_TAIL.split(), "--basetemp", base]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        return proc.stdout, proc.stderr
-    except OSError:
-        return None
+        proc = run_land_gate_pytest(
+            Path.cwd(),
+            suite_digest_pytest_argv(),
+            basetemp=base,
+        )
     finally:
         shutil.rmtree(base, ignore_errors=True)
+    if proc is None:
+        return None
+    return proc.stdout, proc.stderr
 
 
 def _load_anchor() -> dict[str, Any] | None:
@@ -211,6 +219,14 @@ def _load_anchor() -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return loaded if isinstance(loaded, dict) else None
+
+
+def _venv_executable_ok() -> bool:
+    venv = universal_python()
+    try:
+        return os.path.samefile(venv, Path(sys.executable))
+    except OSError:
+        return Path(sys.executable) == venv
 
 
 def _tail(computed: str, anchor: str, added: int, removed: int) -> int:
@@ -270,10 +286,9 @@ def _write_anchor(head: str, nodeids: list[str], summary: str, stdout: str) -> i
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    venv = (Path.home() / ".venvs/universal/bin/python").resolve()
     if (
         args not in ([], ["--measure-and-write"])
-        or Path(sys.executable).resolve() != venv
+        or not _venv_executable_ok()
         or not git_porcelain_empty()
     ):
         return _tail("", "", 0, 0)

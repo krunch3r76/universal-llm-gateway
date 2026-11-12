@@ -23,7 +23,7 @@ _DIFF_SCOPED_GATE_SCRIPT = (
     # that does not carry this subtree. Present file: the node still runs, and
     # a failure still fails the gate.
     "if [ -f services/git_integration_worker/tests/test_conductor_lane_retention.py ]; then "
-    "python -m pytest "
+    '"$HOME/.venvs/universal/bin/python" -m services.git_integration_worker.giw_land_pytest run '
     "services/git_integration_worker/tests/test_conductor_lane_retention.py::"
     "test_packet_reference_forbids_land_disposition_before_done -q --tb=line; "
     "fi"

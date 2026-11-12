@@ -32,9 +32,12 @@ from git_integrate.schema import (
     RC_SUITE_DIGEST_MISMATCH,
     RC_SUITE_DIGEST_UNCOMPUTABLE,
 )
+from services.git_integration_worker.giw_land_pytest import (
+    land_gate_pytest_session_timeout_s,
+)
 
 _GATE_TIMEOUT = 300.0
-_SUITE_DIGEST_TIMEOUT = 1800.0
+_SUITE_DIGEST_TIMEOUT = float(land_gate_pytest_session_timeout_s() + 120)
 _SUITE_FIELDS = ("computed", "anchor", "added", "removed")
 _GATE_OUTPUT_TAIL_LINES = 20
 _logger = get_logger(__name__)

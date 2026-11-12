@@ -13,6 +13,7 @@ the running stack, orthogonal to the diff-scoping logic under test.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from git_integrate.integrate import integrate_op
 from git_integrate.schema import RC_GATE_FAILED
 
 from services.git_integration_worker.config import _DIFF_SCOPED_GATE_SCRIPT
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _git(*args: str, cwd: Path) -> None:
@@ -144,9 +147,29 @@ def _init_repo(path: Path) -> None:
     _git("config", "user.name", "T", cwd=path)
 
 
+def _seed_land_pytest_runner(repo: Path) -> None:
+    """Minimal GIW tree so the land-gate pytest CLI can import and run."""
+    giw = repo / "services" / "git_integration_worker"
+    giw.mkdir(parents=True)
+    (repo / "services" / "__init__.py").write_text("", encoding="utf-8")
+    (giw / "__init__.py").write_text("", encoding="utf-8")
+    copy_pairs = (
+        "giw_land_pytest.py",
+        "config.py",
+        "giw_suite_digest_gate.py",
+    )
+    for name in copy_pairs:
+        shutil.copy2(_REPO_ROOT / "services/git_integration_worker" / name, giw / name)
+
+
 def _run_gate(repo: Path) -> subprocess.CompletedProcess[str]:
+    import os
+
+    env = os.environ.copy()
+    home = str(Path.home())
+    env["HOME"] = home
     return subprocess.run(
-        _gate(), cwd=str(repo), capture_output=True, text=True, check=False
+        _gate(), cwd=str(repo), capture_output=True, text=True, check=False, env=env
     )
 
 
@@ -167,6 +190,7 @@ def test_retention_clause_runs_when_test_file_exists(tmp_path: Path) -> None:
     """When the test file is present, the gate still executes that node."""
     repo = tmp_path / "source"
     _init_repo(repo)
+    _seed_land_pytest_runner(repo)
     test_path = repo / _RETENTION_TEST_REL
     test_path.parent.mkdir(parents=True)
     test_path.write_text(
@@ -191,6 +215,7 @@ def test_retention_clause_failure_fails_gate_when_test_file_exists(
     """A present file that fails still fails the gate; the guard does not skip it."""
     repo = tmp_path / "source"
     _init_repo(repo)
+    _seed_land_pytest_runner(repo)
     test_path = repo / _RETENTION_TEST_REL
     test_path.parent.mkdir(parents=True)
     test_path.write_text(
