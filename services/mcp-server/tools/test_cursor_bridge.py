@@ -43,13 +43,13 @@ def test_spawn_tab_calls_launch_with_debug_url(
 def test_cursor_bridge_spawn_tab_does_not_append_ledger(tmp_path) -> None:
     from pathlib import Path
 
-    from cursor_bridge.spawn_endpoint_house_ledger import ledger_path
+    from spawn_ledger.spawn_endpoint_house_ledger import ledger_path
 
     watch = Path(tmp_path)
     with patch("cursor_bridge.bridge_spawn_relay.launch_cursor_agents_tab") as launch:
         launch.return_value = {"ok": True, "editor_agent_id": "a-1"}
         with patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=ledger_path(watch),
         ):
             _spawn_tab(gui_host=":8", prompt="hello", model="Grok 4.7")
@@ -87,13 +87,15 @@ def test_relay_wake_tab_appends_wake(tmp_path) -> None:
         ),
         patch("cursor_bridge.bridge_glass_relay._paste_cursor_services", _paste),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=ledger,
         ),
     ):
         out = relay_wake_tab(gui_host=":8", agent_id="agent-1", body="wake line")
     assert out["ok"] is True
-    rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+    rows = [
+        json.loads(line) for line in ledger.read_text().splitlines() if line.strip()
+    ]
     wakes = [r for r in rows if r.get("kind") == "wake"]
     assert len(wakes) == 1
     assert wakes[0]["op"] == "wake_tab"
@@ -105,7 +107,7 @@ def test_send_msg_does_not_call_record_tab_wake_directly() -> None:
     with (
         patch("tools.cursor_bridge._send_impl") as send_impl,
         patch("tools.cursor_bridge.relay_wake_tab") as wake,
-        patch("cursor_bridge.spawn_endpoint_house_ledger.record_tab_wake") as record,
+        patch("spawn_ledger.spawn_endpoint_house_ledger.record_tab_wake") as record,
     ):
         send_impl.return_value = {"thread": {"id": "1"}, "turn_number": 2}
         wake.return_value = {"ok": True, "op": "wake_tab"}
@@ -153,7 +155,7 @@ def test_send_msg_with_agent_id_appends_wake(tmp_path) -> None:
         ),
         patch("cursor_bridge.bridge_glass_relay._paste_cursor_services", _paste),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=ledger,
         ),
     ):
@@ -167,7 +169,9 @@ def test_send_msg_with_agent_id_appends_wake(tmp_path) -> None:
         )
     assert out["op"] == "send_msg"
     assert out["glass_paste"]["ok"] is True
-    rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+    rows = [
+        json.loads(line) for line in ledger.read_text().splitlines() if line.strip()
+    ]
     wakes = [r for r in rows if r.get("kind") == "wake"]
     assert len(wakes) == 1
     assert wakes[0]["agent_id"] == "0b2e33aa"
@@ -199,7 +203,9 @@ def test_send_msg_spawn_tab_then_followup_sequence() -> None:
                 after_turn=None,
                 agent_id=aid,
             )
-    wake.assert_called_once_with(gui_host=":8", agent_id="spawned-aid", body="follow-up")
+    wake.assert_called_once_with(
+        gui_host=":8", agent_id="spawned-aid", body="follow-up"
+    )
     assert msg_out.get("ok") is not False
 
 
@@ -282,7 +288,7 @@ def test_relay_rename_tab_writes_no_ledger_row(tmp_path) -> None:
             return_value={"ok": True, "new_title": "t"},
         ),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=ledger,
         ),
     ):

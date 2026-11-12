@@ -12,7 +12,6 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from cursor_bridge.spawn_endpoint_house_ledger import format_ledger_prompt_prefix
 from fastapi.responses import JSONResponse
 from implement_admission.admission_read import compute_packet_sha256, frontmatter_value
 from implement_admission.preflight import (
@@ -21,6 +20,7 @@ from implement_admission.preflight import (
     require_decision_asserted,
 )
 from implement_admission.source_ref import SourceRefError
+from spawn_ledger.spawn_endpoint_house_ledger import format_ledger_prompt_prefix
 
 from .admit_provenance import AdmitProvenanceContext
 from .cursor_sdk_generate import dispatch_cursor_sdk_generate
@@ -89,9 +89,7 @@ def _wrap_from_admit_plan(plan: dict[str, Any], *, row_id: str) -> GenerateWrapR
     prefix = format_ledger_prompt_prefix(row_id=row_id, purpose="(unstated)")
     text = prefix + base if prefix else base
     sha = (
-        compute_packet_sha256(text)
-        if prefix
-        else str(plan.get("packet_sha256") or "")
+        compute_packet_sha256(text) if prefix else str(plan.get("packet_sha256") or "")
     )
     return GenerateWrapResult(
         packet_path=None,
@@ -102,8 +100,7 @@ def _wrap_from_admit_plan(plan: dict[str, Any], *, row_id: str) -> GenerateWrapR
         warnings=list(plan.get("warnings") or []),
         packet_sha256=sha,
         materialization_present=False,
-        route_contract=plan.get("route_contract")
-        or {"job": "conductor", "lane": "B"},
+        route_contract=plan.get("route_contract") or {"job": "conductor", "lane": "B"},
         scoreboard_uri=plan.get("scoreboard_uri"),
         birth_rows=tuple(plan["birth_rows"]) if plan.get("birth_rows") else None,
         birth_seed_ignored=bool(plan.get("birth_seed_ignored")),
@@ -309,7 +306,7 @@ def _record_pending_spawn_row(
     patch — a ledger write failure here is not fatal, because the post-
     materialize write at the end of the route still runs.
     """
-    from cursor_bridge.spawn_endpoint_house_ledger import patch_spawn_row, record_spawn
+    from spawn_ledger.spawn_endpoint_house_ledger import patch_spawn_row, record_spawn
 
     thread = str(getattr(body, "dispatch_thread_id", "") or "").strip()
     caller = str(getattr(body, "caller_agent", "") or "").strip()
@@ -352,7 +349,7 @@ def _fail_pending_spawn_row(
     Never raises: this runs on the failure path, and a secondary ledger error
     must not replace the exception being propagated.
     """
-    from cursor_bridge.spawn_endpoint_house_ledger import (
+    from spawn_ledger.spawn_endpoint_house_ledger import (
         patch_spawn_row,
         record_status_row,
     )
@@ -555,7 +552,7 @@ async def dispatch_cursor_sdk_generate_route(
             )
 
             conductor_opts = conductor_opts_from_generation_options(gen_opts)
-            from cursor_bridge.spawn_endpoint_house_ledger import mint_row_id
+            from spawn_ledger.spawn_endpoint_house_ledger import mint_row_id
 
             if sdk_row_id is None:
                 sdk_row_id = mint_row_id()
@@ -569,7 +566,10 @@ async def dispatch_cursor_sdk_generate_route(
             )
             spawn_started_ms = time.monotonic()
             try:
-                if isinstance(plan.get("packet_markdown"), str) and plan["packet_markdown"]:
+                if (
+                    isinstance(plan.get("packet_markdown"), str)
+                    and plan["packet_markdown"]
+                ):
                     wrap = _wrap_from_admit_plan(plan, row_id=str(sdk_row_id))
                 else:
                     wrap = await loop.run_in_executor(
@@ -737,7 +737,7 @@ async def dispatch_cursor_sdk_generate_route(
                 request_id=request_id,
             )
             spawn_stage = "spawn_spine"
-            from cursor_bridge.spawn_endpoint_house_ledger import (
+            from spawn_ledger.spawn_endpoint_house_ledger import (
                 mint_row_id,
                 patch_spawn_row,
                 record_spawn,

@@ -120,7 +120,7 @@ def test_ide_launch_error_projects_failed_status_row(tmp_path: Path) -> None:
             side_effect=_relay_fail,
         ),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=tmp_path / "cursor-bridge-tab-wake-ledger.jsonl",
         ),
     ):
@@ -128,7 +128,7 @@ def test_ide_launch_error_projects_failed_status_row(tmp_path: Path) -> None:
     assert resp.status_code == 502
     payload = resp.json()
     row_id = str(payload.get("ledger_row_id") or "")
-    from cursor_bridge.spawn_endpoint_house_ledger import project_row_status
+    from spawn_ledger.spawn_endpoint_house_ledger import project_row_status
 
     proj = project_row_status(row_id, watch_dir=tmp_path)
     assert proj["status"] == "failed"
@@ -149,13 +149,13 @@ def test_ide_launch_error_marks_failed_after_spine(tmp_path: Path) -> None:
             side_effect=_relay_fail,
         ),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=tmp_path / "cursor-bridge-tab-wake-ledger.jsonl",
         ),
     ):
         resp = client.post("/api/v1/team/dispatch", json=_spawn_body())
     assert resp.status_code == 502
-    from cursor_bridge.spawn_endpoint_house_ledger import (
+    from spawn_ledger.spawn_endpoint_house_ledger import (
         _fold_spawn_rows,
         ledger_path,
         read_all_rows,
@@ -181,7 +181,7 @@ def test_ide_launch_relay_exception_marks_failed_not_500(tmp_path: Path) -> None
             side_effect=_relay_boom,
         ),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=tmp_path / "cursor-bridge-tab-wake-ledger.jsonl",
         ),
     ):
@@ -193,7 +193,7 @@ def test_ide_launch_relay_exception_marks_failed_not_500(tmp_path: Path) -> None
 
 
 def test_op_ledger_house_object_disambiguates(tmp_path: Path) -> None:
-    from cursor_bridge.spawn_endpoint_house_ledger import record_spawn
+    from spawn_ledger.spawn_endpoint_house_ledger import record_spawn
 
     record_spawn(
         surface="cursor_ide",
@@ -216,7 +216,7 @@ def test_op_ledger_house_object_disambiguates(tmp_path: Path) -> None:
     with (
         patch("systems.proxy.dependencies.get_proxy", return_value=proxy),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=tmp_path / "cursor-bridge-tab-wake-ledger.jsonl",
         ),
     ):
@@ -254,10 +254,10 @@ def test_ide_spawn_row_launching_before_relay(tmp_path: Path) -> None:
             side_effect=_relay,
         ),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.record_spawn",
+            "spawn_ledger.spawn_endpoint_house_ledger.record_spawn",
             side_effect=_record_spawn,
         ),
-        patch("cursor_bridge.spawn_endpoint_house_ledger.patch_spawn_row"),
+        patch("spawn_ledger.spawn_endpoint_house_ledger.patch_spawn_row"),
     ):
         resp = client.post("/api/v1/team/dispatch", json=_spawn_body())
     assert resp.status_code == 200
@@ -266,7 +266,7 @@ def test_ide_spawn_row_launching_before_relay(tmp_path: Path) -> None:
 
 
 def test_op_ledger_house_trims_to_5120(tmp_path: Path) -> None:
-    from cursor_bridge.spawn_endpoint_house_ledger import record_spawn
+    from spawn_ledger.spawn_endpoint_house_ledger import record_spawn
 
     blob = "x" * 480
     for i in range(12):
@@ -282,7 +282,7 @@ def test_op_ledger_house_trims_to_5120(tmp_path: Path) -> None:
     with (
         patch("systems.proxy.dependencies.get_proxy", return_value=proxy),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=tmp_path / "cursor-bridge-tab-wake-ledger.jsonl",
         ),
     ):
@@ -307,7 +307,7 @@ def _rows(path: Path) -> list[dict]:
 
 
 def _folded_spawns(path: Path) -> list[dict]:
-    from cursor_bridge.spawn_endpoint_house_ledger import (
+    from spawn_ledger.spawn_endpoint_house_ledger import (
         _fold_spawn_rows,
         read_all_rows,
     )
@@ -330,7 +330,7 @@ def test_glass_first_message_prefix(tmp_path: Path) -> None:
         patch("systems.proxy.dependencies.get_proxy", return_value=proxy),
         patch("cursor_bridge.bridge_spawn_relay.relay_spawn_tab", side_effect=_relay),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=ledger,
         ),
     ):
@@ -356,7 +356,7 @@ def test_ide_spawn_row_agent_id_from_spawn_tab(tmp_path: Path) -> None:
         patch("systems.proxy.dependencies.get_proxy", return_value=proxy),
         patch("cursor_bridge.bridge_spawn_relay.relay_spawn_tab", side_effect=_relay),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=ledger,
         ),
     ):
@@ -382,7 +382,7 @@ def test_spawn_purpose_not_cdp_purpose_tag(tmp_path: Path) -> None:
             return_value={"ok": True, "agent_id": "a1"},
         ),
         patch(
-            "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+            "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
             return_value=ledger,
         ),
     ):
@@ -488,7 +488,7 @@ async def _admit_sdk(
     )
     ledger = tmp_path / "cursor-bridge-tab-wake-ledger.jsonl"
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+        "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
         lambda watch_dir=None: ledger,
     )
     fields: dict[str, object] = {
@@ -563,7 +563,7 @@ async def test_generate_wrap_pre_admit_failure_writes_nothing(
 
     ledger = tmp_path / "cursor-bridge-tab-wake-ledger.jsonl"
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+        "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
         lambda watch_dir=None: ledger,
     )
     body = TeamDispatchGenerateBody(
@@ -608,7 +608,7 @@ async def test_cdp_generate_spine_keyed_by_execution_id(
     monkeypatch.setattr("systems.frontier_consult.cdp_generate._stage_inputs", _stage)
     ledger = tmp_path / "cursor-bridge-tab-wake-ledger.jsonl"
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.ledger_path",
+        "spawn_ledger.spawn_endpoint_house_ledger.ledger_path",
         lambda watch_dir=None: ledger,
     )
     body = TeamDispatchGenerateBody(

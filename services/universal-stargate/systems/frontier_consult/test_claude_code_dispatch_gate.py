@@ -56,7 +56,7 @@ async def test_claude_surface_code_allowed_when_policy_allow(
 
     _stub_cdp_generate_after_gate(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.record_spawn",
+        "spawn_ledger.spawn_endpoint_house_ledger.record_spawn",
         lambda **_k: {"ok": True},
     )
 
@@ -85,7 +85,7 @@ async def test_cowork_surface_not_gated(
 
     _stub_cdp_generate_after_gate(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "cursor_bridge.spawn_endpoint_house_ledger.record_spawn",
+        "spawn_ledger.spawn_endpoint_house_ledger.record_spawn",
         lambda **_k: {"ok": True},
     )
 
