@@ -27,6 +27,7 @@ from bus_watch.endpoint_wake_dispatcher import (
     _effective_to_agent,
     _legacy_qualifies,
     _reset_no_composer_state,
+    _subject_allowed_rule_id,
     classify_cse,
     classify_display,
     fire_due_wakes,
@@ -341,6 +342,54 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "READY",
         "EAR",
     }
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "REQUEST: a:1 x",
+        "REQUEST x",
+        "DONE: x",
+        "REQUEST: x | y",
+    ],
+)
+def test_grok_nopipe_request_head_wakes(subject: str) -> None:
+    assert (
+        _subject_allowed_rule_id(subject, cse=False, to_agent="grok-bot-gc1")
+        == "wake_grok_allowlist"
+    )
+
+
+def test_cse_nopipe_request_head_suppressed() -> None:
+    assert (
+        _subject_allowed_rule_id("REQUEST x", cse=True, to_agent="grok-bot-gc1") is None
+    )
+
+
+@pytest.mark.parametrize(
+    "subject",
+    ["Requesting x", "Review of x"],
+)
+def test_nopipe_prose_first_token_still_suppressed(subject: str) -> None:
+    assert _subject_allowed_rule_id(subject, cse=False, to_agent="grok-bot-gc1") is None
+
+
+def test_cdp_delivery_subjects_unchanged() -> None:
+    assert (
+        _subject_allowed_rule_id(
+            "cdp reply — 1234abcd", cse=False, to_agent="grok-bot-gc1"
+        )
+        == "wake_gate_or_directive"
+    )
+    assert (
+        _subject_allowed_rule_id(
+            "cdp generate — rid", cse=False, to_agent="grok-bot-gc1"
+        )
+        is None
+    )
+
+
+def test_grok_wake_heads_set() -> None:
     assert not qualifies(
         {"to_agent": "all", "from_agent": "cursor", "subject": "DONE|x"}, cse=False
     )
@@ -8021,7 +8070,10 @@ def test_cse_wake_thread_holder_giw_when_bus_none_emits_event(
     assert emitted[0]["giw_by_thread_registration"] == succ
 
     fire_target = resolve_cse_wake_target(
-        Store(), sub, wake_thread=thread, delivery_phase=True  # type: ignore[arg-type]
+        Store(),
+        sub,
+        wake_thread=thread,
+        delivery_phase=True,  # type: ignore[arg-type]
     )
     assert fire_target is not None
     assert fire_target[1]["registration_id"] == succ
@@ -8065,7 +8117,10 @@ def test_cse_wake_thread_holder_bus_not_live_giw_live_event_both_regs(
     assert emitted[0]["giw_by_thread_registration"] == giw_reg
 
     fire_target = resolve_cse_wake_target(
-        Store(), sub, wake_thread=thread, delivery_phase=True  # type: ignore[arg-type]
+        Store(),
+        sub,
+        wake_thread=thread,
+        delivery_phase=True,  # type: ignore[arg-type]
     )
     assert fire_target is not None
     assert fire_target[1]["registration_id"] == giw_reg
@@ -8109,7 +8164,10 @@ def test_cse_wake_thread_holder_giw_error_falls_back_agent_id(
     assert target2 is not None
 
     fire_target = resolve_cse_wake_target(
-        Store(), sub, wake_thread=thread, delivery_phase=True  # type: ignore[arg-type]
+        Store(),
+        sub,
+        wake_thread=thread,
+        delivery_phase=True,  # type: ignore[arg-type]
     )
     assert fire_target is not None
     assert fire_target[1]["registration_id"] == agent_reg
@@ -8137,7 +8195,10 @@ def test_cse_wake_thread_holder_no_live_same_skip_as_before(
 
     assert resolve_cse_wake_target(Store(), sub, wake_thread="22760") is None  # type: ignore[arg-type]
     delivery = resolve_cse_wake_target(
-        Store(), sub, wake_thread="22760", delivery_phase=True  # type: ignore[arg-type]
+        Store(),
+        sub,
+        wake_thread="22760",
+        delivery_phase=True,  # type: ignore[arg-type]
     )
     assert delivery is not None
     assert delivery[1]["seat_state"] == "released"
@@ -8275,8 +8336,8 @@ def test_cse_wake_thread_holder_bus_no_route_falls_through_scan(
             else HouselessResolution(ok=False, reason="purpose_not_houseless")
         ),
     )
-    Store = _giw_live_store(giw_reg, thread)
-    target = resolve_cse_wake_target(Store(), sub, wake_thread=thread)  # type: ignore[arg-type]
+    store_factory = _giw_live_store(giw_reg, thread)
+    target = resolve_cse_wake_target(store_factory(), sub, wake_thread=thread)  # type: ignore[arg-type]
     assert target is not None
     assert target[1]["registration_id"] == giw_reg
 
@@ -8304,9 +8365,9 @@ def test_cse_wake_thread_holder_bus_no_route_falls_through_fire(
             else HouselessResolution(ok=False, reason="purpose_not_houseless")
         ),
     )
-    Store = _giw_live_store(giw_reg, thread)
+    store_factory = _giw_live_store(giw_reg, thread)
     target = resolve_cse_wake_target(
-        Store(),
+        store_factory(),
         sub,
         wake_thread=thread,
         delivery_phase=True,  # type: ignore[arg-type]
@@ -8335,15 +8396,13 @@ def test_cse_wake_thread_holder_bus_lookup_failed_falls_through_scan(
         lambda reg, **_: HouselessResolution(
             ok=False,
             reason=(
-                "provenance_unreachable"
-                if reg == bus_reg
-                else "purpose_not_houseless"
+                "provenance_unreachable" if reg == bus_reg else "purpose_not_houseless"
             ),
         ),
     )
 
-    Store = _giw_live_store(giw_reg, thread)
-    target = resolve_cse_wake_target(Store(), sub, wake_thread=thread)  # type: ignore[arg-type]
+    store_factory = _giw_live_store(giw_reg, thread)
+    target = resolve_cse_wake_target(store_factory(), sub, wake_thread=thread)  # type: ignore[arg-type]
     assert target is not None
     assert target[1]["registration_id"] == giw_reg
 
@@ -8368,16 +8427,14 @@ def test_cse_wake_thread_holder_bus_lookup_failed_falls_through_fire(
         lambda reg, **_: HouselessResolution(
             ok=False,
             reason=(
-                "provenance_unreachable"
-                if reg == bus_reg
-                else "purpose_not_houseless"
+                "provenance_unreachable" if reg == bus_reg else "purpose_not_houseless"
             ),
         ),
     )
 
-    Store = _giw_live_store(giw_reg, thread)
+    store_factory = _giw_live_store(giw_reg, thread)
     target = resolve_cse_wake_target(
-        Store(),
+        store_factory(),
         sub,
         wake_thread=thread,
         delivery_phase=True,  # type: ignore[arg-type]
@@ -8688,7 +8745,10 @@ def test_cse_wake_thread_holder_fire_bus_released_giw_live(
 
     scan_target = resolve_cse_wake_target(Store(), sub, wake_thread=thread)  # type: ignore[arg-type]
     fire_target = resolve_cse_wake_target(
-        Store(), sub, wake_thread=thread, delivery_phase=True  # type: ignore[arg-type]
+        Store(),
+        sub,
+        wake_thread=thread,
+        delivery_phase=True,  # type: ignore[arg-type]
     )
     assert scan_target is not None
     assert fire_target is not None
@@ -9640,7 +9700,9 @@ def test_scan_drops_paths_2_to_7_unique_reasons(db: None) -> None:
             def lane_parent(self, thread_id: str) -> None:
                 return None
 
-            def subscription(self, agent: str, thread_id: str, raw_to: str | None = None):
+            def subscription(
+                self, agent: str, thread_id: str, raw_to: str | None = None
+            ):
                 if self.path_cfg.get("no_sub"):
                     return None
                 if self.path_cfg.get("cse_sub"):

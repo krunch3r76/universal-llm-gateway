@@ -37,6 +37,13 @@ def _isolate_giw_registry_relay(
 ) -> Iterator[None]:
     """Point GIW env at a dead port unless ``live_giw``."""
     if request.node.get_closest_marker("live_giw") is not None:
+        monkeypatch.delenv("GIW_REGISTRY_RELAY_MODE", raising=False)
+        for key in (
+            "GIT_INTEGRATION_WORKER_URL",
+            "GIT_INTEGRATION_WORKER_HOST",
+            "GIT_INTEGRATION_WORKER_PORT",
+        ):
+            monkeypatch.delenv(key, raising=False)
         yield
         return
 

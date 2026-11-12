@@ -67,6 +67,7 @@ async def test_claude_surface_code_allowed_when_policy_allow(
         dispatch_thread_id="22986",
         prompt="code surface allow\n",
         claude_surface="code",
+        caller_agent="cursor-sdk-test",
     )
     result = await dispatch_cdp_generate(
         request_id="req-cc-allow",
@@ -96,6 +97,7 @@ async def test_cowork_surface_not_gated(
         dispatch_thread_id="22986",
         prompt="cowork default\n",
         claude_surface="cowork",
+        caller_agent="cursor-sdk-test",
     )
     result = await dispatch_cdp_generate(
         request_id="req-cowork",

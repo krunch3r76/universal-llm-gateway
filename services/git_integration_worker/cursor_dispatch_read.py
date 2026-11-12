@@ -371,6 +371,11 @@ def _project_dispatch_row(
     paths = _paths_from_structured(structured)
     if paths is not None:
         out["paths"] = paths
+    from services.git_integration_worker.frontier_row_economics import (
+        frontier_row_economics,
+    )
+
+    out.update(frontier_row_economics(row))
     return out
 
 

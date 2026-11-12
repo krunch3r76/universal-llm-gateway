@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock, create_autospec
 
-import pytest
+# a:43747 F-J: import-time GIW registry relay pin (EVENTS_INGEST_SOCK pattern).
+_GIW_PYTEST_INERT_URL = os.environ.get("_GIW_PYTEST_INERT_URL", "http://127.0.0.1:9")
+if os.environ.get("GIW_REGISTRY_RELAY_ALLOW_LIVE") != "1":
+    os.environ.setdefault("GIW_REGISTRY_RELAY_MODE", "pytest_inert")
+    os.environ.setdefault("GIT_INTEGRATION_WORKER_URL", _GIW_PYTEST_INERT_URL)
 
-from systems.frontier_consult.skill_suggest_dispatch_config import (
+from unittest.mock import AsyncMock, create_autospec  # noqa: E402
+
+import pytest  # noqa: E402
+
+from systems.frontier_consult.skill_suggest_dispatch_config import (  # noqa: E402
     SkillSuggestDispatchConfig,
 )
 

@@ -15,6 +15,7 @@ from claude_bundles.cdp_model_endpoint_staging import (
     resolve_cdp_admit_prompt_author,
     resolve_cortex_prompt_path,
 )
+from claude_bundles.sealed_cdp_prefix import REVIEW_CLASS_CONTRACTS
 
 REVIEW_PROMPT_MIN_BYTES = 512
 REVIEW_CONTRACTS = frozenset({"code-review", "delivery-review"})
@@ -26,6 +27,59 @@ _LONE_HEADING = re.compile(r"^#{1,6}\s+\S")
 _WORD = re.compile(r"[A-Za-z]+")
 
 FIX_HINT = "land review packet on hub master or use cortex:// sidecar before dispatch"
+
+
+def _unfenced_directive_line(body: str, prefix: str) -> int | None:
+    """Line number of column-0 ``prefix`` when not inside a matching fence."""
+    open_fence: tuple[str, int] | None = None
+    needle = prefix.casefold()
+    for index, line in enumerate(body.splitlines(), start=1):
+        stripped = line.strip()
+        for marker in ("```", "~~~"):
+            if stripped.startswith(marker):
+                ch = marker[0]
+                run = len(marker)
+                if open_fence is None:
+                    open_fence = (ch, run)
+                elif open_fence[0] == ch and run >= open_fence[1]:
+                    open_fence = None
+                break
+        if open_fence is not None:
+            continue
+        if line and line[0].isspace():
+            continue
+        if stripped.casefold().startswith(needle):
+            return index
+    return None
+
+
+def _refuse_closeout_channel_self_delivery(
+    *,
+    body: str,
+    kind: str,
+    source_ref: str,
+    contract: str | None,
+) -> None:
+    line = _unfenced_directive_line(body, "closeout_channel:")
+    if line is None:
+        return
+    raw = body.encode("utf-8")
+    raise CdpStagingError(
+        "CDP review prompt must not direct self-delivery on the bus",
+        code="review_prompt_self_delivery_directive",
+        field="sidecar_ref" if kind == "sidecar_ref" else "prompt",
+        details={
+            "prompt_byte_count": len(raw),
+            "prompt_sha256": hashlib.sha256(raw).hexdigest(),
+            "source_ref": source_ref,
+            "line": line,
+            "contract": contract,
+            "fix_hint": (
+                "remove the closeout_channel: line; the harness posts "
+                "the final message and writes the sidecar"
+            ),
+        },
+    )
 
 
 def author_prompt_source(
@@ -69,7 +123,23 @@ def enforce_review_prompt_gate(
     dispatch_thread_id: str | None = None,
 ) -> None:
     """Refuse tiny or placeholder review packets before worker admit."""
-    if contract not in REVIEW_CONTRACTS:
+    contract_key = (contract or "").strip().lower()
+    if contract_key not in REVIEW_CONTRACTS:
+        if contract_key not in REVIEW_CLASS_CONTRACTS:
+            return
+        body, kind, source_ref = author_prompt_source(
+            prompt_text=prompt_text,
+            prompt_uri=prompt_uri,
+            sidecar_ref=sidecar_ref,
+            packet_path=packet_path,
+            dispatch_thread_id=dispatch_thread_id,
+        )
+        _refuse_closeout_channel_self_delivery(
+            body=body,
+            kind=kind,
+            source_ref=source_ref,
+            contract=contract,
+        )
         return
     body, kind, source_ref = author_prompt_source(
         prompt_text=prompt_text,
@@ -77,6 +147,9 @@ def enforce_review_prompt_gate(
         sidecar_ref=sidecar_ref,
         packet_path=packet_path,
         dispatch_thread_id=dispatch_thread_id,
+    )
+    _refuse_closeout_channel_self_delivery(
+        body=body, kind=kind, source_ref=source_ref, contract=contract
     )
     raw = body.encode("utf-8")
     placeholder = is_review_prompt_placeholder(body)

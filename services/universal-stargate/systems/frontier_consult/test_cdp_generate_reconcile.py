@@ -135,11 +135,7 @@ def test_result_from_snapshot_review_induction_keeps_waiting() -> None:
 
 
 def test_result_from_snapshot_review_with_verdict_finalizes() -> None:
-    body = (
-        "## Merits\n"
-        "Gate holds.\n"
-        "VERDICT: PASS\n"
-    )
+    body = "## Merits\nGate holds.\nVERDICT: PASS\n"
     snapshot = {
         "status": "completed",
         "completion_phase": "terminal",
@@ -159,7 +155,9 @@ def test_result_from_snapshot_review_with_verdict_finalizes() -> None:
     assert result.ok is True
 
 
-def test_inflight_leg_persists_purpose(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_inflight_leg_persists_purpose(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     upsert_inflight_leg(
         execution_id="exec-purpose",
@@ -273,7 +271,7 @@ async def test_finalize_unconfirmed_wall_leaves_proof_unset(
         request_id="req-wall-u",
         thread_id="12286",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -291,7 +289,7 @@ async def test_finalize_unconfirmed_wall_leaves_proof_unset(
         ),
         request_id="req-wall-u",
         thread_id="12286",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="worker",
     )
@@ -305,7 +303,7 @@ async def test_finalize_unconfirmed_wall_leaves_proof_unset(
         request_id="req-wall-c",
         thread_id="12286",
         pointer_turn=2,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -323,7 +321,7 @@ async def test_finalize_unconfirmed_wall_leaves_proof_unset(
         ),
         request_id="req-wall-c",
         thread_id="12286",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=2,
         via="worker",
     )
@@ -358,7 +356,7 @@ async def test_reconcile_emits_proof_without_worker(
         request_id="req-1",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -397,7 +395,7 @@ async def test_reconcile_running_satellite_no_terminal(
         request_id="req-1",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -433,7 +431,7 @@ async def test_reconcile_poll_error_no_stalled(
         request_id="req-1",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -466,7 +464,7 @@ async def test_finalize_stalled_deliverable_present_from_archive_uri(
         request_id="req-1",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -487,7 +485,7 @@ async def test_finalize_stalled_deliverable_present_from_archive_uri(
         result=result,
         request_id="req-1",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="reconcile",
     )
@@ -516,7 +514,7 @@ async def test_finalize_stalled_deliverable_present_from_extras_marker(
         request_id="req-1",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -536,7 +534,7 @@ async def test_finalize_stalled_deliverable_present_from_extras_marker(
         result=result,
         request_id="req-1",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="reconcile",
     )
@@ -566,7 +564,7 @@ async def test_finalize_idempotent_second_tick(
         request_id="req-1",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -584,7 +582,7 @@ async def test_finalize_idempotent_second_tick(
         result=result,
         request_id="req-1",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="reconcile",
     )
@@ -592,7 +590,7 @@ async def test_finalize_idempotent_second_tick(
         result=result,
         request_id="req-1",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="reconcile",
     )
@@ -625,7 +623,7 @@ async def test_delivery_fail_no_reproof(
         request_id="req-1",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -643,7 +641,7 @@ async def test_delivery_fail_no_reproof(
         result=result,
         request_id="req-1",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="worker",
     )
@@ -651,7 +649,7 @@ async def test_delivery_fail_no_reproof(
         result=result,
         request_id="req-1",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="reconcile",
     )
@@ -728,7 +726,7 @@ async def test_horizon_live_leg_not_abandoned(monkeypatch: pytest.MonkeyPatch) -
         request_id="req-1",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -780,7 +778,7 @@ async def test_abandonment_emits_reconcile_abandoned_confirmed_dead(
         request_id="req-1",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -832,7 +830,7 @@ async def test_horizon_unreachable_probe_retains_unverifiable(
         request_id="req-1",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -897,7 +895,7 @@ async def test_horizon_404_plus_seated_authorship_not_failed(
         request_id="req-9501",
         thread_id="9501",
         pointer_turn=10,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -956,7 +954,7 @@ async def test_worker_cancelled_error_publishes_stalled(
             execution_id="exec-cancel",
             model_id="cdp/opus-5",
             thread_id="5583",
-            caller_agent="dispatch",
+            caller_agent="cursor-sdk-test",
             prompt_uri="cortex://p.md",
             request_id="req-1",
         )
@@ -988,7 +986,7 @@ async def test_finalize_worker_reconcile_race_single_delivery(
         request_id="req-1",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1010,7 +1008,7 @@ async def test_finalize_worker_reconcile_race_single_delivery(
             result=result,
             request_id="req-1",
             thread_id="5583",
-            to_agent="dispatch",
+            to_agent="cursor-sdk-test",
             pointer_turn=1,
             via="worker",
         ),
@@ -1018,7 +1016,7 @@ async def test_finalize_worker_reconcile_race_single_delivery(
             result=result,
             request_id="req-1",
             thread_id="5583",
-            to_agent="dispatch",
+            to_agent="cursor-sdk-test",
             pointer_turn=1,
             via="reconcile",
         ),
@@ -1058,7 +1056,7 @@ async def test_finalize_proof_carries_via_worker_and_reconcile(
         request_id="req-via",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1076,7 +1074,7 @@ async def test_finalize_proof_carries_via_worker_and_reconcile(
         result=worker_result,
         request_id="req-via",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="worker",
     )
@@ -1086,7 +1084,7 @@ async def test_finalize_proof_carries_via_worker_and_reconcile(
         request_id="req-via-2",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1104,7 +1102,7 @@ async def test_finalize_proof_carries_via_worker_and_reconcile(
         result=reconcile_result,
         request_id="req-via-2",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="reconcile",
     )
@@ -1158,7 +1156,7 @@ async def test_finalize_attest_does_not_emit_reconciled(
         request_id="req-attest",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1177,7 +1175,7 @@ async def test_finalize_attest_does_not_emit_reconciled(
         result=result,
         request_id="req-attest",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="attest",
         attested_by="test-seat",
@@ -1239,7 +1237,7 @@ async def test_finalize_failed_terminate_before_publish_and_delivery(
         request_id="req-fail-order",
         thread_id="5583",
         pointer_turn=3,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/fable",
         max_wall_s=1800.0,
@@ -1248,7 +1246,7 @@ async def test_finalize_failed_terminate_before_publish_and_delivery(
         result=_failed_result(),
         request_id="req-fail-order",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=3,
         via="worker",
     )
@@ -1299,7 +1297,7 @@ async def test_finalize_terminal_event_exists_terminate_before_delivery(
         request_id="req-term-exists",
         thread_id="5583",
         pointer_turn=2,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/fable",
         max_wall_s=1800.0,
@@ -1308,7 +1306,7 @@ async def test_finalize_terminal_event_exists_terminate_before_delivery(
         result=_failed_result(execution_id="exec-term-exists"),
         request_id="req-term-exists",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=2,
         via="reconcile",
     )
@@ -1352,7 +1350,7 @@ async def test_finalize_stalled_emits_join_key_fields(
         request_id="req-join-keys",
         thread_id="5583",
         pointer_turn=5,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/fable",
         max_wall_s=1800.0,
@@ -1376,7 +1374,7 @@ async def test_finalize_stalled_emits_join_key_fields(
         result=result,
         request_id="req-join-keys",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=5,
         via="worker",
     )
@@ -1447,7 +1445,7 @@ async def test_finalize_ok_terminal_event_terminates_completed(
         request_id="req-ok-term",
         thread_id="5583",
         pointer_turn=2,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/fable",
         max_wall_s=1800.0,
@@ -1456,7 +1454,7 @@ async def test_finalize_ok_terminal_event_terminates_completed(
         result=_ok_result(execution_id="exec-ok-term"),
         request_id="req-ok-term",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=2,
         via="worker",
     )
@@ -1493,7 +1491,7 @@ async def test_case_l_live_leg_stays_null(monkeypatch: pytest.MonkeyPatch) -> No
         request_id="req-case-l",
         thread_id="12286",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1502,9 +1500,7 @@ async def test_case_l_live_leg_stays_null(monkeypatch: pytest.MonkeyPatch) -> No
     leg = reconcile.read_inflight_leg(execution_id)
     assert leg is not None
     assert not leg.satellite_execution_id
-    await reconcile._reconcile_horizon_leg(
-        leg, horizon=max_open_leg_s(1800.0)
-    )
+    await reconcile._reconcile_horizon_leg(leg, horizon=max_open_leg_s(1800.0))
     assert finalized == []
     assert terminated == []
 
@@ -1543,7 +1539,7 @@ async def test_finalize_ok_posted_relays_completed(
         request_id="req-relay-ok",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1552,7 +1548,7 @@ async def test_finalize_ok_posted_relays_completed(
         result=_ok_result(execution_id="exec-relay-ok"),
         request_id="req-relay-ok",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="worker",
     )
@@ -1572,7 +1568,7 @@ async def test_finalize_not_ok_relays_failed(monkeypatch: pytest.MonkeyPatch) ->
         request_id="req-relay-fail",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1590,7 +1586,7 @@ async def test_finalize_not_ok_relays_failed(monkeypatch: pytest.MonkeyPatch) ->
         ),
         request_id="req-relay-fail",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="worker",
     )
@@ -1611,7 +1607,7 @@ async def test_finalize_ok_post_failed_relays_failed(
         request_id="req-relay-post-fail",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1620,7 +1616,7 @@ async def test_finalize_ok_post_failed_relays_failed(
         result=_ok_result(execution_id="exec-relay-post-fail"),
         request_id="req-relay-post-fail",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="worker",
     )
@@ -1639,7 +1635,7 @@ async def test_finalize_unconfirmed_wall_stall_does_not_relay(
         request_id="req-relay-wall-u",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1657,7 +1653,7 @@ async def test_finalize_unconfirmed_wall_stall_does_not_relay(
         ),
         request_id="req-relay-wall-u",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="worker",
     )
@@ -1678,7 +1674,7 @@ async def test_reconcile_finalize_relays_terminal(
         request_id="req-relay-reconcile",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1687,7 +1683,7 @@ async def test_reconcile_finalize_relays_terminal(
         result=_ok_result(execution_id="exec-relay-reconcile"),
         request_id="req-relay-reconcile",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="reconcile",
     )
@@ -1719,7 +1715,7 @@ async def test_reconcile_alive_before_horizon_relays_registry_heartbeat(
     upsert_frontier_registry_dispatch(
         dispatch_id=execution_id,
         thread_id="21835",
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         seat_name="dispatch",
         address={"kind": "cdp", "thread_id": "21835"},
         work_key="todo:hb-reconcile",
@@ -1758,7 +1754,7 @@ async def test_reconcile_alive_before_horizon_relays_registry_heartbeat(
         request_id="req-hb",
         thread_id="21835",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=43200.0,
@@ -1808,7 +1804,7 @@ async def test_horizon_unverifiable_no_registry_heartbeat(
         request_id="req-no-sat",
         thread_id="21835",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1842,7 +1838,7 @@ def test_cdp_registry_row_null_heartbeat_reaped_after_margin(
     upsert_frontier_registry_dispatch(
         dispatch_id="exec-null-hb-reap",
         thread_id="21835",
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         seat_name="dispatch",
         address={"kind": "cdp", "thread_id": "21835"},
         work_key="todo:null-hb",
@@ -1889,7 +1885,7 @@ async def test_registry_heartbeat_throttled_two_ticks_one_relay(
         request_id="req-throttle",
         thread_id="21835",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=43200.0,
@@ -1925,7 +1921,7 @@ async def test_registry_heartbeat_mono_pruned_after_leg_finalizes(
         request_id="req-hb-prune",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -1934,7 +1930,7 @@ async def test_registry_heartbeat_mono_pruned_after_leg_finalizes(
         result=_ok_result(execution_id=execution_id),
         request_id="req-hb-prune",
         thread_id="5583",
-        to_agent="dispatch",
+        to_agent="cursor-sdk-test",
         pointer_turn=1,
         via="reconcile",
     )
@@ -1960,7 +1956,7 @@ async def test_registry_heartbeat_mono_pruned_after_abandon(
         request_id="req-hb-abandon",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
@@ -2013,7 +2009,7 @@ async def test_reconcile_tick_finishes_while_registry_heartbeat_hangs(
         request_id="req-hb-nonblock",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=43200.0,
@@ -2038,7 +2034,7 @@ def _upsert_open_leg_for_hb(
         request_id=request_id or f"req-{execution_id}",
         thread_id="5583",
         pointer_turn=1,
-        caller_agent="dispatch",
+        caller_agent="cursor-sdk-test",
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=43200.0,
@@ -2227,3 +2223,163 @@ async def test_registry_heartbeat_single_flight_different_legs_parallel(
         await asyncio.sleep(0.02)
     assert reconcile._REGISTRY_HB_TASKS == set()
     assert reconcile._REGISTRY_HB_INFLIGHT == set()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_leg_without_caller_agent_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing mailbox caller fails closed before terminate/relay delivery."""
+    stalled: list[dict[str, Any]] = []
+    relay_calls = _relay_finalize_mocks(monkeypatch)
+
+    def _capture_stall(event_cls: type, **kwargs: object) -> None:
+        stalled.append({"event": event_cls.__name__, **kwargs})
+
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture_stall)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_reconcile_caller_missing.publish_cdp_kwargs",
+        _capture_stall,
+    )
+    upsert_inflight_leg(
+        execution_id="exec-no-caller",
+        request_id="req-no-caller",
+        thread_id="99001",
+        pointer_turn=1,
+        caller_agent="",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=_ok_result(execution_id="exec-no-caller"),
+        request_id="req-no-caller",
+        thread_id="99001",
+        to_agent="",
+        pointer_turn=1,
+        via="reconcile",
+    )
+    assert relay_calls
+    assert relay_calls[-1]["terminal_status"] == "failed"
+    assert relay_calls[-1]["reason"] == "cdp_caller_agent_missing"
+    assert any(s.get("stall_stage") == "cdp_caller_agent_missing" for s in stalled)
+    leg = reconcile.read_inflight_leg("exec-no-caller")
+    assert leg is not None
+    assert leg.proof_emitted
+
+
+@pytest.mark.asyncio
+async def test_caller_missing_terminates_dispatch_link_before_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NULL caller reconcile must close thread_dispatch_links when admit succeeded."""
+    from systems.frontier_consult.cdp_reconcile_caller_missing import (
+        finalize_caller_agent_missing,
+    )
+
+    terminate = AsyncMock(return_value=True)
+    relay_calls = _relay_finalize_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_reconcile_caller_missing.publish_cdp_kwargs",
+        lambda event_cls, **kwargs: None,
+    )
+    upsert_inflight_leg(
+        execution_id="exec-no-caller-link",
+        request_id="req-no-caller-link",
+        thread_id="99002",
+        pointer_turn=1,
+        caller_agent="",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_caller_agent_missing(
+        result=_ok_result(execution_id="exec-no-caller-link"),
+        request_id="req-no-caller-link",
+        thread_id="99002",
+        pointer_turn=1,
+        via="reconcile",
+        terminate_dispatch_link=terminate,
+    )
+    terminate.assert_awaited_once()
+    assert terminate.await_args.kwargs["terminal_status"] == "failed"
+    assert relay_calls
+
+
+@pytest.mark.asyncio
+async def test_caller_missing_skips_proof_when_terminate_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failed dispatch-link terminate leaves the leg retryable (no proof_emitted)."""
+    from systems.frontier_consult.cdp_reconcile_caller_missing import (
+        finalize_caller_agent_missing,
+    )
+
+    terminate = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_reconcile_caller_missing.publish_cdp_kwargs",
+        lambda event_cls, **kwargs: None,
+    )
+    upsert_inflight_leg(
+        execution_id="exec-no-caller-term-fail",
+        request_id="req-no-caller-term-fail",
+        thread_id="99003",
+        pointer_turn=1,
+        caller_agent="",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_caller_agent_missing(
+        result=_ok_result(execution_id="exec-no-caller-term-fail"),
+        request_id="req-no-caller-term-fail",
+        thread_id="99003",
+        pointer_turn=1,
+        via="reconcile",
+        terminate_dispatch_link=terminate,
+    )
+    terminate.assert_awaited_once()
+    leg = reconcile.read_inflight_leg("exec-no-caller-term-fail")
+    assert leg is not None
+    assert not leg.proof_emitted
+
+
+@pytest.mark.asyncio
+async def test_cdp_terminal_stores_harvest_chars_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Second finalize after proof_emitted does not relay harvest again."""
+    relay_calls = _relay_finalize_mocks(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-harvest-once",
+        request_id="req-harvest-once",
+        thread_id="99002",
+        pointer_turn=1,
+        caller_agent="cursor-sdk-test",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    result = _ok_result(execution_id="exec-harvest-once")
+    await finalize_cdp_generate(
+        result=result,
+        request_id="req-harvest-once",
+        thread_id="99002",
+        to_agent="cursor-sdk-test",
+        pointer_turn=1,
+        via="worker",
+    )
+    await finalize_cdp_generate(
+        result=result,
+        request_id="req-harvest-once",
+        thread_id="99002",
+        to_agent="cursor-sdk-test",
+        pointer_turn=1,
+        via="worker",
+    )
+    assert len(relay_calls) == 1
+    assert relay_calls[0]["harvest_chars"] == len(str(result.body or ""))

@@ -616,6 +616,7 @@ async def test_cdp_generate_spine_keyed_by_execution_id(
         model="cdp/opus-5",
         prompt="hello",
         dispatch_thread_id="thread-cdp",
+        caller_agent="cursor-sdk-test",
     )
     with pytest.raises(FrontierEndpointError):
         await dispatch_cdp_generate(

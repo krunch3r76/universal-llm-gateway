@@ -39,6 +39,11 @@ from model_id import ModelId
 
 from .admission import FrontierEndpointError
 from .admit_provenance import AdmitProvenanceContext
+from .cdp_admit_identity import (
+    require_cdp_caller_agent,
+    require_cdp_review_work_key,
+    validate_work_key_if_supplied,
+)
 from .cdp_cursor_reroute import REROUTE_ADMIT_SUBSTRATE, resolve_cdp_reroute
 from .cdp_dispatch_envelope import record_cdp_admit
 from .cdp_generate_mcp_stamp import (
@@ -443,7 +448,8 @@ def _stage_inputs(
             source_label=stamp.source_label,
             web_mcp_stamped=True,
         )
-    staged_prompt = stamp.body if stamp.stamped else staged_prompt
+    if stamp.stamped and stamp.body is not None:
+        staged_prompt = stamp.body
     if ledger_row_id and ledger_purpose is not None:
         from spawn_ledger.spawn_endpoint_house_ledger import (
             format_ledger_prompt_prefix,
@@ -453,7 +459,7 @@ def _stage_inputs(
             row_id=str(ledger_row_id),
             purpose=str(ledger_purpose),
         )
-        if prefix:
+        if prefix and staged_prompt is not None:
             staged_prompt = prefix + staged_prompt
     staged_uri = None if stamp.stamped else cortex_uri
     staged_packet = None if stamp.stamped else packet_non_cortex
@@ -568,6 +574,9 @@ async def dispatch_cdp_generate(
             code="cdp_prompt_missing",
         )
 
+    validate_work_key_if_supplied(body, request_id=request_id)
+    caller_agent = require_cdp_caller_agent(body, request_id=request_id)
+    require_cdp_review_work_key(body, contract, request_id=request_id)
     execution_id = str(uuid.uuid4())
     from spawn_ledger.spawn_endpoint_house_ledger import mint_row_id, record_spawn
 
@@ -581,7 +590,7 @@ async def dispatch_cdp_generate(
         execution_id=execution_id,
         row_id=cdp_row_id,
         parent={
-            "agent": str(getattr(body, "caller_agent", "") or "").strip(),
+            "agent": caller_agent,
             "thread": cdp_thread,
         },
     )
@@ -740,7 +749,7 @@ async def dispatch_cdp_generate(
                 to_agent=CDP_REPLY_FROM,
                 subject=thread_subject,
                 pointer_body=pointer_body,
-                caller_agent=body.caller_agent,
+                caller_agent=caller_agent,
                 execution_id=execution_id,
                 pipeline_id="cdp-generate",
                 parent_thread_id=parent_thread,
@@ -756,7 +765,7 @@ async def dispatch_cdp_generate(
                 to_agent=CDP_REPLY_FROM,
                 subject=thread_subject,
                 pointer_body=pointer_body,
-                caller_agent=body.caller_agent,
+                caller_agent=caller_agent,
                 execution_id=execution_id,
                 pipeline_id="cdp-generate",
                 parent_thread_id=parent_thread,
@@ -769,7 +778,7 @@ async def dispatch_cdp_generate(
             to_agent=CDP_REPLY_FROM,
             subject=thread_subject,
             pointer_body=pointer_body,
-            caller_agent=body.caller_agent,
+            caller_agent=caller_agent,
             provenance_missing=provenance_missing,
             tags=[
                 "agent:web-anthropic",
@@ -799,7 +808,7 @@ async def dispatch_cdp_generate(
             thread_id=str(thread_id),
             execution_id=execution_id,
             pipeline_id="cdp-generate",
-            caller_agent=body.caller_agent,
+            caller_agent=caller_agent,
             parent_thread_id=parent_thread,
         )
     record_cdp_admit(
@@ -819,7 +828,7 @@ async def dispatch_cdp_generate(
             request_id=request_id,
             thread_id=str(thread_id),
             pointer_turn=after_turn,
-            caller_agent=body.caller_agent,
+            caller_agent=caller_agent,
             prompt_uri=staged.prompt_uri,
             model_id=str(model),
             max_wall_s=max_wall,
@@ -844,7 +853,7 @@ async def dispatch_cdp_generate(
             "execution_id": execution_id,
             "model_id": str(model),
             "thread_id": str(thread_id),
-            "caller_agent": body.caller_agent,
+            "caller_agent": caller_agent,
             "prompt_uri": staged.prompt_uri,
             "request_id": request_id,
             "pointer_turn": after_turn,
@@ -932,14 +941,14 @@ async def dispatch_cdp_generate(
         to_agent=CDP_REPLY_FROM,
         reply_from_agent=CDP_REPLY_FROM,
         after_turn=after_turn,
-        poll_wait_seconds=resolve_poll_wait_seconds(caller_agent=body.caller_agent),
+        poll_wait_seconds=resolve_poll_wait_seconds(caller_agent=caller_agent),
         completion="proof_reply_from",
         execution_id=execution_id,
     )
     emit_poll_hint_from_handoff(
         request_id=request_id,
         thread_id=str(thread_id),
-        caller_agent=body.caller_agent or "cursor",
+        caller_agent=caller_agent,
         handoff_fields=handoff_fields,
     )
     response.status_code = 202
@@ -995,13 +1004,14 @@ async def dispatch_cdp_generate(
         request_id=request_id,
         dispatch_id=execution_id,
         thread_id=str(thread_id),
-        caller_agent=body.caller_agent,
-        seat_name=resolve_registry_seat_name(caller_agent=body.caller_agent),
+        caller_agent=caller_agent,
+        seat_name=resolve_registry_seat_name(caller_agent=caller_agent),
         address=build_cdp_registry_address(thread_id=str(thread_id)),
         work_key=getattr(body, "work_key", None),
         resolved_model=str(model),
         contract=contract,
         max_wall_s=int(max_wall),
+        prompt_bytes=staged_digest["staged_prompt_byte_count"],
     )
     attach_registry_next(result, relay_body)
     return result

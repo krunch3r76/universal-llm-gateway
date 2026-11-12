@@ -22,6 +22,10 @@ from job_vocab.records import job_record
 from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
+from .hop_cdp_caller import (
+    hop_caller_agent_required_response,
+    resolve_hop_cdp_caller_agent,
+)
 from .request import _resolve_hop_seat_request_refusal
 from .request_intake import resolve_request_id_intake
 
@@ -129,6 +133,7 @@ def hop_generate_payload(
     decision: dict[str, Any],
     predecessor_registration_id: str | None = None,
     reasoning_effort: str | None = None,
+    caller_agent: str,
 ) -> dict[str, Any]:
     """Commission JSON for a hop POST. Omits ``job`` when the decision omitted it."""
     payload: dict[str, Any] = {
@@ -139,7 +144,7 @@ def hop_generate_payload(
         "mission_kind": "hop",
         "parent_thread": thread_id,
         "dispatch_thread_id": thread_id,
-        "caller_agent": from_agent,
+        "caller_agent": caller_agent,
     }
     if decision.get("job") is not None:
         payload["job"] = decision["job"]
@@ -213,6 +218,7 @@ async def _hop_dispatch(
     request_id: str | None = None,
     after_turn: int = 0,
     subject: str | None = None,
+    caller_agent: str | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.hop``.
 
@@ -416,6 +422,15 @@ async def _hop_dispatch(
     )
     effort = (desired_effort or "").strip()
     wire_effort = effort if effort and effort != "auto" else None
+    wire_caller = resolve_hop_cdp_caller_agent(caller_agent)
+    if wire_caller is None:
+        record(
+            "mcp.agentbus.hop.rejected",
+            reason="hop_caller_agent_required",
+            thread=thread_id,
+        )
+        return hop_caller_agent_required_response()
+
     payload = hop_generate_payload(
         model=model,
         prompt=full_body,
@@ -424,6 +439,7 @@ async def _hop_dispatch(
         decision=decision,
         predecessor_registration_id=cse_registration_id,
         reasoning_effort=wire_effort,
+        caller_agent=wire_caller,
     )
 
     async def _poster(body: dict[str, Any]) -> dict[str, Any]:

@@ -159,6 +159,17 @@ async def attest_cdp_generate_deliverable(
             },
         )
 
+    from .cdp_admit_identity import resolve_cdp_reply_to_agent
+
+    if resolve_cdp_reply_to_agent(leg.caller_agent) is None:
+        raise ProtocolError(
+            code="cdp_attest_caller_undeliverable",
+            message="Open leg has no deliverable caller_agent for on-behalf delivery",
+            source="gateway",
+            retryable=False,
+            data={"execution_id": execution_id, "caller_agent": leg.caller_agent},
+        )
+
     result = CdpGenerateResult(
         ok=True,
         body=f"deliverable attested: {uri} sha256={computed}",
@@ -174,7 +185,7 @@ async def attest_cdp_generate_deliverable(
         result=result,
         request_id=leg.request_id,
         thread_id=leg.thread_id,
-        to_agent=leg.caller_agent or "dispatch",
+        to_agent=leg.caller_agent or "",
         pointer_turn=leg.pointer_turn,
         via="attest",
         attested_by=body.attested_by,

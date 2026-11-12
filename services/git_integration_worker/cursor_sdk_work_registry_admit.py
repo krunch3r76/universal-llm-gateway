@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from universal_logging import get_logger
@@ -52,13 +52,13 @@ WORK_REGISTRY_RULE = (
     'WORK REGISTRY RULE: Before acting on a work_key, read team_dispatch(op="registry", '
     "work_key_prefix=<key>). If another live row holds it, coordinate on its thread "
     "instead of duplicating. If you are not already auto-recorded (team_dispatch generate "
-    "auto-records with an address), claim it: team_dispatch(op=\"claim\", work_key, thread, "
-    "seat_name, address). Keep it current with op=\"claim_update\" (work_status, "
-    'address_patch, note); finish with work_status=landed or abandoned.'
+    'auto-records with an address), claim it: team_dispatch(op="claim", work_key, thread, '
+    'seat_name, address). Keep it current with op="claim_update" (work_status, '
+    "address_patch, note); finish with work_status=landed or abandoned."
 )
 
 _REGISTRY_NEXT_TEMPLATE = (
-    'Work registry: read team_dispatch(op=registry, work_key_prefix=<key>) before starting '
+    "Work registry: read team_dispatch(op=registry, work_key_prefix=<key>) before starting "
     "work on a work_key; claim with op=claim (seat_name, address) and keep it current with "
     "op=claim_update (acting-row updates require the bridge caller_dispatch_id stamp — "
     "unstamped callers get 409); this dispatch was auto-recorded as {row_id}."
@@ -229,6 +229,7 @@ def upsert_frontier_registry_dispatch(
     resolved_model: str = "none",
     contract: str | None = None,
     max_wall_s: int | None = None,
+    prompt_bytes: int | None = None,
     ledger: CursorDispatchLedger | None = None,
 ) -> str | None:
     """Insert or refresh a registry projection row for non-GIW admits."""
@@ -250,6 +251,8 @@ def upsert_frontier_registry_dispatch(
     )
     if max_wall_s is not None:
         rec["max_wall_s"] = int(max_wall_s)
+    if prompt_bytes is not None:
+        rec["prompt_bytes"] = int(prompt_bytes)
     record_json = json.dumps(rec, sort_keys=True, separators=(",", ":"))
     holder = (caller_agent or seat_name or "dispatch").strip()
     fp = str(dispatch_id).strip()
@@ -305,6 +308,8 @@ def close_frontier_registry_row(
     dispatch_id: str,
     terminal_status: str,
     reason: str,
+    *,
+    harvest_chars: int | None = None,
     ledger: CursorDispatchLedger | None = None,
 ) -> dict[str, Any]:
     """Mark a frontier (api_role/cdp) registry projection row terminal."""
@@ -317,15 +322,20 @@ def close_frontier_registry_row(
     now_stamp = _now()
     with led._connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
+        json_set = "json_set(COALESCE(record_json, '{}'), '$.terminal_reason', ?)"
+        params: list[Any] = [terminal_status, terminal_status, now_stamp, reason]
+        if harvest_chars is not None:
+            json_set = f"json_set({json_set}, '$.harvest_chars', ?)"
+            params.append(int(harvest_chars))
+        params.append(fp)
         cur = conn.execute(
             "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, "
-            "terminal_at=?, record_json=json_set("
-            "COALESCE(record_json, '{}'), '$.terminal_reason', ?) "
+            f"terminal_at=?, record_json={json_set} "
             "WHERE dispatch_id=? "
             "AND status IN ('queued','admitted','running') "
             "AND COALESCE(read_only, 0)=1 "
             "AND json_extract(record_json, '$.address.kind') IN ('api_role', 'cdp')",
-            (terminal_status, terminal_status, now_stamp, reason, fp),
+            tuple(params),
         )
         if cur.rowcount == 1:
             conn.execute(
@@ -518,7 +528,10 @@ def record_dispatch_registry_best_effort(**kwargs: Any) -> str | None:
                 "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                 (fp,),
             ).fetchone()
-            if exists is not None and str(exists["status"]) in _FRONTIER_TERMINAL_STATUSES:
+            if (
+                exists is not None
+                and str(exists["status"]) in _FRONTIER_TERMINAL_STATUSES
+            ):
                 return fp
         if exists is not None:
             return stamp_registry_on_dispatch_row(
@@ -539,6 +552,7 @@ def record_dispatch_registry_best_effort(**kwargs: Any) -> str | None:
             resolved_model=str(kwargs.get("resolved_model") or "none"),
             contract=kwargs.get("contract"),
             max_wall_s=kwargs.get("max_wall_s"),
+            prompt_bytes=kwargs.get("prompt_bytes"),
             ledger=led,
         )
     except Exception as exc:  # noqa: BLE001 — admit must not fail

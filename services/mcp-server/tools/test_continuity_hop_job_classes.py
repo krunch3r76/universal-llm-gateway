@@ -44,6 +44,7 @@ async def _run(decision: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str,
         thread_id="77",
         from_agent="web-anthropic",
         decision=decision,
+        caller_agent="cursor",
     )
     result = await commission_continuity_hop(payload, decision, poster)
     return result, posts
