@@ -148,6 +148,9 @@ CSE_WAKE_SUBJECT_HEADS = frozenset(
         "RULING",
     }
 )
+_GROK_NOPIPE_WAKE_HEADS = frozenset(
+    {"DONE", "FAILED", "BLOCKED", "QUESTION", "REQUEST"}
+)
 GROK_WAKE_SUBJECT_HEADS = frozenset(
     {
         "REQUEST",
@@ -994,18 +997,10 @@ def _subject_allowed_rule_id(
         first_token = head.split()[0]
         if first_token in allowed:
             return "wake_cse_allowlist" if cse else "wake_grok_allowlist"
-    if (
-        not cse
-        and head
-        and head.split()[0]
-        in {
-            "DONE",
-            "FAILED",
-            "BLOCKED",
-            "QUESTION",
-        }
-    ):
-        return "wake_grok_allowlist"
+    if not cse and head:
+        first_nopipe = head.split()[0].rstrip(":")
+        if first_nopipe in _GROK_NOPIPE_WAKE_HEADS:
+            return "wake_grok_allowlist"
     return None
 
 

@@ -27,6 +27,7 @@ from bus_watch.endpoint_wake_dispatcher import (
     _effective_to_agent,
     _legacy_qualifies,
     _reset_no_composer_state,
+    _subject_allowed_rule_id,
     classify_cse,
     classify_display,
     fire_due_wakes,
@@ -341,6 +342,54 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "READY",
         "EAR",
     }
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "REQUEST: a:1 x",
+        "REQUEST x",
+        "DONE: x",
+        "REQUEST: x | y",
+    ],
+)
+def test_grok_nopipe_request_head_wakes(subject: str) -> None:
+    assert (
+        _subject_allowed_rule_id(subject, cse=False, to_agent="grok-bot-gc1")
+        == "wake_grok_allowlist"
+    )
+
+
+def test_cse_nopipe_request_head_suppressed() -> None:
+    assert _subject_allowed_rule_id("REQUEST x", cse=True, to_agent="grok-bot-gc1") is None
+
+
+@pytest.mark.parametrize(
+    "subject",
+    ["Requesting x", "Review of x"],
+)
+def test_nopipe_prose_first_token_still_suppressed(subject: str) -> None:
+    assert (
+        _subject_allowed_rule_id(subject, cse=False, to_agent="grok-bot-gc1") is None
+    )
+
+
+def test_cdp_delivery_subjects_unchanged() -> None:
+    assert (
+        _subject_allowed_rule_id(
+            "cdp reply — 1234abcd", cse=False, to_agent="grok-bot-gc1"
+        )
+        == "wake_gate_or_directive"
+    )
+    assert (
+        _subject_allowed_rule_id(
+            "cdp generate — rid", cse=False, to_agent="grok-bot-gc1"
+        )
+        is None
+    )
+
+
+def test_grok_wake_heads_set() -> None:
     assert not qualifies(
         {"to_agent": "all", "from_agent": "cursor", "subject": "DONE|x"}, cse=False
     )
