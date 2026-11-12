@@ -1105,10 +1105,9 @@ def build_owed_wake_deps():
         context: dict[str, Any],
     ) -> bool:
         if wake_kind == "bridge_wake":
-            return cse_session_warm.dispatch_bridge_wake(
-                lane_thread_id=lane_thread_id,
-                context=context,
-            )
+            # :8 endpoint wakes are owned by Stargate display-chat-wake; GIW must not CDP.
+            _ = lane_thread_id
+            return False
         holder = context.get("holder") or lookup_holder_for_owed_wake(holder_id)
         if not isinstance(holder, dict):
             return False

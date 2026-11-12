@@ -71,6 +71,32 @@ def test_build_owed_wake_deps_imports_without_stub() -> None:
     assert deps.endpoint_wake is not None
 
 
+def test_owed_wake_bridge_wake_path_does_not_use_cursor_bridge_delivery() -> None:
+    from tools import cse_session_warm
+
+    assert not hasattr(cse_session_warm, "dispatch_bridge_wake")
+
+    from services.git_integration_worker.cse_session_holders import (
+        build_owed_wake_deps,
+    )
+
+    deps = build_owed_wake_deps()
+    holder = {
+        "holder_id": "holder-test",
+        "lane_thread_id": "23318",
+        "seat_state": "driving",
+    }
+    assert (
+        deps.endpoint_wake(
+            holder_id="holder-test",
+            lane_thread_id="23318",
+            wake_kind="bridge_wake",
+            context={"lane_thread_id": "23318", "holder": holder, "turn_refs": []},
+        )
+        is False
+    )
+
+
 def test_send_route_milestone_to_maestro_records_owed_wake_row(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
