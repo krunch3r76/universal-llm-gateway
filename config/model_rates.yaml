@@ -112,6 +112,16 @@ models:
     output_rate_per_m: 10.0
     source: manual_seed
     pinned: true
+  # Gemini 4 Carbon — https://cursor.com/docs/models-and-pricing,
+  # https://cursor.com/docs/models/gemini-4-carbon (read 2026-11-12).
+  # Intro through 2026-11-30: $2 / $0.1 cache read / $10 output per 1M; from
+  # 2026-12-01: $4 / $0.20 / $20 (no schema for calendar step — row keeps intro).
+  - model_id: cursor/gemini-4-carbon
+    input_rate_per_m: 2.0
+    cache_read_rate_per_m: 0.1
+    output_rate_per_m: 10.0
+    source: manual_seed
+    pinned: true
   - model_id: cursor/glm-5.2
     input_rate_per_m: 1.4
     cache_read_rate_per_m: 0.26
