@@ -12,6 +12,7 @@ from bus_compact_pointer import (
     compact_pointer_body,
     extract_verdict_line,
     format_closeout_memo_bus_body,
+    format_closeout_memo_bus_delivery,
 )
 
 pytestmark = pytest.mark.offline
@@ -135,6 +136,61 @@ def test_c1_format_closeout_memo_no_sidecar_uri_inlines_text() -> None:
     assert body == overflow
     assert "sidecar_ref:" not in body
     assert "agent-bus:" not in body
+
+
+def test_r7_long_inline_fallback_spills_via_spill_uri_pointer() -> None:
+    long_text = "## overflow\n\n" + ("detail line\n" * 400)
+    spill = "cortex://notes/system/threads/23222-overflow.md"
+    body = format_closeout_memo_bus_body(
+        memo_kind="sdk_closeout",
+        memo_status="completed",
+        wake_lane="23222",
+        dispatch_id="disp-x",
+        execution_id="exec-y",
+        sidecar_uri=None,
+        sidecar_text=long_text,
+        spill_uri=spill,
+    )
+    assert len(body) <= 2000
+    assert "…" not in body[-3:]
+    assert spill in body
+    digest = hashlib.sha256(long_text.encode("utf-8")).hexdigest()
+    assert _sha256_from_pointer(body) == digest
+
+
+def test_r7_long_inline_fallback_never_truncates_without_spill() -> None:
+    long_text = "A" * 2500
+    delivery = format_closeout_memo_bus_delivery(
+        memo_kind="sdk_closeout",
+        memo_status="completed",
+        wake_lane="23222",
+        dispatch_id="disp-x",
+        execution_id="exec-y",
+        sidecar_uri=None,
+        sidecar_text=long_text,
+    )
+    assert len(delivery.body) <= 2000
+    assert delivery.sidecar_content == long_text
+    assert delivery.body != long_text[:1999] + "…"
+    digest = hashlib.sha256(long_text.encode("utf-8")).hexdigest()
+    assert _sha256_from_pointer(delivery.body) == digest
+
+
+def test_r7_allow_long_body_explicit_opt_out_returns_full_text() -> None:
+    long_text = "B" * 2500
+    delivery = format_closeout_memo_bus_delivery(
+        memo_kind="sdk_closeout",
+        memo_status="completed",
+        wake_lane="23222",
+        dispatch_id="disp-x",
+        execution_id="exec-y",
+        sidecar_uri=None,
+        sidecar_text=long_text,
+        allow_long_body=True,
+    )
+    assert delivery.body == long_text
+    assert delivery.allow_long_body is True
+    assert delivery.sidecar_content is None
 
 
 def test_c4_section_tail_recount_after_truncation() -> None:

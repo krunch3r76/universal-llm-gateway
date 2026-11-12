@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from markdown_sections import list_sections as md_list_sections
@@ -212,13 +213,61 @@ def compact_pointer_body(
     return out
 
 
-def _inline_body(text: str, *, max_chars: int = MAX_BODY_CHARS) -> str:
-    if len(text) <= max_chars:
-        return text
-    return text[: max_chars - 1] + "…"
+@dataclass(frozen=True, slots=True)
+class CloseoutMemoBusDelivery:
+    """Formatted bus body plus optional spill fields for POST /turns."""
+
+    body: str
+    sidecar_content: str | None = None
+    allow_long_body: bool = False
 
 
-def format_closeout_memo_bus_body(
+def giw_parent_pointer_enrichment(
+    *,
+    sidecar_uri: str,
+    sidecar_text: str | None,
+    base_body: str,
+    max_chars: int = MAX_BODY_CHARS,
+) -> str:
+    """Append sha256 + section map (or unavailable line) within ``max_chars``."""
+    if sidecar_text is None:
+        note = f"sections: unavailable (md_list {sidecar_uri.strip()})"
+        body = f"{base_body}\n{note}"
+        return body if len(body) <= max_chars else base_body
+
+    digest = hashlib.sha256(sidecar_text.encode("utf-8")).hexdigest()
+    section_map, hidden = build_section_map(sidecar_text)
+    original_rows = len(section_map) + hidden
+    tail: str | None = None
+    if hidden:
+        rel = sidecar_uri.removeprefix("cortex://")
+        tail = f"+{hidden} more (md_list {rel})"
+
+    sections = list(section_map)
+    sha_line = f"sha256: {digest}"
+
+    def _render() -> str:
+        lines = [base_body, sha_line]
+        if sections or tail:
+            lines.append("")
+            lines.extend(_format_section_table(sections, tail=tail))
+        return "\n".join(lines)
+
+    body = _render()
+    while len(body) > max_chars and sections:
+        sections.pop()
+        tail = _recompute_section_tail(
+            sidecar_uri=sidecar_uri,
+            original_row_count=original_rows,
+            visible_rows=len(sections),
+        )
+        body = _render()
+    if len(body) > max_chars:
+        return f"{base_body}\n{sha_line}"[:max_chars].rstrip()
+    return body
+
+
+def format_closeout_memo_bus_delivery(
     *,
     memo_kind: str,
     memo_status: str,
@@ -227,10 +276,64 @@ def format_closeout_memo_bus_body(
     execution_id: str | None,
     sidecar_uri: str | None,
     sidecar_text: str,
-) -> str:
+    spill_uri: str | None = None,
+    allow_long_body: bool = False,
+) -> CloseoutMemoBusDelivery:
     """Compact bus body for closeout-memo overflow / fallback posts."""
-    if not (sidecar_uri and sidecar_uri.strip()):
-        return _inline_body(sidecar_text)
+    uri = (sidecar_uri or spill_uri or "").strip() or None
+    if not uri:
+        if len(sidecar_text) <= MAX_BODY_CHARS:
+            return CloseoutMemoBusDelivery(body=sidecar_text)
+        if allow_long_body:
+            return CloseoutMemoBusDelivery(body=sidecar_text, allow_long_body=True)
+        return CloseoutMemoBusDelivery(
+            body=_compact_closeout_pointer(
+                memo_kind=memo_kind,
+                memo_status=memo_status,
+                wake_lane=wake_lane,
+                dispatch_id=dispatch_id,
+                execution_id=execution_id,
+                sidecar_uri="agent-bus:sidecar-content",
+                sidecar_text=sidecar_text,
+            ),
+            sidecar_content=sidecar_text,
+        )
+    digest = hashlib.sha256(sidecar_text.encode("utf-8")).hexdigest()
+    section_map, hidden = build_section_map(sidecar_text)
+    original_rows = len(section_map) + hidden
+    tail: str | None = None
+    if hidden:
+        rel = uri.removeprefix("cortex://")
+        tail = f"+{hidden} more (md_list {rel})"
+    context = [
+        f"lane: {wake_lane}",
+        f"kind: {memo_kind} status: {memo_status}",
+    ]
+    return CloseoutMemoBusDelivery(
+        body=compact_pointer_body(
+            verdict=f"CLOSEOUT {memo_status.upper()}",
+            execution_id=execution_id,
+            dispatch_id=dispatch_id,
+            sidecar_uri=uri,
+            sidecar_sha256=digest,
+            section_map=section_map,
+            context_lines=context,
+            section_tail=tail,
+            section_map_source_rows=original_rows,
+        )
+    )
+
+
+def _compact_closeout_pointer(
+    *,
+    memo_kind: str,
+    memo_status: str,
+    wake_lane: str,
+    dispatch_id: str,
+    execution_id: str | None,
+    sidecar_uri: str,
+    sidecar_text: str,
+) -> str:
     digest = hashlib.sha256(sidecar_text.encode("utf-8")).hexdigest()
     section_map, hidden = build_section_map(sidecar_text)
     original_rows = len(section_map) + hidden
@@ -253,3 +356,29 @@ def format_closeout_memo_bus_body(
         section_tail=tail,
         section_map_source_rows=original_rows,
     )
+
+
+def format_closeout_memo_bus_body(
+    *,
+    memo_kind: str,
+    memo_status: str,
+    wake_lane: str,
+    dispatch_id: str,
+    execution_id: str | None,
+    sidecar_uri: str | None,
+    sidecar_text: str,
+    spill_uri: str | None = None,
+    allow_long_body: bool = False,
+) -> str:
+    """Compact bus body string (see ``format_closeout_memo_bus_delivery`` for spill)."""
+    return format_closeout_memo_bus_delivery(
+        memo_kind=memo_kind,
+        memo_status=memo_status,
+        wake_lane=wake_lane,
+        dispatch_id=dispatch_id,
+        execution_id=execution_id,
+        sidecar_uri=sidecar_uri,
+        sidecar_text=sidecar_text,
+        spill_uri=spill_uri,
+        allow_long_body=allow_long_body,
+    ).body
