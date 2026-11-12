@@ -14,15 +14,17 @@ def frontier_row_economics(row: dict[str, Any]) -> dict[str, Any]:
         try:
             rec = json.loads(rec)
         except json.JSONDecodeError:
-            rec = {}
+            return {}
+        if not isinstance(rec, dict):
+            return {}
     elif not isinstance(rec, dict):
-        rec = {}
+        return {}
     address = rec.get("address") if isinstance(rec.get("address"), dict) else {}
     if address.get("kind") != "cdp":
         return {}
     prompt_bytes = rec.get("prompt_bytes")
     harvest_chars = rec.get("harvest_chars")
-    started = row.get("started_at") or row.get("queued_at")
+    started = row.get("started_at")
     terminal = row.get("terminal_at")
     wall_s: float | None = None
     if started and terminal:

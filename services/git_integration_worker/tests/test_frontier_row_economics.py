@@ -37,3 +37,25 @@ def test_open_cdp_row_has_no_wall_s() -> None:
 def test_non_cdp_row_projects_nothing() -> None:
     row = {"record_json": {"address": {"kind": "api_role"}}}
     assert frontier_row_economics(row) == {}
+
+
+def test_json_array_record_json_returns_empty() -> None:
+    row = {"record_json": "[]"}
+    assert frontier_row_economics(row) == {}
+
+
+def test_api_role_row_gains_no_harvest_key() -> None:
+    rec = {"address": {"kind": "api_role"}, "harvest_chars": 99}
+    out = frontier_row_economics({"record_json": rec})
+    assert out == {}
+
+
+def test_wall_s_omitted_when_started_at_missing() -> None:
+    rec = {"address": {"kind": "cdp"}}
+    row = {
+        "record_json": rec,
+        "queued_at": "2026-11-12T09:00:00Z",
+        "terminal_at": "2026-11-12T10:00:00Z",
+    }
+    out = frontier_row_economics(row)
+    assert "wall_s" not in out
