@@ -228,6 +228,29 @@ async def release_op(
     return JSONResponse(status_code=200, content=released)
 
 
+@router.post("/ops/{op_id}/expire")
+async def expire_op(
+    op_id: str,
+    body: ReleaseBody,
+    request: Request,
+) -> JSONResponse:
+    """Mark a started op expired after the edge consumed a cancel directive."""
+    refused = _gate()
+    if refused is not None:
+        return refused
+    try:
+        edge_id = await require_edge_identity(request)
+        expired = await leasing.expire(
+            journal_for(request),
+            op_id=op_id,
+            edge_id=edge_id,
+            lease_id=body.lease_id,
+        )
+    except EdgeOpRefusedError as error:
+        return _refusal_response(error)
+    return JSONResponse(status_code=200, content=expired)
+
+
 @router.get("/ops/{op_id}/directives")
 async def get_op_directives(
     op_id: str,

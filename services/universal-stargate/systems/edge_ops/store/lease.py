@@ -14,12 +14,14 @@ from ..model import (
     LeaseGrant,
     Outcome,
 )
+from .expire import expire_sync
 from .lease_events import append_event_sync
 from .lease_row import owned_row_sync, refuse_started_terminal_sync, row_after_sync
 from .schema import record_transition_sync
 
 __all__ = [
     "claim_lease_sync",
+    "expire_sync",
     "finish_sync",
     "release_sync",
     "renew_and_start_sync",

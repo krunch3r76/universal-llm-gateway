@@ -13,6 +13,7 @@ from ..events import (
     EdgeLeasePolled,
     EdgeOpAdmitted,
     EdgeOpCompleted,
+    EdgeOpExpired,
     EdgeOpFailed,
     EdgeOpLeased,
     EdgeOpProgress,
@@ -23,6 +24,7 @@ from ..events import (
 from ..model import (
     CODE_LEASE_STALE,
     CODE_TERMINAL,
+    REASON_DEADLINE,
     STARTED_EVENT_TYPE,
     Clock,
     EdgeOpRefusedError,
@@ -264,6 +266,25 @@ class EdgeOpsJournal:
         await self._waiter.notify(TRANSITION_CHANNEL)
         if state == "queued":
             await self._waiter.notify(QUEUED_CHANNEL)
+        return state
+
+    async def expire(self, *, op_id: str, edge_id: str, lease_id: str) -> str | None:
+        expired = await self._in_store(
+            lease_ops.expire_sync,
+            op_id=op_id,
+            edge_id=edge_id,
+            lease_id=lease_id,
+            now=self.now(),
+        )
+        if expired is None:
+            return None
+        state, kind = expired
+        if state == "expired":
+            journal_thread.emit(
+                self,
+                EdgeOpExpired(op_id=op_id, kind=kind, reason=REASON_DEADLINE),
+            )
+        await self._waiter.notify(TRANSITION_CHANNEL)
         return state
 
     async def get(self, op_id: str) -> OpRecord | None:

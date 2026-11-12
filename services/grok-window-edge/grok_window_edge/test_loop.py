@@ -7,6 +7,7 @@ that exercises admit, lease, the ``started`` ack and the stored result.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -133,6 +134,35 @@ class InProcessClient:
         """Release through the real service function."""
         with _as_client_error():
             return await leasing.release(
+                self._journal,
+                op_id=op_id,
+                edge_id=self._edge_id,
+                lease_id=lease_id,
+            )
+
+    async def poll_directives(
+        self,
+        *,
+        op_id: str,
+        lease_id: str,
+        after: int = 0,
+        wait_s: float,
+    ) -> list[dict[str, Any]]:
+        """Long-poll directives through the real service function."""
+        with _as_client_error():
+            return await leasing.directives(
+                self._journal,
+                op_id=op_id,
+                edge_id=self._edge_id,
+                lease_id=lease_id,
+                after=after,
+                wait_s=wait_s,
+            )
+
+    async def expire(self, *, op_id: str, lease_id: str) -> dict[str, Any]:
+        """Expire through the real service function."""
+        with _as_client_error():
+            return await leasing.expire(
                 self._journal,
                 op_id=op_id,
                 edge_id=self._edge_id,
@@ -505,6 +535,66 @@ async def test_a_refused_write_is_not_an_outage_to_back_off_from(
 
     assert slept == []
     assert len(attempts) == 3
+
+
+@pytest.mark.asyncio
+async def test_cancel_directive_expires_a_slow_handler(
+    journal: EdgeOpsJournal,
+    clock: ManualClock,
+) -> None:
+    """Started past deadline enqueues cancel; the loop must expire, not complete."""
+    op_id = await admission.admit(
+        journal,
+        kind="ping",
+        op="ping",
+        args={},
+        idempotency_key="cancel-slow",
+        deadline_s=5.0,
+    )
+    grant = await leasing.lease(journal, edge_id=EDGE_ID, kinds=("ping",), wait_s=0.0)
+    assert grant is not None
+    await leasing.post_event(
+        journal,
+        op_id=op_id,
+        edge_id=EDGE_ID,
+        lease_id=grant.lease_id,
+        event_type="started",
+    )
+    held = asyncio.Event()
+
+    async def slow_handler(op: str, args: dict[str, object]) -> dict[str, object]:
+        await held.wait()
+        return {"ok": True}
+
+    loop = EdgeLoop(
+        InProcessClient(journal, edge_id=EDGE_ID),
+        kinds=("ping",),
+        handlers={"ping": slow_handler},
+        lease_wait_s=0.0,
+        directive_poll_s=0.0,
+    )
+    run = asyncio.create_task(
+        loop._execute(
+            {
+                "op_id": op_id,
+                "lease_id": grant.lease_id,
+                "kind": "ping",
+                "op": "ping",
+                "args": {},
+                "redelivery": "safe",
+            }
+        )
+    )
+    await asyncio.sleep(0)
+    clock.advance(6.0)
+    await asyncio.sleep(0.05)
+    await run
+
+    record = await journal.get(op_id)
+    assert record is not None
+    assert record.state == "expired"
+    assert record.result is None
+    assert not held.is_set()
 
 
 def test_a_409_is_a_conflict_and_not_a_transport_fault() -> None:

@@ -81,6 +81,17 @@ class StargateEdgeClient(Protocol):
 
     async def release(self, *, op_id: str, lease_id: str) -> dict[str, Any]: ...
 
+    async def poll_directives(
+        self,
+        *,
+        op_id: str,
+        lease_id: str,
+        after: int = 0,
+        wait_s: float,
+    ) -> list[dict[str, Any]]: ...
+
+    async def expire(self, *, op_id: str, lease_id: str) -> dict[str, Any]: ...
+
 
 class HttpEdgeClient:
     """Edge-initiated HTTP against ``/api/v1/edge/*``."""
@@ -160,6 +171,59 @@ class HttpEdgeClient:
         response = await self._request(
             "POST",
             f"{_EDGE_BASE_PATH}/ops/{op_id}/release",
+            json_body={"lease_id": lease_id},
+        )
+        return self._decoded(response)
+
+    async def poll_directives(
+        self,
+        *,
+        op_id: str,
+        lease_id: str,
+        after: int = 0,
+        wait_s: float,
+    ) -> list[dict[str, Any]]:
+        """Long-poll for directives above *after*. Empty list on 204."""
+        try:
+            async with make_async_client(
+                self._base_url, timeout=wait_s + 5.0
+            ) as client:
+                response = await client.request(
+                    "GET",
+                    f"{_EDGE_BASE_PATH}/ops/{op_id}/directives",
+                    params={
+                        "lease_id": lease_id,
+                        "after": after,
+                        "wait": wait_s,
+                    },
+                    headers=self._headers(),
+                )
+        except httpx.HTTPError as exc:
+            raise EdgeTransportError(
+                f"GET {_EDGE_BASE_PATH}/ops/{op_id}/directives failed: {exc}"
+            ) from exc
+        if response.status_code == 409:
+            raise _conflict(
+                "GET", f"{_EDGE_BASE_PATH}/ops/{op_id}/directives", response
+            )
+        if response.status_code == 204:
+            return []
+        if response.status_code >= 400:
+            raise EdgeTransportError(
+                f"GET {_EDGE_BASE_PATH}/ops/{op_id}/directives returned "
+                f"{response.status_code}"
+            )
+        decoded = self._decoded(response)
+        directives = decoded.get("directives")
+        if not isinstance(directives, list):
+            raise EdgeTransportError("Stargate returned a non-list directives body")
+        return directives
+
+    async def expire(self, *, op_id: str, lease_id: str) -> dict[str, Any]:
+        """Mark a started op expired after consuming a cancel directive."""
+        response = await self._request(
+            "POST",
+            f"{_EDGE_BASE_PATH}/ops/{op_id}/expire",
             json_body={"lease_id": lease_id},
         )
         return self._decoded(response)

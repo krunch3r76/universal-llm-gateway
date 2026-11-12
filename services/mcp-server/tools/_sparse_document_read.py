@@ -82,6 +82,28 @@ def param_not_applicable_error(
     }
 
 
+def expected_read_sha256_key_error(
+    *,
+    keys: list[str],
+    message: str,
+    accepted_spellings: list[str] | None = None,
+) -> dict[str, Any]:
+    """Retryable precondition mismatch for map-shaped expected_read_sha256."""
+    data: dict[str, Any] = {
+        "parameter": "expected_read_sha256",
+        "keys": list(keys),
+    }
+    if accepted_spellings:
+        data["accepted_for_target"] = list(accepted_spellings)
+    return {
+        "code": "invalid_parameter",
+        "message": message,
+        "source": "fs",
+        "retryable": True,
+        "data": data,
+    }
+
+
 def _sum_utf8_content_bytes(node: Any) -> int:
     total = 0
     if isinstance(node, dict):
@@ -204,7 +226,9 @@ def _id_last_segment(section_id: str) -> str:
     return base.rsplit("/", 1)[-1]
 
 
-def _nearest_section_ids(sid: str, indexed: list[_IndexedSection], *, limit: int = 5) -> list[str]:
+def _nearest_section_ids(
+    sid: str, indexed: list[_IndexedSection], *, limit: int = 5
+) -> list[str]:
     """Rank document section ids to help callers recover from a miss.
 
     Order: case-insensitive exact id, ``difflib`` close matches (cutoff 0.5),

@@ -52,6 +52,23 @@ def dispatch_files_op(
         paths = []
     if not op:
         raise ValueError("'op' is required")
+    from tools.filesystem._fs_dispatch import SINGLE_PATH_EXPECTED_READ_OPS
+
+    bound_expected = expected_read_sha256
+    if op in SINGLE_PATH_EXPECTED_READ_OPS and path:
+        from tools.filesystem._expected_read_sha256_boundary import (
+            coerce_expected_read_sha256_at_fs_boundary,
+        )
+
+        bound_expected, exp_err = coerce_expected_read_sha256_at_fs_boundary(
+            op=op,
+            expected=expected_read_sha256,
+            path=path,
+            sandbox="cortex",
+        )
+        if exp_err is not None:
+            return exp_err
+
     if op == "read":
         if not path:
             raise ValueError("'path' is required for read")
@@ -64,7 +81,7 @@ def dispatch_files_op(
             sections=sections,
             export=export,
             chunk_cursor=chunk_cursor,
-            expected_read_sha256=expected_read_sha256 or None,
+            expected_read_sha256=bound_expected if bound_expected else None,
         )
         if path.startswith("dropbox/"):
             result["_next"] = DROPBOX_READ_HINT

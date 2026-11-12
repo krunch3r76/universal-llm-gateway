@@ -23,7 +23,10 @@ from ..model import (
     REASON_LEASE_LOST_AFTER_STARTED,
     REASON_LEASE_LOST_BEFORE_STARTED,
 )
-from .directives_io import write_cancel_directive_sync
+from .directives_io import (
+    collapse_duplicate_directives_sync,
+    write_cancel_directive_sync,
+)
 
 _OPS_DDL = """
 CREATE TABLE IF NOT EXISTS edge_ops (
@@ -129,6 +132,7 @@ def ensure_schema_sync(connection: sqlite3.Connection) -> None:
     """
     for statement in _ALL_DDL:
         connection.execute(statement)
+    collapse_duplicate_directives_sync(connection)
     for statement in _INDEX_DDL:
         connection.execute(statement)
     connection.commit()

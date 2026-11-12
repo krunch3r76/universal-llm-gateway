@@ -186,8 +186,7 @@ PARAM_PURPOSE: dict[str, str] = {
     "all_occurrences": "replace-all flag for replace",
     "mode": "search routing selector (auto|content|filename) for search",
     "include_worktrees": (
-        "when true, fs find and search include .worktrees and "
-        "ulg-arc-worktrees paths"
+        "when true, fs find and search include .worktrees and ulg-arc-worktrees paths"
     ),
     "size_only": "size-only list_sections flag for md_list",
     "sections": "batched section ids for document read expansion",
@@ -239,6 +238,12 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "md_delete": frozenset({"section"}),
     "md_insert": frozenset({"heading", "level", "position", "section"}),
 }
+
+SINGLE_PATH_EXPECTED_READ_OPS = frozenset(
+    op
+    for op, consumes in OP_CONSUMES.items()
+    if "expected_read_sha256" in consumes and op != "read_multi"
+)
 
 # unified op -> selectors that MUST be non-default (else a destructive default
 # target is hit silently): replace/move/copy → target, insert_at_line → line,
@@ -305,6 +310,8 @@ def _param_provided(name: str, value: Any) -> bool:
     if name == "expected_read_sha256":
         if value is None:
             return False
+        if isinstance(value, dict):
+            return True
         return bool(str(value).strip())
     if name == "section":
         return bool(str(value).strip())
@@ -378,7 +385,7 @@ def md_section_op_doc() -> str:
     return (
         "Markdown section ops (for large docs):\n"
         "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` on six-block handoff packets)\n"
-        '  md_read    (path, section?, sections?, export?, expected_read_sha256?) — default manifest; section/sections/export expand. XML block keys: `<tag>` or bare `tag`\n'
+        "  md_read    (path, section?, sections?, export?, expected_read_sha256?) — default manifest; section/sections/export expand. XML block keys: `<tag>` or bare `tag`\n"
         "  md_to_dict (path, expected_read_sha256?) — heading tree manifest without bodies; expected_read_sha256 is param_not_applicable\n"
         "  md_replace (path, section, target, content, all_occurrences?)  — patch target substring within the section body only; target required; cannot truncate unmentioned content; the section span includes child headings\n"
         "  md_rewrite_section (path, section, content)  — replace the entire section body (explicit rewrite after md_read); response includes mutation and _warning when body shrinks by >50% or children_removed when the rewrite drops nested headings; the section span includes child headings\n"
@@ -436,6 +443,7 @@ def dispatch_workspaces_op(
     export: bool = False,
     chunk_cursor: int | None = None,
     expected_read_sha256: str = "",
+    workspaces_target_repo: str | None = None,
 ) -> dict[str, Any]:
     """Dispatch a workspaces-sandbox fs op via the project adapter.
 
@@ -447,6 +455,22 @@ def dispatch_workspaces_op(
     """
     if op not in OP_SANDBOXES or "workspaces" not in OP_SANDBOXES[op]:
         return unknown_op_error(op, "workspaces")
+
+    bound_expected = expected_read_sha256
+    if op in SINGLE_PATH_EXPECTED_READ_OPS and path:
+        from tools.filesystem._expected_read_sha256_boundary import (
+            coerce_expected_read_sha256_at_fs_boundary,
+        )
+
+        bound_expected, exp_err = coerce_expected_read_sha256_at_fs_boundary(
+            op=op,
+            expected=expected_read_sha256,
+            path=path,
+            sandbox="workspaces",
+            workspaces_target_repo=workspaces_target_repo,
+        )
+        if exp_err is not None:
+            return exp_err
 
     if op == "read":
         fn = overflow_registry.get("read_project_file")
@@ -461,7 +485,7 @@ def dispatch_workspaces_op(
             sections=sections,
             export=export,
             chunk_cursor=chunk_cursor,
-            expected_read_sha256=expected_read_sha256 or None,
+            expected_read_sha256=bound_expected,
         )
 
     if op == "read_multi":
