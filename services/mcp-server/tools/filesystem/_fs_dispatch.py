@@ -305,6 +305,8 @@ def _param_provided(name: str, value: Any) -> bool:
     if name == "expected_read_sha256":
         if value is None:
             return False
+        if isinstance(value, dict):
+            return bool(value)
         return bool(str(value).strip())
     if name == "section":
         return bool(str(value).strip())
