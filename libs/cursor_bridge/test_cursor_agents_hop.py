@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from bus_watch import ide_hop
+from host_predicates.cursor_hosts import is_cursor_xvfb_host
 
 from cursor_bridge.cursor_agents_archive import (
     _list_root_sidebar_rows_js,
@@ -38,7 +39,6 @@ from cursor_bridge.glass_services_js import (
 )
 from cursor_bridge.house_knob_parameters import map_house_knob_parameters
 from cursor_bridge.wake_delivery import normalize_target
-from host_predicates.cursor_hosts import is_cursor_xvfb_host
 
 pytestmark = pytest.mark.offline
 

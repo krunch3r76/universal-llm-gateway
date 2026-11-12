@@ -329,50 +329,6 @@ def _change_ts_for_source(
     return _git_latest_landing_ts(repo, gate_files)
 
 
-def _expected_tree_hash(source_ref: str | None, *, gate_files: set[str]) -> str | None:
-    repo = _git_repo_root()
-    if repo is None:
-        return None
-    commit: str | None = None
-    if source_ref and source_ref.startswith("git:"):
-        commit = source_ref[4:].strip() or None
-    if commit is None and gate_files:
-        try:
-            proc = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo),
-                    "log",
-                    "-1",
-                    "--format=%H",
-                    "--",
-                    *sorted(gate_files),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        if proc.returncode == 0 and proc.stdout.strip():
-            commit = proc.stdout.strip()
-    if not commit:
-        return None
-    try:
-        tree = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", f"{commit}^{{tree}}"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return tree.stdout.strip() if tree.returncode == 0 else None
-
-
 def _manage_stamp_identity_blocked(manage_result: dict[str, Any]) -> str | None:
     """Fail closed when manage omitted stamp identity and recorded a reason."""
     reason = str(manage_result.get("deploy_stamp_reason") or "").strip()
@@ -386,7 +342,6 @@ def _identity_passes(
     *,
     source_ref: str,
     change_ts: datetime | None,
-    expected_tree_hash: str | None,
 ) -> tuple[bool, bool]:
     deploy_mode = str(health.get("deploy_mode") or "").strip()
     if deploy_mode and deploy_mode != "source_synced":
@@ -607,7 +562,6 @@ def require_deploy_state(
         return
 
     change_ts = _change_ts_for_source(effective_ref, gate_files=gate_files)
-    expected_tree = _expected_tree_hash(effective_ref, gate_files=gate_files)
     failures: list[str] = []
 
     for producer in sorted(producers):
@@ -648,7 +602,6 @@ def require_deploy_state(
             merged,
             source_ref=effective_ref or "",
             change_ts=change_ts,
-            expected_tree_hash=expected_tree,
         )
         if not passed:
             failures.append(f"{producer}: source identity not fresh")

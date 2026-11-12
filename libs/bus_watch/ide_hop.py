@@ -49,10 +49,10 @@ from transport_utils import (
 )
 
 from bus_watch.digest_budget import (
-    POLICY_DEFAULTS,
     _IDE_TOOL_CALLS_BACKSTOP,
     _IDE_TOOL_CALLS_THRESHOLD,
     _IDE_TOOL_RESULT_TOKENS_THRESHOLD,
+    POLICY_DEFAULTS,
     agent_bus_bearer_headers,
 )
 from bus_watch.doorbell_skills import primary_liaison_slug

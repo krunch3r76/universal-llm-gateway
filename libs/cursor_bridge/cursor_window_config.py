@@ -11,6 +11,8 @@ from typing import Any
 
 from host_predicates.cursor_hosts import (
     all_gui_host_aliases as _all_gui_host_aliases,
+)
+from host_predicates.cursor_hosts import (
     config_path,
     load_config,
     row_for_gui_host,

@@ -189,7 +189,6 @@ def test_identity_fails_when_ref_matches_but_sync_stale() -> None:
         health,
         source_ref=f"git:{_SHA}",
         change_ts=change_ts,
-        expected_tree_hash=None,
     )
     assert passed is False
 
@@ -207,7 +206,6 @@ def test_identity_passes_on_manage_fields_when_get_empty() -> None:
         merged,
         source_ref=f"git:{_SHA}",
         change_ts=change_ts,
-        expected_tree_hash=None,
     )
     assert passed is True
 
@@ -225,7 +223,6 @@ def test_identity_fails_closed_when_stamp_unreadable_fields_absent() -> None:
         merged,
         source_ref=f"git:{_SHA}",
         change_ts=change_ts,
-        expected_tree_hash=None,
     )
     assert passed is False
     assert had_mode is True
