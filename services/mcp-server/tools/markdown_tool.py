@@ -389,6 +389,9 @@ def _section_patch_result(
     all_occurrences: bool = False,
 ) -> dict[str, Any]:
     """Patch target substring within a section — cannot truncate unmentioned body."""
+    refused = _refuse_empty_write_section(section, "replace_section")
+    if refused is not None:
+        return refused
     if is_converted_format(resolved):
         return {
             "error": (
@@ -668,7 +671,8 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         Section id from md_list (``id`` rows, preamble ``__preamble__``); read ops
         with empty/omitted section return a manifest (``selection=manifest``) without
         inline body text; use ``section``, ``sections``, or ``export=true`` to expand.
-        Write ops reject an empty section and ``__preamble__``.
+        Write ops reject an empty ``section``; only ``delete_section`` refuses
+        ``__preamble__``.
         from_dict: content is JSON.
         Prefer over whole-file context/cortex/workspaces for long structured docs.
         Use workspaces sandbox for tmp/ files (debrief log, phase docs, handoff docs).

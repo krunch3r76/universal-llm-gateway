@@ -216,13 +216,18 @@ def test_preamble_not_parent_of_root_headings(md_tool) -> None:
 
 def test_empty_section_write_refused(md_tool) -> None:
     fn, root = md_tool
-    (root / "w.md").write_text("# T\n\n", encoding="utf-8")
-    for op in (
-        "replace_section",
-        "append_section",
-        "delete_section",
-        "rewrite_section",
-    ):
+    (root / "w.md").write_text("T preamble line\n\n# Title\n\n", encoding="utf-8")
+    out = fn(
+        op="replace_section",
+        path="w.md",
+        sandbox="cortex",
+        section="",
+        target="T",
+        content="x",
+    )
+    assert "error" in out
+    assert "target" not in (out.get("reason") or "")
+    for op in ("append_section", "delete_section", "rewrite_section"):
         out = fn(op=op, path="w.md", sandbox="cortex", section="", content="x")
         assert "error" in out, op
 
