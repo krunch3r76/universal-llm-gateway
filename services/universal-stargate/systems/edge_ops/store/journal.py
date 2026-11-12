@@ -280,7 +280,10 @@ class EdgeOpsJournal:
             return None
         state, kind = expired
         if state == "expired":
-            journal_thread.emit(self, EdgeOpExpired(op_id=op_id, kind=kind, reason=REASON_DEADLINE))
+            journal_thread.emit(
+                self,
+                EdgeOpExpired(op_id=op_id, kind=kind, reason=REASON_DEADLINE),
+            )
         await self._waiter.notify(TRANSITION_CHANNEL)
         return state
 
