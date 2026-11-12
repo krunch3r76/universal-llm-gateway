@@ -99,7 +99,7 @@ def fetch_giw_holders_map(*, timeout: float = 5.0) -> tuple[str, dict[str, dict[
             return "unavailable", {}
         raw = payload.get("cse_holders")
         if not isinstance(raw, list):
-            return "ok", {}
+            return "unavailable", {}
         by_lane: dict[str, dict[str, Any]] = {}
         for holder in raw:
             if not isinstance(holder, dict):
@@ -127,16 +127,11 @@ def giw_holder_chat(
     url = _normalize_chat_url(holder.get("chat_url"))
     chat_id = cse_id_from_url(url or "") or None
     reg = str(holder.get("registration_id") or "").strip() or None
-    if url is None and reg:
-        if registry_active is not None:
-            _status, reg_url, reg_chat_id = registry_chat_from_active(registry_active, reg)
-            url = reg_url
-            if reg_chat_id:
-                chat_id = reg_chat_id
-        else:
-            url = _normalize_chat_url(chat_url_for_registration(reg))
-            if url:
-                chat_id = cse_id_from_url(url) or chat_id
+    if url is None and reg and registry_active is not None:
+        _status, reg_url, reg_chat_id = registry_chat_from_active(registry_active, reg)
+        url = reg_url
+        if reg_chat_id:
+            chat_id = reg_chat_id
     return url, chat_id
 
 

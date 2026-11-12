@@ -11,6 +11,9 @@ from agent_bus_store.auth import require_token
 from agent_bus_store.db import admit_dispatch, create_thread_with_turn, init_db
 from agent_bus_store.db.connection import connect, now
 from agent_bus_store.db.cse_associations import HOP_SEATED_BOUND_BY, associate_cse
+from agent_bus_store.db.seat_drift_probes import (
+    fetch_giw_holders_map as _real_fetch_giw,
+)
 from agent_bus_store.db.seat_ledger import (
     SeatLedgerError,
     _holder_of_chat,
@@ -35,6 +38,7 @@ pytestmark = pytest.mark.offline
 
 _URL_A = "https://claude.ai/cowork/cse_01CodB7tom1281iY8BmZJcZM"
 _URL_B = "https://claude.ai/cowork/cse_01RtRztEY8bgocgT1geurtRx"
+_URL_C = "https://claude.ai/cowork/cse_01AbsRegOnlyLaneChatUrl99"
 
 
 @pytest.fixture()
@@ -242,6 +246,28 @@ def test_drift_giw_probe_unavailable_no_crash(
     summary = bus_client.get("/seats/drift").json()
     assert summary["giw_probe"] == "unavailable"
     assert summary["giw_holder_mismatch_count"] == 0
+    assert summary["giw_holder_absent_count"] == 0
+
+
+def test_drift_giw_holder_absent_when_no_lane_holder(bus_client: TestClient) -> None:
+    tid = _lane(bus_client, "seat-giw-absent")
+    bus_client.post(
+        f"/threads/{tid}/seat",
+        json={
+            "transition": "birth",
+            "chat_url": _URL_A,
+            "actor": "test",
+            "request_id": "giw-absent-birth",
+        },
+    )
+    with patch(
+        "bus_watch.roster.fetch_giw_active_work_payload",
+        return_value={"cse_holders": []},
+    ):
+        summary = seat_drift_summary()
+    assert summary["giw_probe"] == "ok"
+    assert summary["giw_holder_mismatch_count"] == 0
+    assert summary["giw_holder_absent_count"] == 1
 
 
 def test_drift_giw_mismatch_when_holder_differs(bus_client: TestClient) -> None:
@@ -263,6 +289,7 @@ def test_drift_giw_mismatch_when_holder_differs(bus_client: TestClient) -> None:
         summary = seat_drift_summary()
     assert summary["giw_probe"] == "ok"
     assert summary["giw_holder_mismatch_count"] == 1
+    assert summary["giw_holder_absent_count"] == 0
 
 
 def test_drift_registry_probe_fail_open(bus_client: TestClient) -> None:
@@ -408,6 +435,46 @@ def test_fetch_giw_holders_map_from_cse_holders_only(bus_client: TestClient) -> 
     assert cursor_lane not in by_lane
     assert by_lane[lane_a]["chat_url"] == _URL_A
     assert by_lane[lane_b]["chat_url"] == _URL_A
+
+
+@pytest.mark.parametrize("bad_payload", [{"cse_holders": "not-a-list"}, {}])
+def test_fetch_giw_holders_map_unavailable_when_cse_holders_bad(
+    bus_client: TestClient, bad_payload: dict
+) -> None:
+    with patch(
+        "bus_watch.roster.fetch_giw_active_work_payload",
+        return_value=bad_payload,
+    ):
+        from agent_bus_store.db.seat_drift_probes import fetch_giw_holders_map
+
+        status, by_lane = fetch_giw_holders_map()
+    assert status == "unavailable"
+    assert by_lane == {}
+
+
+def test_giw_holder_chat_skips_per_seat_registry_when_active_load_failed(
+    bus_client: TestClient,
+) -> None:
+    from agent_bus_store.db.seat_drift_probes import giw_holder_chat
+
+    chat_url_calls = 0
+
+    def _counting_chat_url(*_a, **_k):
+        nonlocal chat_url_calls
+        chat_url_calls += 1
+        return _URL_A
+
+    with patch(
+        "agent_bus_store.db.seat_drift_probes.chat_url_for_registration",
+        side_effect=_counting_chat_url,
+    ):
+        url, chat_id = giw_holder_chat(
+            {"registration_id": "reg-only"},
+            registry_active=None,
+        )
+    assert chat_url_calls == 0
+    assert url is None
+    assert chat_id is None
 
 
 def test_drift_giw_zero_when_active_work_matches_driving_holder(
@@ -570,6 +637,7 @@ def test_drift_agreement_all_probes_zero(bus_client: TestClient) -> None:
         summary = seat_drift_summary()
 
     assert summary["giw_holder_mismatch_count"] == 0
+    assert summary["giw_holder_absent_count"] == 0
     assert summary["ledger_missing_count"] == 0
     assert summary["cse_association_mismatch_count"] == 0
     assert summary["registry_mismatch_count"] == 0
@@ -672,46 +740,86 @@ def test_seats_drift_fetches_giw_holders_once_and_loads_registry_once(
 ) -> None:
     assert not inspect.iscoroutinefunction(seat_routes.seats_drift_route)
 
-    tids = [_lane(bus_client, f"drift-batch-{i}") for i in range(3)]
-    for tid in tids:
-        bus_client.post(
+    lane_urls = [_URL_A, _URL_B, _URL_C]
+    tids: list[str] = []
+    for i, chat_url in enumerate(lane_urls):
+        tid = _lane(bus_client, f"drift-batch-{i}")
+        tids.append(tid)
+        birth = bus_client.post(
             f"/threads/{tid}/seat",
             json={
                 "transition": "birth",
-                "chat_url": _URL_A,
+                "chat_url": chat_url,
                 "actor": "test",
                 "request_id": f"batch-birth-{tid}",
             },
         )
+        assert 200 <= birth.status_code < 300, birth.text
 
-    giw_calls = 0
+    reg_only_tid = tids[1]
+    reg_only_url = lane_urls[1]
+
+    giw_payload_calls = 0
     registry_loads = 0
 
-    def _fake_giw(*_a, **_k):
-        nonlocal giw_calls
-        giw_calls += 1
-        by_lane = {
-            tid: {"chat_url": _URL_A, "registration_id": f"reg-{tid}"} for tid in tids
+    def _active_work_payload():
+        nonlocal giw_payload_calls
+        giw_payload_calls += 1
+        return {
+            "cse_holders": [
+                {
+                    "kind": "cowork_cse",
+                    "lane_thread_id": tids[0],
+                    "seat_state": "driving",
+                    "chat_url": lane_urls[0],
+                    "registration_id": f"reg-{tids[0]}",
+                },
+                {
+                    "kind": "cowork_cse",
+                    "lane_thread_id": reg_only_tid,
+                    "seat_state": "driving",
+                    "registration_id": f"reg-{reg_only_tid}",
+                },
+                {
+                    "kind": "cowork_cse",
+                    "lane_thread_id": tids[2],
+                    "seat_state": "driving",
+                    "chat_url": lane_urls[2],
+                    "registration_id": f"reg-{tids[2]}",
+                },
+            ]
         }
-        by_lane[tids[1]] = {"registration_id": f"reg-{tids[1]}"}
-        return "ok", by_lane
 
     def _fake_registry():
         nonlocal registry_loads
         registry_loads += 1
-        return {f"reg-{tid}": {"chat_url": _URL_A} for tid in tids}
+        return {
+            f"reg-{tid}": {"chat_url": url}
+            for tid, url in zip(tids, lane_urls, strict=True)
+        }
 
     chat_url_loads = 0
 
     def _counting_chat_url(*_a, **_k):
         nonlocal chat_url_loads
         chat_url_loads += 1
-        return _URL_A
+        return reg_only_url
+
+    giw_calls = 0
+
+    def _counting_giw_fetch(*_a, **_k):
+        nonlocal giw_calls
+        giw_calls += 1
+        return _real_fetch_giw()
 
     with (
         patch(
+            "bus_watch.roster.fetch_giw_active_work_payload",
+            side_effect=_active_work_payload,
+        ),
+        patch(
             "agent_bus_store.db.seat_drift_probes.fetch_giw_holders_map",
-            side_effect=_fake_giw,
+            side_effect=_counting_giw_fetch,
         ),
         patch(
             "agent_bus_store.db.seat_drift_probes.load_registry_active",
@@ -724,8 +832,15 @@ def test_seats_drift_fetches_giw_holders_once_and_loads_registry_once(
     ):
         resp = bus_client.get("/seats/drift")
 
+    open_seats = bus_client.get("/seats", params={"state": "open"}).json()["seats"]
+    open_ids = {str(row["thread_id"]) for row in open_seats}
+    assert reg_only_tid in open_ids
+
     assert resp.status_code == 200
+    assert giw_payload_calls == 1
     assert giw_calls == 1
     assert registry_loads == 1
     assert chat_url_loads == 0
-    assert resp.json()["giw_holder_mismatch_count"] == 0
+    body = resp.json()
+    assert body["giw_holder_mismatch_count"] == 0
+    assert body["giw_holder_absent_count"] == 0

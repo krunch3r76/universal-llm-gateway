@@ -600,6 +600,7 @@ def seat_drift_summary() -> dict[str, Any]:
     cse_mismatch = 0
     subscription_mismatch = 0
     giw_mismatch = 0
+    giw_absent = 0
     registry_mismatch = 0
     giw_probe = "ok"
     registry_probe = "ok"
@@ -662,6 +663,9 @@ def seat_drift_summary() -> dict[str, Any]:
         for seat in open_rows:
             tid = str(seat["thread_id"])
             holder = giw_by_lane.get(tid)
+            if holder is None:
+                giw_absent += 1
+                continue
             giw_url, giw_chat_id = giw_holder_chat(
                 holder, registry_active=registry_active
             )
@@ -680,11 +684,13 @@ def seat_drift_summary() -> dict[str, Any]:
                     giw_mismatch += 1
     else:
         giw_mismatch = 0
+        giw_absent = 0
 
     return {
         "cse_association_mismatch_count": cse_mismatch,
         "subscription_mismatch_count": subscription_mismatch,
         "giw_holder_mismatch_count": giw_mismatch,
+        "giw_holder_absent_count": giw_absent,
         "giw_probe": giw_probe,
         "registry_mismatch_count": registry_mismatch,
         "registry_probe": registry_probe,
@@ -701,6 +707,7 @@ def _drift_summary_disabled() -> dict[str, Any]:
         "cse_association_mismatch_count": 0,
         "subscription_mismatch_count": 0,
         "giw_holder_mismatch_count": 0,
+        "giw_holder_absent_count": 0,
         "giw_probe": "disabled",
         "registry_mismatch_count": 0,
         "registry_probe": "disabled",
