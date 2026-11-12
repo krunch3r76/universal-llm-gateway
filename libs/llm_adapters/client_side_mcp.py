@@ -12,10 +12,7 @@ in-process dispatch only.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from llm_adapters.core import FrontierRequest
+from typing import Any
 
 # In-process client tool loop — no MCP HTTP dial (C2). Canonical list lives here
 # so ``llm_adapters`` does not import ``agent_seat`` (import-graph hygiene).
@@ -31,42 +28,22 @@ _MCP_HTTP_REFUSAL_MESSAGE = (
 )
 
 
-def openai_tool_names(tools: list[dict[str, Any]] | None) -> list[str]:
-    if not tools:
-        return []
-    names: list[str] = []
-    for entry in tools:
+def client_loop_offenders(tools: list[dict[str, Any]] | None) -> list[str]:
+    """Labels of entries Stargate cannot execute in-process on the client loop."""
+    out: list[str] = []
+    for entry in tools or []:
         if not isinstance(entry, dict):
+            out.append("<type:unknown>")
             continue
         fn = entry.get("function")
-        if isinstance(fn, dict):
-            name = fn.get("name")
-            if isinstance(name, str) and name:
-                names.append(name)
-    return names
+        name = fn.get("name") if isinstance(fn, dict) else None
+        if isinstance(name, str) and name in IN_PROCESS_CLIENT_TOOL_NAMES:
+            continue
+        kind = entry.get("type", "unknown")
+        out.append(name if isinstance(name, str) and name else f"<type:{kind}>")
+    return sorted(out)
 
 
-def non_in_process_tool_names(tools: list[dict[str, Any]] | None) -> list[str]:
-    return sorted(
-        n for n in openai_tool_names(tools) if n not in IN_PROCESS_CLIENT_TOOL_NAMES
-    )
-
-
-def client_side_mcp_tool_loop_allowed(
-    *,
-    tools: list[dict[str, Any]] | None,
-    remote_mcp: bool,
-) -> bool:
-    """Whether dispatch may set ``FrontierRequest.mcp_tool_loop=True``."""
-    if remote_mcp or not tools:
-        return False
-    return not non_in_process_tool_names(tools)
-
-
-def validate_client_side_mcp_tool_loop(req: FrontierRequest) -> None:
-    """Raise ``ValueError`` when the client loop would require MCP HTTP."""
-    if req.remote_mcp:
-        return
-    offenders = non_in_process_tool_names(req.tools)
-    if offenders:
-        raise ValueError(f"{_MCP_HTTP_REFUSAL_MESSAGE} Offending tools: {offenders!r}.")
+def refusal_message(offending_tools: list[str]) -> str:
+    """Human-readable refusal for ``ClientSideMcpHttpRefusedError``."""
+    return f"{_MCP_HTTP_REFUSAL_MESSAGE} Offending tools: {offending_tools!r}."

@@ -13,7 +13,6 @@ from llm_adapters._mcp_entry import (
     openai_xai_mcp_tool_entry,
     resolve_mcp_env,
 )
-from llm_adapters.client_side_mcp import validate_client_side_mcp_tool_loop
 from llm_adapters.responses.normalization import (
     _normalize_input_content,
     _normalize_tool_for_responses_api,
@@ -46,9 +45,7 @@ def _shell_skills_mount_tool(entries: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _append_skills_mount_tool(
-    body: dict[str, Any], req: FrontierRequest, *, vendor: str
-) -> None:
+def _append_skills_mount_tool(body: dict[str, Any], req: FrontierRequest, *, vendor: str) -> None:
     if not req.skills_mount:
         return
     if vendor != "openai":
@@ -182,7 +179,6 @@ class ResponsesAPIAdapter:
             else:
                 body["text"] = {"format": fmt}
 
-        validate_client_side_mcp_tool_loop(req)
         if req.remote_mcp:
             if self._vendor == "xai":
                 # Vendor supports type:"mcp"; raise is policy while the card keeps

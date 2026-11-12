@@ -8,14 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_adapters.anthropic import AnthropicAdapter
-from llm_adapters.client_side_mcp import (
-    client_side_mcp_tool_loop_allowed,
-    validate_client_side_mcp_tool_loop,
-)
-from llm_adapters.core import FrontierRequest
-from llm_adapters.google import GoogleAdapter
-from llm_adapters.responses import ResponsesAPIAdapter
+from llm_adapters.client_side_mcp import client_loop_offenders
 
 
 def _tool(name: str) -> dict:
@@ -25,83 +18,22 @@ def _tool(name: str) -> dict:
     }
 
 
-def test_client_side_loop_allowed_for_in_process_tools_only() -> None:
+def test_client_loop_offenders_empty_for_in_process_tools_only() -> None:
     tools = [_tool("cortex"), _tool("agent_bus")]
-    assert client_side_mcp_tool_loop_allowed(tools=tools, remote_mcp=False) is True
+    assert client_loop_offenders(tools) == []
 
 
-def test_client_side_loop_disallowed_with_mcp_server_tool_names() -> None:
+def test_client_loop_offenders_lists_non_in_process_function_names() -> None:
     tools = [_tool("cortex"), _tool("rag")]
-    assert client_side_mcp_tool_loop_allowed(tools=tools, remote_mcp=False) is False
+    assert client_loop_offenders(tools) == ["rag"]
 
 
-def test_validate_raises_when_non_in_process_tools_present() -> None:
-    req = FrontierRequest(
-        messages=[{"role": "user", "content": "hi"}],
-        model="openai/gpt-5.4",
-        tools=[_tool("fs")],
-        mcp_tool_loop=False,
-        remote_mcp=False,
-    )
-    with pytest.raises(ValueError, match="remote_mcp"):
-        validate_client_side_mcp_tool_loop(req)
-
-
-def test_validate_raises_even_when_loop_disabled() -> None:
-    """Guard is independent of mcp_tool_loop — offenders must not ship on the wire."""
-    req = FrontierRequest(
-        messages=[{"role": "user", "content": "hi"}],
-        model="openai/gpt-5.4",
-        tools=[_tool("cortex"), _tool("rag")],
-        mcp_tool_loop=False,
-        remote_mcp=False,
-    )
-    with pytest.raises(ValueError, match="rag"):
-        validate_client_side_mcp_tool_loop(req)
-
-
-def test_validate_allows_remote_mcp_path_unchanged() -> None:
-    req = FrontierRequest(
-        messages=[{"role": "user", "content": "hi"}],
-        model="openai/gpt-5.4",
-        tools=[{"type": "mcp", "server_label": "vortex", "server_url": "https://x"}],
-        mcp_tool_loop=False,
-        remote_mcp=True,
-    )
-    validate_client_side_mcp_tool_loop(req)
-
-
-def _adapters_for_guard_tests() -> list[tuple[str, object]]:
-    return [
-        ("anthropic", AnthropicAdapter(api_key="test-key")),
-        ("google", GoogleAdapter(api_key="test-key")),
-        (
-            "responses",
-            ResponsesAPIAdapter(
-                api_key="test-key",
-                base_url="https://api.example.com/v1",
-                vendor="openai",
-            ),
-        ),
+def test_client_loop_offenders_labels_bare_type_mcp() -> None:
+    tools = [
+        _tool("cortex"),
+        {"type": "mcp", "server_label": "vortex", "server_url": "https://x"},
     ]
-
-
-@pytest.mark.parametrize("label,adapter", _adapters_for_guard_tests())
-def test_adapter_build_frontier_request_refuses_mcp_server_tool_loop(
-    label: str,
-    adapter: AnthropicAdapter | GoogleAdapter | ResponsesAPIAdapter,
-) -> None:
-    """Each native adapter path must refuse before any outbound provider call."""
-    req = FrontierRequest(
-        messages=[{"role": "user", "content": "hi"}],
-        model="openai/gpt-5.4",
-        tools=[_tool("brave_search")],
-        mcp_tool_loop=False,
-        remote_mcp=False,
-        max_tokens=256,
-    )
-    with pytest.raises(ValueError, match="remote_mcp"):
-        adapter.build_frontier_request(req)
+    assert client_loop_offenders(tools) == ["<type:mcp>"]
 
 
 @pytest.mark.offline
