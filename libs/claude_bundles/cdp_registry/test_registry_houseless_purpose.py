@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -154,6 +155,49 @@ def test_lane_seat_holder_ignores_houseless(monkeypatch: pytest.MonkeyPatch) -> 
     assert holder["registration_id"] == "op-seat"
     resolved = resolve_operator_seat("22760", get_lane_snapshot=lambda: snap)
     assert resolved["registration_id"] == "op-seat"
+
+
+def test_houseless_bind_claims_bus_mailbox_lane_thread(
+    isolated_registry: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After bus seated bind, registry provenance carries lane_thread_claim."""
+    from agent_bus_store.db import create_thread, init_db
+    from agent_bus_store.db.cse_associations import (
+        HOUSELESS_FIRST_SEATED_BOUND_BY,
+        associate_cse,
+    )
+
+    from claude_bundles import cse_provenance
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="hl-prov-mailbox")
+    assert detail is not None
+    mailbox = str(detail["id"])
+    host = reg.register_lane(holder="mailbox", purpose="ask", launch=False)
+    set_registration_purpose(host.registration_id, "houseless")
+    url = "https://claude.ai/cowork/cse_hl_prov"
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_cse(
+            thread_id=mailbox,
+            cse_chat_url=url,
+            cse_registration_id=host.registration_id,
+            bound_by=HOUSELESS_FIRST_SEATED_BOUND_BY,
+            evidence="cdp.generate.seated",
+        )
+    assert reg.bind_session_address(host.registration_id, chat_url=url)
+    active = reg._store.load_active()[host.registration_id]
+    assert not str(active.get("parent_thread") or "").strip()
+    episode = cse_provenance.latest_episode(chat_url=url)
+    assert episode is not None
+    assert episode.lane_thread == mailbox
+    resolved = cse_provenance.resolve(
+        chat_url=url, registration_id=host.registration_id
+    )
+    assert resolved.get("lane_thread_claim") == mailbox
 
 
 def test_register_lane_houseless_rejects_parent_thread(

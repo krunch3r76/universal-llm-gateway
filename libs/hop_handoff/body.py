@@ -64,6 +64,12 @@ def is_successor_birth_id(value: str | None) -> bool:
     return bool(value) and _BIRTH_ID_RE.fullmatch(value or "") is not None
 
 
+def execution_id_as_successor_birth_id(execution_id: str | None) -> str | None:
+    """Map a generate ``execution_id`` UUID into the 32-hex birth id shape."""
+    compact = (execution_id or "").strip().replace("-", "")
+    return compact if is_successor_birth_id(compact) else None
+
+
 def parse_hop_kind(body: str) -> str:
     """Return ``hop_kind`` from a handoff body; ``mission`` when the line is absent."""
     for line in (body or "").splitlines():

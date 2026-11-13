@@ -22,6 +22,7 @@ _CSE_PATH_MARKER = "/cowork/cse_"
 # non-mint associate must not replace the latest mint URL with a different
 # URL, including after a same-URL append whose bound_by is the relay.
 HOP_SEATED_BOUND_BY = "cdp.generate.seated"
+HOUSELESS_FIRST_SEATED_BOUND_BY = "cdp.generate.houseless_seated"
 
 logger = get_logger(__name__)
 
@@ -200,6 +201,25 @@ def associate_cse(
 
         _record_shadow_hook_error(where="associate_cse", thread_id=thread_id)
     return result
+
+
+def latest_thread_id_for_registration(
+    cse_registration_id: str | None,
+) -> str | None:
+    """Newest lane that bound *cse_registration_id*, or None when unknown."""
+    reg = _normalize_registration_id(cse_registration_id)
+    if not reg:
+        return None
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT thread_id FROM thread_cse_associations "
+            "WHERE cse_registration_id = ? ORDER BY id DESC LIMIT 1",
+            (reg,),
+        ).fetchone()
+    if row is None:
+        return None
+    tid = str(row["thread_id"] or "").strip()
+    return tid or None
 
 
 def get_current_cse(*, thread_id: str) -> dict[str, Any]:

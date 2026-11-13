@@ -1,8 +1,8 @@
 """Bind the agent-bus CSE pointer when a hop successor's chat URL is seated.
 
 Stargate's CDP generate worker calls this from the seated callback. Request-time
-``maybe_bind_thread_cse`` has no URL yet. Only ``mission_kind=hop`` writes, and
-``bound_by`` is the mint path so a later relay paste cannot replace the successor.
+``maybe_bind_thread_cse`` has no URL yet. Hop and houseless-first-seat writes use
+distinct mint ``bound_by`` values so relay paste cannot replace the successor.
 """
 
 from __future__ import annotations
@@ -85,6 +85,7 @@ def _post_tab_bind_seat_registration_stamp(
     successor_birth_id: str | None,
     prompt_uri: str | None,
     parent_thread: str,
+    forced_successor_birth_id: str | None = None,
 ) -> None:
     reg = registration_id.strip()
     exec_id = execution_id.strip()
@@ -93,10 +94,12 @@ def _post_tab_bind_seat_registration_stamp(
     dedupe_key = (lane, exec_id, reg)
     if dedupe_key in _STAMP_POSTED:
         return
-    birth = _resolve_successor_birth_id_for_stamp(
-        successor_birth_id=successor_birth_id,
-        prompt_uri=prompt_uri,
-    )
+    birth = (forced_successor_birth_id or "").strip() or None
+    if not birth:
+        birth = _resolve_successor_birth_id_for_stamp(
+            successor_birth_id=successor_birth_id,
+            prompt_uri=prompt_uri,
+        )
     if not birth:
         logger.warning(
             "hop seated seat registration stamp skipped: no successor_birth_id lane=%s",
@@ -131,6 +134,70 @@ def _post_tab_bind_seat_registration_stamp(
         )
 
 
+def _should_bind_houseless_first_seat(
+    *,
+    mission_kind: str | None,
+    thread_id: str,
+    parent_thread: str | None,
+) -> bool:
+    kind = (mission_kind or "").strip().lower()
+    if kind == "hop":
+        return False
+    if (parent_thread or "").strip():
+        return False
+    from agent_bus_store.houseless_mailbox_thread import is_houseless_mailbox_thread
+
+    return is_houseless_mailbox_thread(thread_id)
+
+
+def _associate_houseless_first_seated_cse(
+    *,
+    thread_id: str,
+    chat_url: str,
+    registration_id: str | None,
+    execution_id: str,
+) -> None:
+    """Bind and stamp a houseless mailbox on its first seated generate."""
+    lane = (thread_id or "").strip()
+    if not lane or not (chat_url or "").strip():
+        return
+    from agent_bus_store.db.cse_associations import (
+        HOUSELESS_FIRST_SEATED_BOUND_BY,
+        associate_cse,
+    )
+    from hop_handoff.body import execution_id_as_successor_birth_id
+
+    try:
+        associate_cse(
+            thread_id=lane,
+            cse_chat_url=chat_url,
+            cse_registration_id=registration_id,
+            bound_by=HOUSELESS_FIRST_SEATED_BOUND_BY,
+            evidence="cdp.generate.seated",
+        )
+    except Exception as exc:  # noqa: BLE001 — seated bind must not fail the poll
+        logger.warning(
+            "houseless first seated cse bind failed lane=%s registration_id=%s err=%s",
+            lane,
+            registration_id,
+            exc,
+        )
+        return
+    reg = (registration_id or "").strip()
+    birth = execution_id_as_successor_birth_id(execution_id)
+    if reg and birth:
+        _post_tab_bind_seat_registration_stamp(
+            lane=lane,
+            chat_url=chat_url,
+            registration_id=reg,
+            execution_id=execution_id,
+            successor_birth_id=None,
+            prompt_uri=None,
+            parent_thread=lane,
+            forced_successor_birth_id=birth,
+        )
+
+
 def associate_hop_seated_cse(
     *,
     mission_kind: str | None,
@@ -144,14 +211,27 @@ def associate_hop_seated_cse(
 ) -> None:
     """Append the lane CSE association once a hop successor chat URL is known.
 
-    Non-hop seating returns without a write. ``parent_thread`` is the lane
-    pointer when set; otherwise ``thread_id``. Fail-soft: a missing thread or
-    store error is logged and does not fail the generate poll. ``bound_by``
-    is ``cdp.generate.seated``, not a relay agent name. Empty ``chat_url``
-    does not write. After ``associate_cse``, posts ``TYPE: SEAT_REGISTRATION``
-    on the hop lane via :func:`build_seat_registration_stamp` (B1 tab bind).
+    Non-hop seating returns without a write unless the mailbox is a houseless
+    first-seat lane (no generate ``parent_thread``, parentless bus thread).
+    ``parent_thread`` is the lane pointer when set; otherwise ``thread_id``.
+    Fail-soft: a missing thread or store error is logged and does not fail the
+    generate poll. ``bound_by`` is ``cdp.generate.seated``, not a relay agent
+    name. Empty ``chat_url`` does not write. After ``associate_cse``, posts
+    ``TYPE: SEAT_REGISTRATION`` via :func:`build_seat_registration_stamp` (B1).
     """
-    if (mission_kind or "").strip().lower() != "hop":
+    kind = (mission_kind or "").strip().lower()
+    if kind != "hop":
+        if _should_bind_houseless_first_seat(
+            mission_kind=mission_kind,
+            thread_id=thread_id,
+            parent_thread=parent_thread,
+        ):
+            _associate_houseless_first_seated_cse(
+                thread_id=thread_id,
+                chat_url=chat_url,
+                registration_id=registration_id,
+                execution_id=execution_id,
+            )
         return
     lane = (parent_thread or "").strip() or (thread_id or "").strip()
     if not lane or not (chat_url or "").strip():

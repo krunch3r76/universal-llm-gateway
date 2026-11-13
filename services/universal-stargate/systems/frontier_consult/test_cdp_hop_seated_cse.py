@@ -32,6 +32,85 @@ def test_non_hop_seating_does_not_associate() -> None:
     associate.assert_not_called()
 
 
+def test_non_hop_child_lane_without_houseless_shape_does_not_associate(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ordinary consult on a child lane must not mint associate or stamp."""
+    from agent_bus_store.db import create_thread
+    from agent_bus_store.db.lane_associations import associate_lane
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    parent = create_thread(
+        thread_id=None, slug="orchestration-house", tags=["role:root"]
+    )
+    assert parent is not None
+    child = create_thread(thread_id=None, slug="mission-child")
+    assert child is not None
+    parent_id = str(parent["id"])
+    child_id = str(child["id"])
+    associate_lane(
+        thread_id=child_id,
+        parent_thread_id=parent_id,
+        lane_role="side",
+        bound_by="test",
+    )
+    with patch("agent_bus_store.db.cse_associations.associate_cse") as associate:
+        associate_hop_seated_cse(
+            mission_kind=None,
+            thread_id=child_id,
+            parent_thread=None,
+            chat_url=_SUCCESSOR,
+            registration_id=_REG,
+            execution_id="f1f2f3f4-1111-4222-8333-444455556666",
+        )
+    associate.assert_not_called()
+
+
+def test_houseless_first_seat_associates_and_stamps(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parentless mailbox first birth gets mint associate + SEAT_REGISTRATION."""
+    from agent_bus_store.db import create_thread, get_turns
+    from agent_bus_store.db.cse_associations import HOUSELESS_FIRST_SEATED_BOUND_BY
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="houseless-mailbox")
+    assert detail is not None
+    thread_id = str(detail["id"])
+    exec_id = "f1f2f3f4-1111-4222-8333-444455556666"
+    birth_hex = exec_id.replace("-", "")
+    cdp_hop_cse_bind._STAMP_POSTED.clear()
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_hop_seated_cse(
+            mission_kind=None,
+            thread_id=thread_id,
+            parent_thread=None,
+            chat_url=_SUCCESSOR,
+            registration_id=_REG,
+            execution_id=exec_id,
+        )
+    from agent_bus_store.db.cse_associations import get_current_cse
+
+    cse = get_current_cse(thread_id=thread_id)
+    assert cse["cse_chat_url"] == _SUCCESSOR
+    assert cse["bound_by"] == HOUSELESS_FIRST_SEATED_BOUND_BY
+    turns = get_turns(thread=thread_id, last=5)
+    stamp_turns = [
+        t
+        for t in turns
+        if str(t.get("body") or "").startswith("TYPE: SEAT_REGISTRATION")
+    ]
+    assert len(stamp_turns) == 1
+    body = stamp_turns[0]["body"]
+    assert f"successor_birth_id: {birth_hex}" in body
+    assert f"registration_id: {_REG}" in body
+    assert f"parent_thread: {thread_id}" in body
+
+
 def test_empty_chat_url_does_not_associate() -> None:
     with patch("agent_bus_store.db.cse_associations.associate_cse") as associate:
         associate_hop_seated_cse(
