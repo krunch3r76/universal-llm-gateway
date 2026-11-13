@@ -293,7 +293,22 @@ async def run_spawn(
                     "display": ops._display_key(display),
                     "reason": type(exc).__name__,
                 }
-            if not isinstance(side, dict) or side.get("ok") is not True:
+            if not isinstance(side, dict):
+                side = {"ok": False, "invalid_sidebar_payload": True, "raw": side}
+            if side.get("ok") is not True:
+                active = str(steer_result.get("active_agent_id") or "").strip()
+                steer_ok = (
+                    steer_result.get("delivered") is True
+                    and steer_result.get("pasted") is not False
+                    and active == agent_id
+                )
+                if not steer_ok:
+                    title = str(steer_result.get("active_title") or "").strip()
+                    exp_title = str(steer_result.get("expected_title") or "").strip()
+                    if title and exp_title and title == exp_title:
+                        steer_ok = True
+                if steer_ok:
+                    return None
                 return {
                     "ok": False,
                     "code": "initial_text_unconfirmed",

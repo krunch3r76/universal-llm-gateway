@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from cursor_bridge.chat_surface import wake_decision
+from cursor_bridge.chat_surface import classify_surface, wake_decision
 from cursor_bridge.electron_chat_relay import ElectronEndpoint, read_endpoint_turn
 
 pytestmark = pytest.mark.offline
@@ -39,6 +39,38 @@ def test_wake_decision_matches_when_composer_agent_id_attribute_present() -> Non
         slug="spawn-check-14",
         agent_id="hidden-target",
     )
+    assert verdict["ok"] is True
+    assert verdict["reason"] == "match"
+
+
+def test_classify_surface_sand_agent_row_sets_active_id() -> None:
+    aid = "35d84d28-d1e7-42a0-9794-156d8c70ff87"
+    surface = classify_surface(
+        [],
+        [
+            {
+                "text": "Spawn Check 14b (retired)",
+                "selected": True,
+                "agent_id": aid,
+            }
+        ],
+        has_active_chat=True,
+    )
+    assert surface["state"] == "chat_list"
+    assert surface["active_agent_id"] == aid
+
+
+def test_wake_decision_matches_selection_store_when_title_empty() -> None:
+    aid = "35d84d28-d1e7-42a0-9794-156d8c70ff87"
+    surface = {
+        "state": "chat_list",
+        "active_agent_id": aid,
+        "active_title": "",
+        "selection_agent_id": aid,
+        "titles": [],
+        "agent_ids": {aid: "Spawn Check 14b (retired)"},
+    }
+    verdict = wake_decision(surface, thread="23653", slug="x", agent_id=aid)
     assert verdict["ok"] is True
     assert verdict["reason"] == "match"
 

@@ -664,6 +664,35 @@ async def test_text_spawn_hides_after_confirm_not_before_steer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sidebar_confirm_empty_dict_accepts_steer_agent_id() -> None:
+    store: dict[str, Any] = {"hidden": True, "sidebar_ok": False}
+    steer = AsyncMock(
+        return_value={
+            "ok": True,
+            "delivered": True,
+            "pasted": True,
+            "active_agent_id": "agent-1",
+        }
+    )
+
+    async def _eval(_display: object, expr: str, **_kw: Any) -> dict[str, Any]:
+        if "rowMarksActive" in expr:
+            return {}
+        return await _eval_factory(store)(_display, expr)
+
+    with (
+        patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval),
+        patch("interlocutor.display_adapter.steer_display", steer),
+    ):
+        out = await spawn_grok_agent_async(
+            "9", "bot", text="hi", idempotency_key="steer-fallback", hidden=True
+        )
+    assert out["ok"] is True
+    assert out.get("hidden") is True
+    assert int(store.get("hides") or 0) == 1
+
+
+@pytest.mark.asyncio
 async def test_failed_sidebar_confirm_leaves_visible_and_skips_hide() -> None:
     store: dict[str, Any] = {"sidebar_ok": False, "hidden": True}
     steer = AsyncMock(return_value={"ok": True, "delivered": True, "pasted": True})

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from cursor_bridge.grok_roster_js import (
+    js_confirm_spawn_sidebar_active,
     js_ensure_hidden,
     js_list,
     js_retire,
@@ -81,13 +82,40 @@ const client = {
   selection,
 };
 const root = { __reactContainer$x: { memoizedProps: { value: client } } };
-global.document = { getElementById() { return root; }, body: { firstElementChild: root } };
+const sandButtons = [];
+function _matchSandSelector(sel) {
+  const quoted = sel.match(/data-agent-id="([^"]+)"/);
+  if (quoted) return quoted[1];
+  const bad = sel.match(/data-agent-id=([^\\]'\\]]+)/);
+  if (bad) throw new Error("Invalid selector");
+  return null;
+}
+global.document = {
+  getElementById() { return root; },
+  body: { firstElementChild: root },
+  querySelector(sel) {
+    const id = _matchSandSelector(sel);
+    if (!id) return null;
+  return sandButtons.find(b => b.getAttribute("data-agent-id") === id) || null;
+  },
+  querySelectorAll() { return []; },
+};
 const script = JSON.parse(process.argv[1]);
 if (script.createResult !== undefined) captured.createResult = script.createResult;
 if (script.skipHideFlip) captured.skipHideFlip = true;
 if (script.latePersist) captured.latePersist = true;
 if (script.lateDuplicate) captured.lateDuplicate = true;
 if (script.leftoverNew) captured.leftoverNew = true;
+if (script.confirmAgentId) selection.current = script.confirmAgentId;
+if (script.sandButtons) {
+  for (const row of script.sandButtons) {
+    const btn = {
+      attrs: row,
+      getAttribute(k) { return this.attrs[k] ?? null; },
+    };
+    sandButtons.push(btn);
+  }
+}
 (async () => {
   const out = {};
   for (const [key, expr] of Object.entries(script.exprs)) {
@@ -266,3 +294,40 @@ def test_node_js_retire_row_not_found() -> None:
     out = _run_node({"exprs": {"gone": js_retire("ghost")}})
     assert out["gone"]["ok"] is False
     assert out["gone"]["code"] == "row_not_found"
+
+
+def test_node_confirm_spawn_quoted_selector_digit_uuid() -> None:
+    agent_id = "35d84d28-d1e7-42a0-9794-156d8c70ff87"
+    out = _run_node(
+        {
+            "confirmAgentId": agent_id,
+            "sandButtons": [
+                {
+                    "data-agent-id": agent_id,
+                    "aria-current": "page",
+                    "data-active": "true",
+                }
+            ],
+            "exprs": {"confirm": js_confirm_spawn_sidebar_active(agent_id)},
+        }
+    )
+    confirm = out["confirm"]
+    assert isinstance(confirm, dict)
+    assert "ok" in confirm
+    assert confirm["ok"] is True
+    assert confirm["expected"] == agent_id
+    assert confirm.get("query_error") is None
+
+
+def test_node_confirm_spawn_returns_structure_when_row_missing() -> None:
+    agent_id = "35d84d28-d1e7-42a0-9794-156d8c70ff87"
+    out = _run_node(
+        {
+            "confirmAgentId": agent_id,
+            "exprs": {"confirm": js_confirm_spawn_sidebar_active(agent_id)},
+        }
+    )
+    confirm = out["confirm"]
+    assert confirm.get("ok") is False
+    assert confirm.get("expected") == agent_id
+    assert "currentAgentId" in confirm

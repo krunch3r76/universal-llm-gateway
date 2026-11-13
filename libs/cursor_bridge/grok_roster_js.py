@@ -147,23 +147,31 @@ def js_confirm_spawn_sidebar_active(agent_id: str) -> str:
     """Read-only: sidebar row + selection agree on ``agent_id`` for visible spawn confirm."""
     aid = json.dumps(agent_id)
     return f"""(async () => {{
+  const expected = {aid};
+  let row = null;
+  let query_error = null;
+  try {{
+    row = document.querySelector('button.sand-agent-item[data-agent-id="' + expected + '"]');
+  }} catch (e) {{
+    query_error = String(e);
+  }}
   const client = {_client()};
   const sel = client?.selection?.snapshots?.get ? client.selection.snapshots.get() : null;
   const current = sel?.currentAgentId ?? null;
-  const row = document.querySelector('button.sand-agent-item[data-agent-id=' + {aid} + ']');
   const rowId = row?.getAttribute?.('data-agent-id')?.trim() ?? '';
   const ariaCurrent = row?.getAttribute?.('aria-current') === 'page';
   const dataActive = row?.getAttribute?.('data-active') === 'true';
-  const rowMarksActive = Boolean(row && rowId === {aid} && (ariaCurrent || dataActive));
-  const selectionMatch = current === {aid};
-  const ok = Boolean(rowMarksActive && selectionMatch && rowId === {aid});
+  const rowMarksActive = Boolean(row && rowId === expected && (ariaCurrent || dataActive));
+  const selectionMatch = current === expected;
+  const ok = Boolean(rowMarksActive && selectionMatch && rowId === expected);
   return {{
     ok,
     currentAgentId: current,
     row_agent_id: rowId || null,
     aria_current: ariaCurrent,
     data_active: dataActive,
-    expected: {aid},
+    expected,
+    query_error,
   }};
 }})()"""
 
