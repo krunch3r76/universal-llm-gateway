@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import uuid
@@ -19,12 +20,16 @@ from universal_logging import get_logger
 
 from mechanical_land.fold import fold
 from mechanical_land.schema import JournalEntry, JournalForkRefused
-from services.git_integration_worker.cursor_dispatch_ledger import _connect
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    _open_ledger_connection,
+)
 from services.git_integration_worker.mechanical_land.migrations.migration_007_mechanical_land import (
     ensure_mechanical_land_schema,
 )
 
 logger = get_logger(__name__)
+
+_MECHANICAL_LAND_SCHEMA_READY: set[str] = set()
 
 _PROJECTION_REL = Path("notes/system/runs/mechanical-land")
 _STARGATE_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=15.0, pool=5.0)
@@ -196,11 +201,28 @@ class MechanicalLandStore:
         self._mint_lane_thread = mint_lane_thread_fn or mint_lane_thread
         self._post_admit = post_admit_fn or post_stargate_team_dispatch
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = _connect(self._db_path)
-        ensure_mechanical_land_schema(conn)
-        conn.commit()
-        return conn
+    @contextlib.contextmanager
+    def _connect(self):
+        """Open ledger sqlite; commit/rollback/close; schema once per db path."""
+        conn = _open_ledger_connection(self._db_path)
+        row = conn.execute("PRAGMA database_list").fetchone()
+        db_key = (
+            str(Path(row[2]).resolve())
+            if row is not None and row[2]
+            else str((self._db_path or Path()).resolve())
+        )
+        if db_key not in _MECHANICAL_LAND_SCHEMA_READY:
+            ensure_mechanical_land_schema(conn)
+            conn.commit()
+            _MECHANICAL_LAND_SCHEMA_READY.add(db_key)
+        try:
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def _set_run_status(self, run_id: str, status: str) -> None:
         with self._connect() as conn:

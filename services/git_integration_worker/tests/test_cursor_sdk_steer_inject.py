@@ -90,11 +90,11 @@ def _ledger_admit(
 
 
 def _ledger_rowid(ledger: Any, dispatch_id: str) -> int:
-    conn = ledger._connect()
-    row = conn.execute(
-        "SELECT rowid FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-        (dispatch_id,),
-    ).fetchone()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT rowid FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
     assert row is not None
     return int(row[0])
 
@@ -829,12 +829,11 @@ async def test_inject_missing_thread_retryable(
     ledger_env: Any,
 ) -> None:
     _ledger_admit(ledger_env, dispatch_id="disp-nothread", execution_id="exec-nt")
-    conn = ledger_env._connect()
-    conn.execute(
-        "UPDATE cursor_sdk_dispatches SET thread_id='' WHERE dispatch_id=?",
-        ("disp-nothread",),
-    )
-    conn.commit()
+    with ledger_env._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET thread_id='' WHERE dispatch_id=?",
+            ("disp-nothread",),
+        )
     pre = preflight_inject("disp-nothread")
     assert pre.refusal is InjectRefusal.AWAITING_THREAD
     status, body = await inject_one_dispatch(
@@ -1236,7 +1235,6 @@ def test_inherit_reads_expired_after_terminal_closeout(
         spool_path,
     )
     from services.git_integration_worker.cursor_sdk_steer_inject import (
-        TERMINAL_UNDELIVERED_REASON,
         apply_steer_undelivered_closeout,
     )
 
@@ -1273,7 +1271,10 @@ def test_inherit_skips_delivered_parent_rows(spool: Path) -> None:
     pending = claim_pending("parent-t7", spool_dir=spool)
     assert pending is not None
     mark_delivered(pending, spool_dir=spool)
-    from scripts.mcp_bridge_steer_inject import inherit_undelivered_steer_inject, spool_path
+    from scripts.mcp_bridge_steer_inject import (
+        inherit_undelivered_steer_inject,
+        spool_path,
+    )
 
     copied = inherit_undelivered_steer_inject(
         parent_id="parent-t7",
@@ -1287,7 +1288,10 @@ def test_inherit_skips_delivered_parent_rows(spool: Path) -> None:
 def test_inherit_while_append_serializes(spool: Path) -> None:
     import threading
 
-    from scripts.mcp_bridge_steer_inject import inherit_undelivered_steer_inject, spool_path
+    from scripts.mcp_bridge_steer_inject import (
+        inherit_undelivered_steer_inject,
+        spool_path,
+    )
 
     append_spool_entry(
         "parent-t2",
@@ -1351,7 +1355,10 @@ def test_inherit_then_successor_cancel_expires_child_pending(
         ttl_s=300,
         spool_dir=spool,
     )
-    from scripts.mcp_bridge_steer_inject import inherit_undelivered_steer_inject, spool_path
+    from scripts.mcp_bridge_steer_inject import (
+        inherit_undelivered_steer_inject,
+        spool_path,
+    )
     from services.git_integration_worker.cursor_sdk_steer_inject import (
         apply_steer_undelivered_closeout,
     )
@@ -1382,7 +1389,10 @@ def test_inherit_fresh_deposited_at_delivers_after_old_ttl(spool: Path) -> None:
         spool_dir=spool,
         entry_id="entry-t6",
     )
-    from scripts.mcp_bridge_steer_inject import inherit_undelivered_steer_inject, spool_path
+    from scripts.mcp_bridge_steer_inject import (
+        inherit_undelivered_steer_inject,
+        spool_path,
+    )
 
     path = spool_path(spool, "parent-t6")
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -1399,7 +1409,10 @@ def test_inherit_fresh_deposited_at_delivers_after_old_ttl(spool: Path) -> None:
 
 
 def test_inherit_idempotent_on_authority_turn_id(spool: Path) -> None:
-    from scripts.mcp_bridge_steer_inject import inherit_undelivered_steer_inject, spool_path
+    from scripts.mcp_bridge_steer_inject import (
+        inherit_undelivered_steer_inject,
+        spool_path,
+    )
 
     append_spool_entry(
         "parent-idem",

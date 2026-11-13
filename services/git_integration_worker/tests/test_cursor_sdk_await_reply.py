@@ -1870,9 +1870,14 @@ def _stub_boot_host(monkeypatch: pytest.MonkeyPatch, turns: _Turns) -> None:
         "services.git_integration_worker.cursor_sdk_await_reply.CursorBusClient",
         lambda: _bus(),
     )
+    async def _resume_patched(**kwargs: Any) -> AwaitResumeSummary:
+        if kwargs.get("bus_turns_fn") is None:
+            kwargs = {**kwargs, "bus_turns_fn": turns}
+        return await resume_await_parked_dispatches(**kwargs)
+
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_await_reply._default_bus_turns",
-        turns,
+        "services.git_integration_worker.cursor_sdk_await_reply.resume_await_parked_dispatches",
+        _resume_patched,
     )
 
 

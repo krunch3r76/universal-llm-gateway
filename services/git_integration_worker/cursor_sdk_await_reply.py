@@ -284,22 +284,22 @@ def find_reply(
     return None
 
 
-def _default_bus_turns(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
-    """Sync GET /turns with after_turn cursor; raise on transport failure.
-
-    Agent-bus ``last`` defaults to None (no LIMIT). Passing ``after_turn`` uses
-    the server's ASC page filter so a tip-window ``last`` cannot hide a reply.
-    """
-    from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
-
+def _bus_auth_headers() -> dict[str, str]:
     token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
-        resp = client.get(
-            "/turns",
-            params={"thread": thread_id, "after_turn": after_turn},
-            headers=headers,
-        )
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _bus_turns_with_client(
+    client: Any,
+    thread_id: str,
+    after_turn: int,
+) -> list[dict[str, Any]]:
+    """Sync GET /turns with after_turn cursor; raise on transport failure."""
+    resp = client.get(
+        "/turns",
+        params={"thread": thread_id, "after_turn": after_turn},
+        headers=_bus_auth_headers(),
+    )
     if resp.status_code >= 400:
         raise ConnectionError(f"bus turns HTTP {resp.status_code}")
     payload = resp.json()
@@ -308,12 +308,19 @@ def _default_bus_turns(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
     turns = payload.get("turns")
     if not isinstance(turns, list):
         raise ConnectionError("bus turns missing turns list")
-    # Client-side backstop if the server ignores after_turn (1e).
     return [
         t
         for t in turns
         if isinstance(t, dict) and int(t.get("turn_number") or 0) > after_turn
     ]
+
+
+def _default_bus_turns(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
+    """One-shot client for callers outside the await-reply tick loop."""
+    from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
+
+    with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
+        return _bus_turns_with_client(client, thread_id, after_turn)
 
 
 def _is_conductor_dispatch(dispatch_id: str) -> bool:
@@ -478,6 +485,7 @@ def open_await_rows() -> list[ParkRow]:
             "record_json, source_repo FROM cursor_sdk_dispatches "
             "WHERE park_kind=? AND park_resumed_by IS NULL "
             "AND status IN ('completed','failed','cancelled') "
+            "AND json_extract(record_json, '$.park.expired_at') IS NULL "
             "ORDER BY parked_at ASC, rowid ASC",
             (PARK_KIND_AWAIT_REPLY,),
         ).fetchall()
@@ -871,14 +879,72 @@ async def resume_await_parked_dispatches(
     When *parent_dispatch_id* is set (closeout immediate pass), only that row
     is considered so other open parks keep their own code_version (F7).
     """
-    from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
-
     summary = AwaitResumeSummary()
     bus = bus or CursorBusClient()
-    turns_fn = bus_turns_fn or _default_bus_turns
     clock = now or _now_dt()
     ledger = CursorDispatchLedger.instance()
     ttl = await_reply_ttl_s()
+
+    if bus_turns_fn is None:
+        from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
+
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as bus_client:
+
+            def turns_fn(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
+                return _bus_turns_with_client(bus_client, thread_id, after_turn)
+
+            bus_turns_fn = turns_fn
+            await _resume_await_parked_loop(
+                bus_turns_fn=bus_turns_fn,
+                summary=summary,
+                controller=controller,
+                bus=bus,
+                cfg=cfg,
+                code_version=code_version,
+                ledger=ledger,
+                ttl=ttl,
+                clock=clock,
+                parent_dispatch_id=parent_dispatch_id,
+            )
+        return summary
+
+    await _resume_await_parked_loop(
+        bus_turns_fn=bus_turns_fn,
+        summary=summary,
+        controller=controller,
+        bus=bus,
+        cfg=cfg,
+        code_version=code_version,
+        ledger=ledger,
+        ttl=ttl,
+        clock=clock,
+        parent_dispatch_id=parent_dispatch_id,
+    )
+    return summary
+
+
+async def _resume_await_parked_loop(
+    *,
+    bus_turns_fn: BusTurnsFn,
+    summary: AwaitResumeSummary,
+    controller: Any,
+    bus: CursorBusClient,
+    cfg: WorkerConfig,
+    code_version: str,
+    ledger: CursorDispatchLedger,
+    ttl: int,
+    clock: datetime,
+    parent_dispatch_id: str | None,
+) -> None:
+    from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
+
+    turns_tick_cache: dict[tuple[str, int], list[dict[str, Any]]] = {}
+
+    def bus_turns_fn_tick(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
+        key = (thread_id, after_turn)
+        if key not in turns_tick_cache:
+            turns_tick_cache[key] = bus_turns_fn(thread_id, after_turn)
+        return turns_tick_cache[key]
 
     for row in open_await_rows():
         if parent_dispatch_id is not None and row.dispatch_id != parent_dispatch_id:
@@ -890,8 +956,6 @@ async def resume_await_parked_dispatches(
         if _is_conductor_dispatch(row.dispatch_id):
             summary.skipped_conductor.append(row.dispatch_id)
             continue
-        # Live or completed resume_of child closes the park; failed-before-run
-        # children (drain 503 after ledger.admit) do not (F2).
         existing = _usable_resume_child(row.dispatch_id)
         if existing is not None:
             mark_park_resumed(parent_id=row.dispatch_id, child_id=existing)
@@ -899,7 +963,9 @@ async def resume_await_parked_dispatches(
             continue
 
         awaited = _awaited_from_row(row)
-        hits, fetch_failed = await _snapshot_replies(awaited, bus_turns_fn=turns_fn)
+        hits, fetch_failed = await _snapshot_replies(
+            awaited, bus_turns_fn=bus_turns_fn_tick
+        )
         reply_list = [hits.get(g.execution_id) for g in awaited]
         all_landed = bool(awaited) and all(h is not None for h in reply_list)
         timed_out = _ttl_elapsed(row, now=clock)
@@ -918,7 +984,9 @@ async def resume_await_parked_dispatches(
                 if await _expire_await(row, bus, reason=reason):
                     summary.expired.append(row.dispatch_id)
             elif _refusal_cap_elapsed(row, now=clock):
-                if await _expire_await(row, bus, reason=f"resume_refused_cap:{reason}"):
+                if await _expire_await(
+                    row, bus, reason=f"resume_refused_cap:{reason}"
+                ):
                     summary.expired.append(row.dispatch_id)
             else:
                 attempt = bump_resume_attempt(parent_id=row.dispatch_id)
@@ -955,7 +1023,6 @@ async def resume_await_parked_dispatches(
                 req.dispatch_id,
                 code,
             )
-            # Reload park for attempt count after bump; expire when capped (F6).
             refreshed = load_park_row(dispatch_id=row.dispatch_id)
             if refreshed is not None and _refusal_cap_elapsed(refreshed, now=clock):
                 if await _expire_await(
@@ -990,7 +1057,6 @@ async def resume_await_parked_dispatches(
             req.dispatch_id,
             code_version,
         )
-    return summary
 
 
 __all__ = [

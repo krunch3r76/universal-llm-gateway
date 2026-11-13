@@ -18,31 +18,26 @@ def arm_hop_park_release(body: dict[str, Any], work_key: str) -> bool:
     key = str(work_key or "").strip()
     if not key:
         return False
+    reuse = str(body.get("reuse_thread") or "").strip() or None
     try:
         from services.git_integration_worker.cursor_dispatch_ledger import _connect
         from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
             open_parks,
         )
-    except ImportError:
+
+        with _connect() as conn:
+            parks = open_parks(
+                conn,
+                work_key=key,
+                thread_id=reuse,
+                kinds=frozenset({"budget"}),
+            )
+    except (ImportError, RuntimeError):
         return False
-    reuse = str(body.get("reuse_thread") or "").strip() or None
-    try:
-        conn = _connect()
-    except RuntimeError:
+    if not parks:
         return False
-    try:
-        parks = open_parks(
-            conn,
-            work_key=key,
-            thread_id=reuse,
-            kinds=frozenset({"budget"}),
-        )
-        if not parks:
-            return False
-        if any(p.reason != PARK_REASON_MISSION_CAP for p in parks):
-            return False
-    finally:
-        conn.close()
+    if any(p.reason != PARK_REASON_MISSION_CAP for p in parks):
+        return False
     opts = dict(body.get("generation_options") or {})
     opts["hop_park_release"] = True
     body["generation_options"] = opts

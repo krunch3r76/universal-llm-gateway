@@ -37,8 +37,15 @@ from bus_watch.ide_budget_exclude import (
     budget_exclude_path,
     pin_retired_resume_transcript,
 )
+from bus_watch.lru_dict import LruDict
 
 IDE_BUDGET_SOURCE = "ide.transcript"
+_FileSig = tuple[float, int]
+_MatchRow = tuple[int, float, str]
+_FIRST_LINE_CACHE_MAX = 1024
+_first_line_cache: LruDict[
+    tuple[str, str], dict[str, tuple[_FileSig, _MatchRow | None]]
+] = LruDict(_FIRST_LINE_CACHE_MAX)
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _TOOL_CATEGORY_RE = re.compile(r"tool", re.I)
 _TIP_CP_RE = re.compile(r"tip_cp=(\d+)(?!\d)")
@@ -53,6 +60,36 @@ def ide_holder_transcript(lock: dict[str, Any]) -> str | None:
         return None
     candidate = holder.split(":", 1)[1]
     return candidate if _UUID_RE.match(candidate) else None
+
+
+def _file_sig(path: Path) -> _FileSig | None:
+    try:
+        st = path.stat()
+        return (st.st_mtime, st.st_size)
+    except OSError:
+        return None
+
+
+def _scan_first_line_matches(
+    needle: str, transcripts_dir: Path
+) -> list[tuple[int, float, str]]:
+    rows: list[tuple[int, float, str]] = []
+    for path in transcripts_dir.glob("*/*.jsonl"):
+        try:
+            with path.open(encoding="utf-8") as fh:
+                first_line = fh.readline()
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if needle in first_line:
+            m = _TIP_CP_RE.search(first_line)
+            rows.append((int(m.group(1)) if m else -1, mtime, path.parent.name))
+    return rows
+
+
+def clear_first_line_matches_cache() -> None:
+    """Test hook: drop cached glob scans."""
+    _first_line_cache.clear()
 
 
 def first_line_matches(
@@ -74,18 +111,41 @@ def first_line_matches(
         # hops (a:38474 Sep-12 ``06712639`` / tip_cp=75 on resume 10534). Land
         # proof needs ``first_line_matches_land`` with an explicit root_id.
         return []
-    rows: list[tuple[int, float, str]] = []
+    key = (str(transcripts_dir.resolve()), needle)
+    existing = _first_line_cache.get(key)
+    per_file = dict(existing or {})
+    rows: list[_MatchRow] = []
+    seen_tids: set[str] = set()
     for path in transcripts_dir.glob("*/*.jsonl"):
+        tid = path.parent.name
+        seen_tids.add(tid)
+        sig = _file_sig(path)
+        if sig is None:
+            continue
+        prev = per_file.get(tid)
+        if prev is not None and prev[0] == sig:
+            if prev[1] is not None:
+                rows.append(prev[1])
+            continue
         try:
             with path.open(encoding="utf-8") as fh:
                 first_line = fh.readline()
             mtime = path.stat().st_mtime
         except OSError:
+            per_file[tid] = (sig, None)
             continue
+        matched: _MatchRow | None
         if needle in first_line:
-            # Digit-boundary tip extract so tip_cp=7 ≠ tip_cp=75 in the JSONL line.
             m = _TIP_CP_RE.search(first_line)
-            rows.append((int(m.group(1)) if m else -1, mtime, path.parent.name))
+            matched = (int(m.group(1)) if m else -1, mtime, tid)
+            rows.append(matched)
+        else:
+            matched = None
+        per_file[tid] = (sig, matched)
+    for tid in list(per_file):
+        if tid not in seen_tids:
+            del per_file[tid]
+    _first_line_cache[key] = per_file
     return rows
 
 
