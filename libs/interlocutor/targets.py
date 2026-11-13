@@ -1,4 +1,9 @@
-"""Target resolution for interlocutor read/steer."""
+"""Target resolution for interlocutor read, deliver, list, spawn, and retire.
+
+Grok window displays come from ``config/grok-windows.json`` (``:9``/9339,
+``:10``/9340, ``:14``/9344). ``display:<n>`` without ``agent_id`` is list/spawn;
+``display:<n>/<agent_id>`` is read/steer/select.
+"""
 
 from __future__ import annotations
 
