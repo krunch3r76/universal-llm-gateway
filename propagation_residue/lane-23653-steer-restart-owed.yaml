@@ -1,0 +1,7 @@
+# propagation_residue — lane-23653 display :14 steer (normalize_target SOT)
+# Operator/conductor: restart after hub master land (952c8ad0d).
+restart_owed:
+  - service: mcp
+reason: >-
+  wake_delivery.normalize_target now resolves grok displays from grok-windows.json;
+  interlocutor display_eight steer requires live mcp process reload.
