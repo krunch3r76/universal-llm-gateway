@@ -245,13 +245,9 @@ def schedule_composer_defer_retry(
     *,
     stamp: str,
 ) -> int:
-    cols = ledger_cols(conn)
     updated = 0
     for row in rows:
         rid = int(row["id"])
-        prior = int(row.get("wake_attempt_count") or 0)
-        next_attempt = prior + 1
-        retry_at = _shift(stamp, display_composer_defer_retry_delay_s(next_attempt))
         sets = [
             "state='pending'",
             "decided_by_rule=?",
@@ -260,32 +256,11 @@ def schedule_composer_defer_retry(
             "finished_at=NULL",
         ]
         params: list[Any] = [None]
-        if "wake_attempt_count" in cols:
-            sets.append("wake_attempt_count=?")
-            params.append(next_attempt)
-        if "wake_last_attempt_at" in cols:
-            sets.append("wake_last_attempt_at=?")
-            params.append(stamp)
-        if "wake_next_attempt_at" in cols:
-            sets.append("wake_next_attempt_at=?")
-            params.append(retry_at)
         conn.execute(
             f"UPDATE endpoint_wake_ledger SET {', '.join(sets)} WHERE id=?",
             (*params, rid),
         )
         updated += 1
-        try:
-            from bus_watch.events import emit_endpoint_wake_retry_scheduled
-
-            emit_endpoint_wake_retry_scheduled(
-                wake_row_id=rid,
-                thread_id=str(row.get("thread_id")),
-                turn_number=int(row.get("turn_number") or 0),
-                wake_next_attempt_at=retry_at,
-                attempt_count=next_attempt,
-            )
-        except Exception:
-            pass
     return updated
 
 

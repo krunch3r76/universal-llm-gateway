@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from inspect import signature
 
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
@@ -127,7 +128,7 @@ def test_escalate_many_rows_one_turn_schedules_retry_not_refuse(db: None) -> Non
         ).fetchall()
     assert len(rows) == 3
     assert all(r["state"] == "pending" for r in rows)
-    assert sum(1 for r in rows if r["wake_next_attempt_at"]) == 3
+    assert all(r["wake_next_attempt_at"] is None for r in rows)
 
 
 def test_escalate_drop_at_cap_one_notice_per_row(db: None) -> None:
@@ -157,6 +158,10 @@ def test_escalate_drop_at_cap_one_notice_per_row(db: None) -> None:
     assert len(store.posts) == 1
     assert store.posts[0]["subject"] == _ESCALATION_SUBJECT
     assert f"wake_row_id={row_id}" in store.posts[0]["body"]
+    from bus_watch.endpoint_wake_transport import StoreClient
+
+    for notice in store.posts:
+        signature(StoreClient().create_turn).bind(**notice)
     with connect() as conn:
         row = conn.execute(
             "SELECT state, drop_reason, decided_by_rule FROM endpoint_wake_ledger WHERE id=?",
@@ -220,13 +225,42 @@ def test_notify_empty_rearms_escalated(db: None) -> None:
     assert cleared == 2
     with connect() as conn:
         rearmed = conn.execute(
-            "SELECT state, decided_by_rule, finished_at FROM endpoint_wake_ledger "
+            "SELECT state, decided_by_rule, finished_at, wake_next_attempt_at "
+            "FROM endpoint_wake_ledger "
             "WHERE thread_id=? AND turn_number=9",
             (thread,),
         ).fetchone()
     assert rearmed["state"] == "pending"
     assert rearmed["decided_by_rule"] is None
     assert rearmed["finished_at"] is None
+    assert rearmed["wake_next_attempt_at"] is None
+
+
+def test_escalate_future_retry_is_not_swept(db: None) -> None:
+    detail = create_thread(thread_id=None, slug="b1-future-retry-gate")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_sweep_eligible_row(thread, turn_number=11)
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET wake_next_attempt_at=? WHERE thread_id=?",
+            ("2030-01-01 00:01:00", thread),
+        )
+
+    assert (
+        escalate_composer_deferred_on_sweep(
+            _RecordingStore(), stamp="2030-01-01 00:00:00"
+        )
+        == 0
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT decided_by_rule, wake_attempt_count FROM endpoint_wake_ledger "
+            "WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["decided_by_rule"] == COMPOSER_DEFER_SWEEP
+    assert int(row["wake_attempt_count"] or 0) == 0
 
 
 def test_escalate_new_row_after_prior_retry_no_second_notice(db: None) -> None:
@@ -284,7 +318,7 @@ def test_escalate_two_agents_one_turn_id_retries_separately(db: None) -> None:
         ).fetchall()
     assert len(rows) == 2
     assert all(r["state"] == "pending" for r in rows)
-    assert all(r["wake_next_attempt_at"] for r in rows)
+    assert all(r["wake_next_attempt_at"] is None for r in rows)
 
 
 def test_escalate_create_turn_raises_row_still_dropped(db: None) -> None:
@@ -345,7 +379,7 @@ def test_falsifier_twelve_sweeps_fixed_clock_never_drops_before_cap(db: None) ->
             (thread,),
         ).fetchone()
     assert row["state"] == "pending"
-    assert int(row["wake_attempt_count"]) == 1
+    assert int(row["wake_attempt_count"]) == 0
     assert row["decided_by_rule"] != COMPOSER_DEFER_DROP_NOTICED
 
 
@@ -381,7 +415,7 @@ def test_backoff_steps_allow_one_retry_each_then_cap_drop(db: None) -> None:
                 "SELECT wake_attempt_count FROM endpoint_wake_ledger WHERE thread_id=?",
                 (thread,),
             ).fetchone()
-        assert int(row["wake_attempt_count"]) == attempt
+        assert int(row["wake_attempt_count"]) == attempt - 1
     with write_connect() as conn:
         conn.execute(
             "UPDATE endpoint_wake_ledger SET decided_by_rule=?, wake_attempt_count=?, "

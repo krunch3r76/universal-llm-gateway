@@ -217,12 +217,18 @@ def escalate_composer_deferred_on_sweep(store: Any, *, stamp: str | None = None)
     stamp_fn = getattr(store, "create_turn", None)
     if stamp_fn is not None:
         for notice in pending_notices:
+            wake_row_id = notice.get("wake_row_id")
+            payload = {
+                key: value
+                for key, value in notice.items()
+                if key in {"thread", "from_agent", "to_agent", "subject", "body"}
+            }
             try:
-                stamp_fn(**notice)
+                stamp_fn(**payload)
             except Exception:
                 logger.exception(
                     "composer_defer drop notice failed row=%s",
-                    notice.get("wake_row_id"),
+                    wake_row_id,
                 )
     return dropped
 
@@ -246,14 +252,14 @@ def notify_composer_empty_for_target(
     in_sql = composer_defer_reason_in_sql()
     with write_connect() as conn:
         pending = conn.execute(
-            "UPDATE endpoint_wake_ledger SET decided_by_rule=NULL "
+            "UPDATE endpoint_wake_ledger SET decided_by_rule=NULL, wake_next_attempt_at=NULL "
             f"WHERE state='pending' AND thread_id=? AND reason IN {in_sql} "
             "AND decided_by_rule LIKE ?",
             (scope, *reasons, f"{_DEFER_PREFIX}%"),
         )
         rearmed = conn.execute(
             "UPDATE endpoint_wake_ledger SET state='pending', decided_by_rule=NULL, "
-            f"finished_at=NULL WHERE state='refused' AND decided_by_rule IN (?,?) "
+            f"finished_at=NULL, wake_next_attempt_at=NULL WHERE state='refused' AND decided_by_rule IN (?,?) "
             f"AND thread_id=? AND reason IN {in_sql}",
             (
                 COMPOSER_DEFER_ESCALATED,

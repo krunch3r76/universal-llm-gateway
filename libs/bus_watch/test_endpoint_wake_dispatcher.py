@@ -1231,8 +1231,6 @@ def test_fire_due_wakes_composer_defer_delivers_once_after_backoff_and_clear(
     """Break: composer defer must release, backoff, then deliver exactly one paste."""
     from unittest.mock import patch
 
-    from agent_bus_store.db.connection import write_connect
-
     from bus_watch.endpoint_wake_composer_defer import (
         escalate_composer_deferred_on_sweep,
         finalize_composer_defer_pass,
@@ -1344,11 +1342,6 @@ def test_fire_due_wakes_composer_defer_delivers_once_after_backoff_and_clear(
         agent_id=tab,
         thread_scope=thread,
     )
-    with write_connect() as conn:
-        conn.execute(
-            "UPDATE endpoint_wake_ledger SET wake_next_attempt_at=? WHERE thread_id=?",
-            ("2030-01-01 00:00:25", thread),
-        )
     claimed2 = claim_due_wakes(now="2030-01-01 00:00:30")
     assert claimed2["wake_id"]
     with patch(
@@ -5505,7 +5498,7 @@ def test_legacy_composer_not_empty_two_pass_escalation(db: None) -> None:
             (thread,),
         ).fetchone()
     assert row["state"] == "pending"
-    assert row["wake_next_attempt_at"]
+    assert row["wake_next_attempt_at"] is None
 
     pass3 = run_dispatcher_pass_legacy_sweep(store)
     assert pass3["escalated"] == 0
