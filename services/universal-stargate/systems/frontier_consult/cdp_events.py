@@ -23,6 +23,7 @@ def publish_cdp_kwargs(factory: Any, **kwargs: Any) -> bool:
     """Delegate to ``cdp_event_publish`` (patchable via this module in tests)."""
     return cdp_event_publish.publish_cdp_kwargs(factory, **kwargs)
 
+
 __all__ = [
     "CdpGenerateAdmitted",
     "CdpGenerateRefusedSeatHeld",

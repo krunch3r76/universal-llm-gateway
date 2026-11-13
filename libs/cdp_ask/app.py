@@ -602,6 +602,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             from claude_bundles import cdp_registry
             from claude_bundles import cdp_registry_store as store
             from claude_bundles.cdp_registry.models import STATUS_DORMANT
+
             submit_holder = "cdp-model-endpoint"
             for row in store.load_active().values():
                 if str(row.get("purpose") or "") != purpose:
