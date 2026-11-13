@@ -7,6 +7,7 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from chat_harvest.models import ClassifyRefuse, classify_chat_url
+from cursor_bridge.grok_window_bindings import configured_grok_window_displays
 
 MAESTRO_COWORK_PARENT_THREAD = "12286"
 
@@ -40,7 +41,9 @@ class DisplayGrokWindowTarget:
     app: str = "grok"
 
 
-_GROK_WINDOW_DISPLAYS = frozenset({"9", "10"})
+def _grok_window_displays() -> frozenset[str]:
+    displays = configured_grok_window_displays()
+    return displays if displays else frozenset({"9", "10"})
 
 
 ResolvedTarget = (
@@ -68,7 +71,7 @@ def _parse_display_target(
             code="params_required", reason="display target needs :8/<agent_id>"
         )
     disp = parts[0].lstrip(":")
-    if allow_bare_grok_window and disp in _GROK_WINDOW_DISPLAYS:
+    if allow_bare_grok_window and disp in _grok_window_displays():
         if len(parts) == 1:
             return DisplayGrokWindowTarget(display=disp)
         if len(parts) >= 2 and parts[1].replace("_", "-") in {"grok", "grok-bot"}:
@@ -88,7 +91,7 @@ def _parse_display_target(
 def resolve_grok_window_target(
     target: str,
 ) -> DisplayGrokWindowTarget | ClassifyRefuse | None:
-    """Resolve ``display:9``, ``display:10``, or ``display:9/grok`` for list/spawn ops."""
+    """Resolve ``display:<n>`` for registered grok windows (optional ``/grok`` suffix)."""
     parsed = _parse_display_target(target, allow_bare_grok_window=True)
     if parsed is None:
         return ClassifyRefuse(
@@ -98,9 +101,12 @@ def resolve_grok_window_target(
         return parsed
     if isinstance(parsed, DisplayGrokWindowTarget):
         return parsed
+    allowed = ", ".join(
+        f"display:{d}" for d in sorted(_grok_window_displays(), key=int)
+    )
     return ClassifyRefuse(
         code="unsupported_target",
-        reason="list/spawn requires display:9 or display:10 (optional /grok suffix)",
+        reason=f"list/spawn requires one of: {allowed} (optional /grok suffix)",
     )
 
 

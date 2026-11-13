@@ -283,7 +283,7 @@ def collect_local_browser_census(
     host: str = "io",
     proc_root: Path = Path("/proc"),
     disk_path: str = "/",
-    cdp_ports: Sequence[int] = range(9338, 9344),
+    cdp_ports: Sequence[int] = range(9338, 9345),
     include_jupiter: bool = False,
 ) -> dict[str, Any]:
     mem_kib = _read_meminfo_kib(proc_root)

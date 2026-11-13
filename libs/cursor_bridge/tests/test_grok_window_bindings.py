@@ -31,6 +31,7 @@ def isolated_state(tmp_path, monkeypatch: pytest.MonkeyPatch):
 def test_cdp_port_for_known_displays() -> None:
     assert cdp_port_for_display("9") == 9339
     assert cdp_port_for_display(":10") == 9340
+    assert cdp_port_for_display("14") == 9344
     assert cdp_port_for_display("11") is None
 
 
@@ -47,6 +48,11 @@ def test_builtin_initial_state_when_file_missing(isolated_state) -> None:
     assert binding_for("syncerator")["display"] == "10"
     assert binding_for("grok-bot-gc2")["display"] == "10"
     assert binding_for("cursor") is None
+
+
+def test_promote_rejects_auxiliary_window(isolated_state) -> None:
+    with pytest.raises(ValueError, match="gc1/gc2"):
+        promote("14", updated_by="test")
 
 
 def test_promote_flips_default_and_parks_insyncerator(isolated_state) -> None:

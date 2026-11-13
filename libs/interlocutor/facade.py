@@ -247,7 +247,7 @@ def execute_retire(*, target: str) -> dict[str, Any]:
         return _refuse(
             ClassifyRefuse(
                 code="capability_unsupported",
-                reason="retire is supported on grok displays 9 and 10 only",
+                reason="retire is supported on registered grok window displays only",
             )
         )
     return display_adapter.retire_grok_agent_sync(resolved)

@@ -49,10 +49,10 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
         include_hidden: bool = True,
         include_retired: bool = False,
     ) -> dict[str, Any]:
-        """Read or steer an interlocutor target (Cowork, display :8/:9/:10, or Grok roster ops).
+        """Read or steer an interlocutor target (Cowork, display :8, or Grok roster ops).
 
-        ``list`` / ``spawn`` accept ``display:9``, ``display:10``, or ``display:9/grok``.
-        ``retire`` requires ``display:<n>/<agent_id>`` on Grok displays 9 or 10.
+        ``list`` / ``spawn`` accept bare ``display:<n>`` for each row in grok-windows.json.
+        ``retire`` requires ``display:<n>/<agent_id>`` on those grok window displays.
         """
         if op == "read":
             result = execute_read(
