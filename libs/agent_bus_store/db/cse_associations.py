@@ -49,9 +49,7 @@ def _prior_row(conn, *, thread_id: str) -> Any | None:
     ).fetchone()
 
 
-def _latest_bound_by_mint_url(
-    conn, *, thread_id: str, bound_by: str
-) -> str | None:
+def _latest_bound_by_mint_url(conn, *, thread_id: str, bound_by: str) -> str | None:
     row = conn.execute(
         "SELECT cse_chat_url FROM thread_cse_associations "
         "WHERE thread_id = ? AND bound_by = ? "
@@ -104,15 +102,15 @@ def _hop_mint_blocks_other_url(
 ) -> bool:
     """True when a non-mint writer would replace the hop successor URL.
 
-    Blocks when the latest mint URL is still the current URL, the incoming
-    URL differs, and the writer is not the mint path. The next hop seats
-    with ``bound_by`` equal to ``HOP_SEATED_BOUND_BY`` and still appends.
-    The same URL with a new registration still appends so a Chrome host
-    recycle on the successor is recorded.
+    Blocks when the latest hop mint URL is still the current URL, the incoming
+    URL differs, and the writer is not hop seated or houseless first-seat mint.
+    Houseless re-birth after a hop may replace the successor URL when the new URL
+    differs. The same URL with a new registration still appends so a Chrome
+    host recycle on the successor is recorded.
     """
     if not mint_url or mint_url != prior_url:
         return False
-    if (bound_by or "") == HOP_SEATED_BOUND_BY:
+    if (bound_by or "") in (HOP_SEATED_BOUND_BY, HOUSELESS_FIRST_SEATED_BOUND_BY):
         return False
     return url != prior_url
 
@@ -130,7 +128,8 @@ def associate_cse(
     Returns None when the URL is missing/invalid (registration-only is not a
     bind), when the folded current pair already matches, or when the latest
     hop-mint URL (``bound_by`` ``cdp.generate.seated``) is still the current
-    URL, this caller is not that mint path, and the incoming URL differs;
+    URL, this caller is not hop or houseless first-seat mint, and the incoming
+    URL differs;
     or when a houseless first-seat mint URL is still current and this caller
     is neither houseless nor hop seated mint (hop seated may replace houseless).
     A same-URL append does not clear that hold. Returns the insert echo when

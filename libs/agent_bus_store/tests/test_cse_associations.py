@@ -10,6 +10,7 @@ from agent_bus_store.db import init_db
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.cse_associations import (
     HOP_SEATED_BOUND_BY,
+    HOUSELESS_FIRST_SEATED_BOUND_BY,
     associate_cse,
     get_current_cse,
 )
@@ -282,6 +283,36 @@ def test_hop_mint_guard_survives_same_url_append(bus_client: TestClient) -> None
     assert current["bound_by"] == "web-anthropic"
     detail = bus_client.get(f"/threads/{thread_id}").json()
     assert detail["cse_chat_url"] == _URL_B
+
+
+def test_houseless_rebirth_after_hop_mint_appends(bus_client: TestClient) -> None:
+    """Houseless re-birth with a new URL is not blocked by the hop mint hold."""
+    thread_id = _create_lane(bus_client, "cse-hl-rebirth-hop")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        first = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-houseless",
+            bound_by=HOUSELESS_FIRST_SEATED_BOUND_BY,
+        )
+        hop = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_B,
+            cse_registration_id="reg-hop",
+            bound_by=HOP_SEATED_BOUND_BY,
+        )
+        rebirth = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-rebirth",
+            bound_by=HOUSELESS_FIRST_SEATED_BOUND_BY,
+        )
+    assert first is not None and hop is not None
+    assert rebirth is not None
+    current = get_current_cse(thread_id=thread_id)
+    assert current["cse_chat_url"] == _URL_A
+    assert current["cse_registration_id"] == "reg-rebirth"
+    assert current["bound_by"] == HOUSELESS_FIRST_SEATED_BOUND_BY
 
 
 def test_same_successor_url_new_registration_still_appends(

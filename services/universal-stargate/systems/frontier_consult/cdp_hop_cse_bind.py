@@ -62,6 +62,24 @@ def _parse_successor_birth_id_from_rendered_prompt(prompt_text: str) -> str | No
     return found
 
 
+def _seated_url_already_current(*, lane: str, chat_url: str) -> bool:
+    """True when the folded CSE pointer already names *chat_url* (idempotent seat)."""
+    from agent_bus_store.db.cse_associations import (
+        get_current_cse,
+        normalize_cse_bind_url,
+    )
+
+    target = normalize_cse_bind_url(chat_url)
+    if target is None:
+        return False
+    try:
+        current = get_current_cse(thread_id=lane)
+    except LookupError:
+        return False
+    url = current.get("cse_chat_url")
+    return isinstance(url, str) and url == target
+
+
 def _resolve_successor_birth_id_for_stamp(
     *,
     successor_birth_id: str | None,
@@ -247,8 +265,9 @@ def _associate_houseless_first_seated_cse(
 ) -> None:
     """Bind and stamp a houseless mailbox on its first seated generate.
 
-    A later ``purpose=houseless`` re-birth on the same mailbox replaces the
-    prior first-seat URL (intended; mint path ``cdp.generate.houseless_seated``).
+    A later houseless generate on the same mailbox may append a new URL when the
+    hop-mint guard exempts ``cdp.generate.houseless_seated`` (including re-birth
+    after a hop successor).
     """
     lane = (mailbox_thread or "").strip()
     if not lane or not (chat_url or "").strip():
@@ -276,7 +295,14 @@ def _associate_houseless_first_seated_cse(
         )
         return
     if bound is None:
-        return
+        if not _seated_url_already_current(lane=lane, chat_url=chat_url):
+            logger.warning(
+                "houseless first seated cse bind produced no association; "
+                "skipping seat stamp lane=%s registration_id=%s",
+                lane,
+                registration_id,
+            )
+            return
     reg = (registration_id or "").strip()
     birth = execution_id_as_successor_birth_id(execution_id)
     if reg and birth:
@@ -328,11 +354,7 @@ def associate_hop_seated_cse(
         from claude_bundles.what_is_running_view import is_houseless_purpose
 
         lane = (mailbox_thread or "").strip()
-        if (
-            is_houseless_purpose(purpose)
-            and not (parent_thread or "").strip()
-            and lane
-        ):
+        if is_houseless_purpose(purpose) and not (parent_thread or "").strip() and lane:
             _associate_houseless_first_seated_cse(
                 chat_url=chat_url,
                 registration_id=registration_id,
@@ -366,7 +388,7 @@ def associate_hop_seated_cse(
             exc,
         )
         return
-    if bound is None:
+    if bound is None and not _seated_url_already_current(lane=lane, chat_url=chat_url):
         logger.warning(
             "hop seated cse bind produced no association; skipping seat stamp "
             "lane=%s registration_id=%s",

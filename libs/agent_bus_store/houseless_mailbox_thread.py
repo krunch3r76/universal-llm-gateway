@@ -12,11 +12,16 @@ ruling.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
+
+from universal_logging import get_logger
 
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.threads import get_thread, normalize_thread_id
 from agent_bus_store.thread_classification import ROLE_ROOT_TAG
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +43,12 @@ def is_houseless_mailbox_thread(thread_id: str) -> bool:
         return False
     try:
         detail = get_thread(tid)
-    except Exception:  # noqa: BLE001 — seating bind is fail-soft
+    except sqlite3.Error as exc:
+        logger.warning(
+            "is_houseless_mailbox_thread store read failed thread_id=%s err=%s",
+            tid,
+            exc,
+        )
         return False
     if detail is None:
         return False
@@ -60,9 +70,7 @@ def _houseless_threads_for_slug(slug: str) -> list[str]:
             (slug,),
         ).fetchall()
     return [
-        str(row["id"])
-        for row in rows
-        if is_houseless_mailbox_thread(str(row["id"]))
+        str(row["id"]) for row in rows if is_houseless_mailbox_thread(str(row["id"]))
     ]
 
 
