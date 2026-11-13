@@ -52,12 +52,11 @@ from cursor_bridge.glass_agent_run_state import (
     run_state_hold_reason,
 )
 from cursor_bridge.grok_agent_ops import select_grok_agent_async
+from cursor_bridge.grok_window_bindings import cdp_port_for_display
 
-_TARGETS: dict[tuple[str, str], str] = {
+_CURSOR_TARGETS: dict[tuple[str, str], str] = {
     ("cursor", "8"): "http://127.0.0.1:9338",
     ("cursor", "orion-node"): "http://127.0.0.1:19338",
-    ("grok", "9"): "http://127.0.0.1:9339",
-    ("grok", "10"): "http://127.0.0.1:9340",
 }
 _WINDOW_TITLE = {"cursor": "Cursor Agents", "grok": "Grok Bot"}
 _GROK_COMPOSER_SELECTOR = '[aria-label="Prompt"][contenteditable="true"]'
@@ -104,7 +103,13 @@ def normalize_target(display: object, app: object) -> dict[str, Any]:
     name = str(app or "").strip().lower().replace("_", "-")
     if name in {"grok-bot", "grokbot"}:
         name = "grok"
-    origin = _TARGETS.get((name, disp))
+    if name == "grok":
+        port = cdp_port_for_display(disp)
+        if port is None:
+            return {"ok": False, "reason": "unknown_target", "display": disp, "app": name}
+        origin = container_cdp_origin(f"http://127.0.0.1:{port}")
+        return {"ok": True, "display": disp, "app": name, "origin": origin}
+    origin = _CURSOR_TARGETS.get((name, disp))
     if origin is None:
         return {"ok": False, "reason": "unknown_target", "display": disp, "app": name}
     return {

@@ -168,6 +168,9 @@ def test_bridge_client_rewrites_grok_display_fourteen_cdp(
         lambda: frozenset({"172.18.0.5"}),
     )
     assert container_cdp_origin("http://127.0.0.1:9344") == "http://172.18.0.1:9344"
+    out = normalize_target("14", "grok")
+    assert out["ok"] is True
+    assert out["origin"] == "http://172.18.0.1:9344"
 
 
 def test_open_listeners_skips_when_gateway_is_absent() -> None:

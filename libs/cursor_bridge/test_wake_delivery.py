@@ -451,7 +451,9 @@ def test_normalize_target_bridge_client_rewrites_forwarded_cdp_ports(
         normalize_target("orion-node", "cursor")["origin"] == "http://172.18.0.1:19338"
     )
     assert normalize_target("10", "grok")["origin"] == "http://172.18.0.1:9340"
+    assert normalize_target("14", "grok")["origin"] == "http://172.18.0.1:9344"
     assert normalize_target("99", "cursor")["reason"] == "unknown_target"
+    assert normalize_target("99", "grok")["reason"] == "unknown_target"
 
 
 def test_normalize_target_host_gateway_stays_on_loopback(
@@ -463,6 +465,7 @@ def test_normalize_target_host_gateway_stays_on_loopback(
     )
     assert normalize_target("8", "cursor")["origin"] == "http://127.0.0.1:9338"
     assert normalize_target("9", "grok")["origin"] == "http://127.0.0.1:9339"
+    assert normalize_target("14", "grok")["origin"] == "http://127.0.0.1:9344"
 
 
 def test_submit_wake_line_js_no_input_events() -> None:
