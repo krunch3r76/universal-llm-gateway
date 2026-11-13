@@ -397,6 +397,123 @@ def test_record_wake_result_sets_last_failure_on_pending_composer_defer(
     assert row["last_failure_reason"] == "composer_not_empty"
 
 
+def test_three_pending_wakes_coalesce_one_paste_lists_all_turns(db: None) -> None:
+    """Break: three debounced rows must claim once and paste all turn numbers."""
+    from cursor_bridge.chat_target import wake_line
+
+    detail = create_thread(thread_id=None, slug="coalesce-three")
+    assert detail is not None
+    thread = str(detail["id"])
+    pending: list[dict[str, object]] = []
+    last_id = 0
+    numbers: list[int] = []
+    for i in range(3):
+        turn_id, _ts, number, _c = insert_turn(
+            thread=thread,
+            from_agent="cursor",
+            to_agent="grok-bot-gc1",
+            subject=f"COALESCE|{i}",
+            body="b",
+        )
+        last_id = turn_id
+        numbers.append(number)
+        pending.append(
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+                "subscription_id": 91,
+            }
+        )
+    get_cursor()
+    with connect() as conn:
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
+    advance_scan(CONSUMER, 0, last_id, pending, now="2040-01-01 00:00:00")
+    claimed = claim_due_wakes(now="2040-01-01 00:00:01")
+    assert claimed.get("wake_id")
+    rows = claimed.get("rows") or []
+    assert len(rows) == 3
+    wake_ids = {str(r.get("wake_id") or claimed["wake_id"]) for r in rows}
+    assert len(wake_ids) == 1
+    expected_turns = ",".join(str(n) for n in sorted(numbers))
+    paste = wake_line(thread, expected_turns)
+    assert paste == f"BRIDGE_WAKE thread={thread} turn={expected_turns}"
+
+
+def test_exhaustion_one_notice_then_missed_on_next_delivered_wake(db: None) -> None:
+    """Cap drop posts one NOTICE; the next delivered wake surfaces missed prefix once."""
+    from bus_watch.endpoint_wake_composer_defer import COMPOSER_DEFER_SWEEP
+
+    detail = create_thread(thread_id=None, slug="exhaust-deliver-missed")
+    assert detail is not None
+    thread = str(detail["id"])
+    sub_id = 77
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="CAP|drop",
+        body="b",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "
+            "enqueued_at, decided_by_rule, wake_attempt_count, subscription_id) "
+            "VALUES (?,?,?,?, 'pending','composer_not_empty', datetime('now'), "
+            "datetime('now'), ?, ?, ?)",
+            (
+                "grok-bot-gc1",
+                thread,
+                turn_id,
+                number,
+                COMPOSER_DEFER_SWEEP,
+                DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS,
+                sub_id,
+            ),
+        )
+    store = _RecordingStore()
+    assert escalate_composer_deferred_on_sweep(store, stamp="2041-01-01 00:00:00") == 1
+    assert len(store.posts) == 1
+    assert store.posts[0]["subject"].startswith("NOTICE|endpoint wake composer defer")
+    turn2_id, _ts2, number2, _c2 = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="WAKE|after-drop",
+        body="b2",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, wake_id, claimed_at, "
+            "subscription_id) VALUES (?,?,?,?, 'claimed', 'w-deliver', datetime('now'), ?)",
+            ("grok-bot-gc1", thread, turn2_id, number2, sub_id),
+        )
+    stamp = "2041-01-02 00:00:00"
+    with connect() as conn:
+        prefix, ids = preview_missed_prefix(conn, subscription_id=sub_id, stamp=stamp)
+    assert prefix
+    assert ids
+    record_wake_result(
+        "w-deliver",
+        "delivered",
+        "delivered",
+        "exact",
+        sub_id,
+        None,
+        now=stamp,
+    )
+    with write_connect() as conn:
+        stamp_missed_surfaced(conn, subscription_id=sub_id, row_ids=ids, stamp=stamp)
+    with connect() as conn:
+        prefix2, ids2 = preview_missed_prefix(conn, subscription_id=sub_id, stamp=stamp)
+    assert prefix2 == ""
+    assert ids2 == []
+    assert escalate_composer_deferred_on_sweep(_RecordingStore(), stamp=stamp) == 0
+
+
 def test_record_wake_result_sets_last_failure_on_refused(db: None) -> None:
     detail = create_thread(thread_id=None, slug="lf-refused")
     assert detail is not None

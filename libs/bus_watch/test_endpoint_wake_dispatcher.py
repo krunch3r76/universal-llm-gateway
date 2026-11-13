@@ -39,6 +39,13 @@ from bus_watch.endpoint_wake_dispatcher import (
 from bus_watch.endpoint_wake_transport import StoreClient
 
 
+def _display_post_triplet(
+    state: str, reason: str, detail: dict[str, Any] | None = None
+) -> tuple[str, str, dict[str, Any] | None]:
+    """Mock ``_display_post`` / ``_display_post_maybe_missed`` return (a:43821)."""
+    return (state, reason, detail)
+
+
 @pytest.fixture(autouse=True)
 def _houseless_resolve_default_non_houseless(
     monkeypatch: pytest.MonkeyPatch,
@@ -1272,12 +1279,14 @@ def test_fire_due_wakes_composer_defer_delivers_once_after_backoff_and_clear(
     )
     post_attempts = 0
 
-    def _display_post_side_effect(*_args: object, **_kwargs: object) -> tuple[str, str]:
+    def _display_post_side_effect(
+        *_args: object, **_kwargs: object
+    ) -> tuple[str, str, dict | None]:
         nonlocal post_attempts
         post_attempts += 1
         if post_attempts == 1:
-            return ("pending", "composer_not_empty")
-        return ("delivered", "delivered")
+            return _display_post_triplet("pending", "composer_not_empty")
+        return _display_post_triplet("delivered", "delivered")
 
     class _SweepStore:
         posts: list[dict] = []
@@ -1432,10 +1441,10 @@ def test_fire_due_wakes_paste_prefixes_missed_once_then_stamps_surfaced(
         *,
         text: str = "",
         wake_groups: list[dict[str, Any]] | None = None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, dict | None]:
         del wake_groups
         pasted.append(text)
-        return ("delivered", "ok")
+        return _display_post_triplet("delivered", "ok")
 
     class Store:
         def claim(self) -> dict:
@@ -2023,7 +2032,7 @@ def test_fire_due_wakes_insyncerator_ledger_finds_grok_bot_gc2_subscription(
 
     with patch(
         "bus_watch.endpoint_wake_dispatcher._display_post",
-        return_value=("delivered", "match"),
+        return_value=_display_post_triplet("delivered", "match"),
     ):
         fire_due_wakes(Store())  # type: ignore[arg-type]
     assert posts[0]["outcome"] == "delivered"
@@ -2097,10 +2106,10 @@ def test_fire_due_wakes_passes_coalesced_turn_numbers_to_display_post(db: None) 
 
     def _capture(
         row: dict, sub: dict, turn: int | str, *, text: str = ""
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, dict | None]:
         del text
         turn_args.append(turn)
-        return ("delivered", "match")
+        return _display_post_triplet("delivered", "match")
 
     with patch(
         "bus_watch.endpoint_wake_dispatcher._display_post",
@@ -2208,10 +2217,10 @@ def test_fire_due_wakes_pastes_one_line_per_thread(db: None) -> None:
         *,
         text: str = "",
         wake_groups: list[dict[str, Any]] | None = None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, dict | None]:
         del row, sub, turn
         captured.append({"text": text, "wake_groups": wake_groups})
-        return ("delivered", "match")
+        return _display_post_triplet("delivered", "match")
 
     expected_groups = [
         {"thread_id": str(d1["id"]), "turn": n1},
@@ -2275,7 +2284,7 @@ def test_fire_due_wakes_pastes_one_line_per_thread(db: None) -> None:
 
     with patch(
         "bus_watch.endpoint_wake_dispatcher._display_post",
-        return_value=("refused", "title_mismatch"),
+        return_value=_display_post_triplet("refused", "title_mismatch"),
     ):
         fire_due_wakes(Store2())  # type: ignore[arg-type]
     with connect() as conn:
@@ -2373,7 +2382,7 @@ def test_fire_due_wakes_primary_is_tab_row(db: None) -> None:
 
     with patch(
         "bus_watch.endpoint_wake_dispatcher._display_post",
-        return_value=("delivered", "match"),
+        return_value=_display_post_triplet("delivered", "match"),
     ):
         fire_due_wakes(Store())  # type: ignore[arg-type]
     assert subs and subs[0]["agent_id"] == tab
@@ -2471,11 +2480,11 @@ def test_fire_due_wakes_orders_threads_by_turn_id(db: None) -> None:
         *,
         text: str = "",
         wake_groups: list[dict[str, Any]] | None = None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, dict | None]:
         del sub, turn, text
         primary_threads.append(str(row["thread_id"]))
         groups_seen.append(list(wake_groups or []))
-        return ("delivered", "match")
+        return _display_post_triplet("delivered", "match")
 
     with patch(
         "bus_watch.endpoint_wake_dispatcher._display_post",
@@ -3284,7 +3293,8 @@ def test_specimen_18460_no_composer_records_pending_and_drops_dead_agent_id(
                 now="2026-10-20 22:59:57",
             )
 
-    display_ret = classify_display(200, wake_out, None)
+    state, reason = classify_display(200, wake_out, None)
+    display_ret = _display_post_triplet(state, reason)
 
     with patch(
         "bus_watch.endpoint_wake_dispatcher._display_post",
@@ -3684,7 +3694,7 @@ def test_first_no_composer_under_grace_does_not_unsubscribe(db: None) -> None:
     try:
         with patch(
             "bus_watch.endpoint_wake_dispatcher._display_post",
-            return_value=("pending", "no_composer"),
+            return_value=_display_post_triplet("pending", "no_composer"),
         ):
             fire_due_wakes(
                 _make_display_wake_store(
@@ -3719,7 +3729,7 @@ def test_second_consecutive_no_composer_unsubscribes(db: None) -> None:
     try:
         with patch(
             "bus_watch.endpoint_wake_dispatcher._display_post",
-            return_value=("pending", "no_composer"),
+            return_value=_display_post_triplet("pending", "no_composer"),
         ):
             fire_due_wakes(
                 _make_display_wake_store(
@@ -3752,7 +3762,7 @@ def test_second_consecutive_no_composer_unsubscribes(db: None) -> None:
         mono["t"] = 6001.0
         with patch(
             "bus_watch.endpoint_wake_dispatcher._display_post",
-            return_value=("pending", "no_composer"),
+            return_value=_display_post_triplet("pending", "no_composer"),
         ):
             fire_due_wakes(
                 _make_display_wake_store(
@@ -3784,7 +3794,7 @@ def test_delivered_resets_no_composer_streak(db: None) -> None:
     try:
         with patch(
             "bus_watch.endpoint_wake_dispatcher._display_post",
-            return_value=("pending", "no_composer"),
+            return_value=_display_post_triplet("pending", "no_composer"),
         ):
             fire_due_wakes(
                 _make_display_wake_store(
@@ -3815,7 +3825,7 @@ def test_delivered_resets_no_composer_streak(db: None) -> None:
         claimed2 = claim_due_wakes(now="2026-10-21 12:00:06")
         with patch(
             "bus_watch.endpoint_wake_dispatcher._display_post",
-            return_value=("delivered", "delivered"),
+            return_value=_display_post_triplet("delivered", "delivered"),
         ):
             fire_due_wakes(
                 _make_display_wake_store(
@@ -3846,7 +3856,7 @@ def test_delivered_resets_no_composer_streak(db: None) -> None:
         claimed3 = claim_due_wakes(now="2026-10-21 12:00:11")
         with patch(
             "bus_watch.endpoint_wake_dispatcher._display_post",
-            return_value=("pending", "no_composer"),
+            return_value=_display_post_triplet("pending", "no_composer"),
         ):
             fire_due_wakes(
                 _make_display_wake_store(
@@ -3875,7 +3885,7 @@ def test_no_composer_after_uptime_grace_unsubscribes(db: None) -> None:
     try:
         with patch(
             "bus_watch.endpoint_wake_dispatcher._display_post",
-            return_value=("pending", "unknown"),
+            return_value=_display_post_triplet("pending", "unknown"),
         ):
             fire_due_wakes(
                 _make_display_wake_store(
@@ -3908,7 +3918,7 @@ def test_no_composer_after_uptime_grace_unsubscribes(db: None) -> None:
         mono["t"] = 7031.0
         with patch(
             "bus_watch.endpoint_wake_dispatcher._display_post",
-            return_value=("pending", "no_composer"),
+            return_value=_display_post_triplet("pending", "no_composer"),
         ):
             fire_due_wakes(
                 _make_display_wake_store(
@@ -4014,7 +4024,7 @@ def test_grok_wildcard_no_composer_retries_pending_without_unsubscribing(
 
     with patch(
         "bus_watch.endpoint_wake_dispatcher._display_post",
-        return_value=("pending", "no_composer"),
+        return_value=_display_post_triplet("pending", "no_composer"),
     ):
         fire_due_wakes(Store())  # type: ignore[arg-type]
 
@@ -6508,7 +6518,7 @@ def test_r3_stale_suffix_on_exact_house_row_delivers_to_bound_tab_remapped(
 
     def _capture(_row: dict, sub: dict, _turn_arg: object, **kwargs: object) -> tuple:
         captured.append(sub)
-        return ("delivered", "delivered")
+        return _display_post_triplet("delivered", "delivered")
 
     scan_once(store)  # type: ignore[arg-type]
     with patch(
@@ -6548,7 +6558,7 @@ def test_r3_bare_cursor_on_exact_row_delivers_bare_name(db: None) -> None:
 
     def _capture(_row: dict, sub: dict, _turn_arg: object, **kwargs: object) -> tuple:
         captured.append(sub)
-        return ("delivered", "delivered")
+        return _display_post_triplet("delivered", "delivered")
 
     scan_once(store)  # type: ignore[arg-type]
     with patch(
@@ -6587,7 +6597,7 @@ def test_r3_remapped_keeps_delivery_reason_when_not_delivered(db: None) -> None:
     scan_once(store)  # type: ignore[arg-type]
     with patch(
         "bus_watch.endpoint_wake_dispatcher._display_post",
-        return_value=("pending", "composer_busy"),
+        return_value=_display_post_triplet("pending", "composer_busy"),
     ):
         fire_due_wakes(store)  # type: ignore[arg-type]
     assert store.results[-1]["route"] == "remapped"
@@ -6611,7 +6621,7 @@ def test_r3_gate_remap_address_on_exact_row_is_not_labelled_remapped(db: None) -
     scan_once(store)  # type: ignore[arg-type]
     with patch(
         "bus_watch.endpoint_wake_dispatcher._display_post",
-        return_value=("delivered", "delivered"),
+        return_value=_display_post_triplet("delivered", "delivered"),
     ):
         fire_due_wakes(store)  # type: ignore[arg-type]
     assert store.results[-1]["route"] == "exact"
@@ -6645,7 +6655,7 @@ def test_r3_fire_honours_live_suffix_row_redirect(db: None) -> None:
 
     def _capture(_row: dict, sub: dict, _turn_arg: object, **kwargs: object) -> tuple:
         captured.append(sub)
-        return ("delivered", "delivered")
+        return _display_post_triplet("delivered", "delivered")
 
     scan_once(store)  # type: ignore[arg-type]
     with patch(
