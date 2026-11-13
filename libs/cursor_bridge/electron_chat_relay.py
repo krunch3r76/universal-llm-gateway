@@ -2,7 +2,8 @@
 
 Uses the shared ``cursor_bridge`` Electron window and sidebar agent selection
 interface (`list_pages`, `probe_surface`, `select_sidebar_target`) to:
-1. Select the bound agent row in a target Electron window (`:8`, `:9`, `:10`)
+1. Select the bound agent row on Cursor Glass ``:8`` (9338) or Grok Bot window
+   displays from ``config/grok-windows.json`` (``:9``/9339, ``:10``/9340, ``:14``/9344)
    when the currently active composer is empty.
 2. Read the latest settled turn from `.sand-message-prose` once `generating` is
    `False`.

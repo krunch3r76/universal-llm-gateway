@@ -47,8 +47,9 @@ def js_list(*, include_hidden: bool, include_retired: bool) -> str:
     const name = String(r.name || "");
     const hidden = Boolean(r.isHiddenFromSidebar || r.hiddenFromSidebar);
     if (!includeHidden && hidden) continue;
-    if (!includeRetired && name.endsWith({json.dumps(RETIRED_SUFFIX)})) continue;
-    agents.push({{id: r.id, name, isHiddenFromSidebar: hidden, isRunning: Boolean(r.isRunning)}});
+    const retiredBySuffix = name.endsWith({json.dumps(RETIRED_SUFFIX)});
+    if (!includeRetired && retiredBySuffix && r.isActive !== true) continue;
+    agents.push({{id: r.id, name, isHiddenFromSidebar: hidden, isRunning: Boolean(r.isRunning), isActive: Boolean(r.isActive)}});
   }}
   const sel = client.selection?.snapshots?.get ? client.selection.snapshots.get() : null;
   return {{ok: true, agents, currentAgentId: sel?.currentAgentId ?? null, transport: "cdp_grok_roster"}};
