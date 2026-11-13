@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from claude_bundles import cdp_registry_events as events
+from claude_bundles import cse_session_fold_settle as settle
 from claude_bundles.cdp_registry_store import (
     append_session_transition,
     load_sessions,
@@ -43,6 +44,9 @@ def append_session_transition_locked(
 
 def fold_pending_transitions() -> None:
     """Fold all transition log entries into sessions.json (single writer)."""
+    signature = settle.inputs_signature()
+    if settle.is_settled(signature):
+        return
     sessions = load_sessions()
     applied = _collect_applied_event_ids(sessions)
     changed = False
@@ -56,6 +60,9 @@ def fold_pending_transitions() -> None:
             applied.add(eid)
     if changed:
         write_sessions(sessions)
+        settle.clear_settled()
+    else:
+        settle.mark_settled(signature)
 
 
 def _collect_applied_event_ids(sessions: dict[str, dict[str, Any]]) -> set[str]:
