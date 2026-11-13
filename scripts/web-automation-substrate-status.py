@@ -254,7 +254,14 @@ def main() -> int:
     print("Web automation substrate status\n")
     print(f"  operator_home: {report.get('operator_home')}")
     for row in report["lanes"]:
-        mark = "OK" if row["cdp"].get("ok") else "FAIL"
+        # On-demand (standing=false) lanes are expected down; FAIL is reserved for
+        # standing lanes so it matches the exit code and the JSON "ok" field.
+        if row["cdp"].get("ok"):
+            mark = "OK"
+        elif row.get("standing"):
+            mark = "FAIL"
+        else:
+            mark = "idle"
         browser = row["cdp"].get("browser") or row["cdp"].get("error", "?")
         print(f"  [{mark}] {row['lane']:10} {row['cdp_url']:28} {browser}")
     pw = report["playwright"]
