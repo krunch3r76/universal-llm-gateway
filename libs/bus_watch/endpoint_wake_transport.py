@@ -26,6 +26,38 @@ _RETRIABLE_DISPLAY = {
 _CSE_PENDING_ERRORS = {"no_identity", "project_ask_unconfigured"}
 _MAX_PARENT_HOPS = 3
 _COMPOSER_IMPRESARIO_PREFIX = "composer-impresario-"
+_PARENT_WAKE_EVIDENCE_MARKERS = ("parent_wake", "parent-wake")
+
+
+def _grok_thread_mailbox_without_parent_opt_in(row: dict[str, Any]) -> bool:
+    """Grok ``scope_kind=thread`` mailbox rows match exact ``thread_scope`` only by default."""
+    if str(row.get("surface") or "").strip().lower() != "grok":
+        return False
+    scope_kind = str(row.get("scope_kind") or "thread").strip().lower()
+    if scope_kind == "tree":
+        return False
+    if scope_kind != "thread":
+        return False
+    evidence = str(row.get("evidence") or "").lower()
+    return not any(marker in evidence for marker in _PARENT_WAKE_EVIDENCE_MARKERS)
+
+
+def _subscription_row_uses_parent_walk(row: dict[str, Any]) -> bool:
+    """True when a row may match wakes on lane-child threads via ancestor ``thread_scope``."""
+    return not _grok_thread_mailbox_without_parent_opt_in(row)
+
+
+def _thread_scope_matches_wake(
+    row: dict[str, Any],
+    thread_id: str,
+    ancestor_rank: dict[str, int],
+) -> bool:
+    scope = str(row.get("thread_scope") or "")
+    if scope == thread_id or scope == "*":
+        return True
+    if scope in ancestor_rank and _subscription_row_uses_parent_walk(row):
+        return True
+    return False
 
 
 def composer_impresario_suffix(agent: str) -> str | None:
@@ -258,26 +290,31 @@ class StoreClient:
             not rows and agent != "cursor"
         ):
             rows = self._subscribed_rows("cursor")
+        subscribed = [r for r in rows if r.get("state") == "subscribed"]
+        needs_parent_walk = any(
+            _subscription_row_uses_parent_walk(r) for r in subscribed
+        )
         ancestors: list[str] = []
-        seen: set[str] = {thread_id}
-        cur: str | None = thread_id
-        for _hop in range(_MAX_PARENT_HOPS):
-            if not cur:
-                break
-            try:
-                payload_lane = self._bus("GET", f"/threads/{cur}/lane-current")
-            except Exception:
-                break
-            parent = (
-                payload_lane.get("parent_thread")
-                if isinstance(payload_lane, dict)
-                else None
-            )
-            if not isinstance(parent, str) or parent == "" or parent in seen:
-                break
-            ancestors.append(parent)
-            seen.add(parent)
-            cur = parent
+        if needs_parent_walk:
+            seen: set[str] = {thread_id}
+            cur: str | None = thread_id
+            for _hop in range(_MAX_PARENT_HOPS):
+                if not cur:
+                    break
+                try:
+                    payload_lane = self._bus("GET", f"/threads/{cur}/lane-current")
+                except Exception:
+                    break
+                parent = (
+                    payload_lane.get("parent_thread")
+                    if isinstance(payload_lane, dict)
+                    else None
+                )
+                if not isinstance(parent, str) or parent == "" or parent in seen:
+                    break
+                ancestors.append(parent)
+                seen.add(parent)
+                cur = parent
 
         ancestor_rank = {scope: idx + 1 for idx, scope in enumerate(ancestors)}
 
@@ -290,12 +327,10 @@ class StoreClient:
                 return 4
             return 99
 
-        subscribed = [r for r in rows if r.get("state") == "subscribed"]
         candidates = [
             r
             for r in subscribed
-            if r.get("thread_scope") in {thread_id, "*"}
-            or str(r.get("thread_scope") or "") in ancestor_rank
+            if _thread_scope_matches_wake(r, thread_id, ancestor_rank)
         ]
         if not candidates:
             for suffix in glass_agent_id_suffix_candidates(agent, raw_to=raw_to):
