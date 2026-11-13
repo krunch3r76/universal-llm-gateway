@@ -418,6 +418,9 @@ async def run_cdp_worker(
     contract: str | None = None,
     impresario_role: str | None = None,
     claude_surface: str | None = None,
+    mailbox_thread: str | None = None,
+    client_platform: str | None = None,
+    attested_by: str | None = None,
 ) -> None:
     """Stage already done at admit; run adapter and post proof/failure turn."""
     from .cdp_generate_reconcile import (
@@ -503,6 +506,10 @@ async def run_cdp_worker(
                 registration_id=registration_id,
                 execution_id=execution_id,
                 prompt_uri=prompt_uri,
+                mailbox_thread=mailbox_thread,
+                caller_agent=caller_agent,
+                client_platform=client_platform,
+                attested_by=attested_by,
             )
 
         loop.call_soon_threadsafe(_publish)

@@ -258,6 +258,42 @@ def build_seat_registration_stamp(
     return "\n".join(lines) + "\n"
 
 
+def build_houseless_seat_registration_stamp(
+    *,
+    successor_birth_id: str,
+    registration_id: str,
+    execution_id: str,
+    mailbox_thread: str,
+    chat_url: str | None = None,
+    observed_at: str | None = None,
+    client_platform: str | None = None,
+    attested_by: str | None = None,
+) -> str:
+    """Houseless first-seat tab bind stamp — ``mailbox_thread:``, no ``parent_thread:``."""
+    observed = observed_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    url = (chat_url or "").strip()
+    lines = [
+        "TYPE: SEAT_REGISTRATION",
+        f"{_BIRTH_ID_PREFIX} {successor_birth_id}",
+        f"registration_id: {registration_id}",
+        f"execution_id: {execution_id}",
+        f"chat_url: {url}" if url else "chat_url:",
+        f"mailbox_thread: {mailbox_thread}",
+        f"observed_at: {observed}",
+        (
+            "source: cursor-auto — projection of cdp-registry active store; "
+            "recovery: /v1/project-ask/active-work"
+        ),
+    ]
+    platform = (client_platform or "").strip()
+    if platform:
+        lines.append(f"client_platform: {platform}")
+    attest = (attested_by or "").strip()
+    if attest:
+        lines.append(f"attested_by: {attest}")
+    return "\n".join(lines) + "\n"
+
+
 def build_seat_stand_down_body(
     *,
     superseded_registration_id: str,

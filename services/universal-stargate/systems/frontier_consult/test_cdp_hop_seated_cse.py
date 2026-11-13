@@ -108,7 +108,70 @@ def test_houseless_first_seat_associates_and_stamps(
     body = stamp_turns[0]["body"]
     assert f"successor_birth_id: {birth_hex}" in body
     assert f"registration_id: {_REG}" in body
-    assert f"parent_thread: {thread_id}" in body
+    assert f"mailbox_thread: {thread_id}" in body
+    assert "parent_thread:" not in body
+
+
+def test_hop_seat_registration_stamp_unchanged_golden() -> None:
+    """Hop tab-bind stamp bytes must stay stable (parent_thread line)."""
+    from hop_handoff.body import build_seat_registration_stamp
+
+    stamp = build_seat_registration_stamp(
+        successor_birth_id="c" * 32,
+        registration_id=_REG,
+        execution_id="exec-golden-hop",
+        parent_thread="12286",
+        chat_url=_SUCCESSOR,
+        observed_at="2026-08-13T21:00:00Z",
+    )
+    assert stamp == (
+        "TYPE: SEAT_REGISTRATION\n"
+        f"successor_birth_id: {'c' * 32}\n"
+        f"registration_id: {_REG}\n"
+        "execution_id: exec-golden-hop\n"
+        f"chat_url: {_SUCCESSOR}\n"
+        "parent_thread: 12286\n"
+        "observed_at: 2026-08-13T21:00:00Z\n"
+        "source: cursor-auto — projection of cdp-registry active store; "
+        "recovery: /v1/project-ask/active-work\n"
+    )
+
+
+def test_houseless_stamp_on_distinct_mailbox_not_handoff_thread(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stamp targets mailbox_thread even when generate thread_id is a handoff child."""
+    from agent_bus_store.db import create_thread, get_turns
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    mailbox = create_thread(thread_id=None, slug="seat-mailbox", tags=["mailbox"])
+    handoff = create_thread(thread_id=None, slug="cdp-handoff-child")
+    assert mailbox and handoff
+    mailbox_id = str(mailbox["id"])
+    handoff_id = str(handoff["id"])
+    cdp_hop_cse_bind._STAMP_POSTED.clear()
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_hop_seated_cse(
+            mission_kind=None,
+            thread_id=handoff_id,
+            parent_thread=None,
+            chat_url=_SUCCESSOR,
+            registration_id=_REG,
+            execution_id="a1a2a3a4-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+            mailbox_thread=mailbox_id,
+        )
+    turns_mailbox = get_turns(thread=mailbox_id, last=5)
+    turns_handoff = get_turns(thread=handoff_id, last=5)
+    assert any(
+        str(t.get("body") or "").startswith("TYPE: SEAT_REGISTRATION")
+        for t in turns_mailbox
+    )
+    assert not any(
+        str(t.get("body") or "").startswith("TYPE: SEAT_REGISTRATION")
+        for t in turns_handoff
+    )
 
 
 def test_parentless_thread_without_mailbox_tag_does_not_associate(

@@ -665,6 +665,18 @@ async def dispatch_cdp_generate(
         if isinstance(parent_thread_raw, str) and parent_thread_raw.strip()
         else None
     )
+    mailbox_thread_raw = getattr(body, "mailbox_thread", None)
+    mailbox_thread = (
+        str(mailbox_thread_raw).strip()
+        if isinstance(mailbox_thread_raw, str) and mailbox_thread_raw.strip()
+        else None
+    )
+    client_platform_raw = getattr(body, "client_platform", None)
+    client_platform = (
+        str(client_platform_raw).strip()
+        if isinstance(client_platform_raw, str) and client_platform_raw.strip()
+        else None
+    )
     dispatch_thread = body.dispatch_thread_id
     provisional_thread = (
         str(dispatch_thread).strip()
@@ -672,6 +684,37 @@ async def dispatch_cdp_generate(
         else ""
     )
     declared_parent = parent_thread
+    from claude_bundles.what_is_running_view import is_houseless_purpose
+
+    if is_houseless_purpose(purpose):
+        if parent_thread:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="parent_thread",
+                reason="houseless purpose cannot bind parent_thread on generate",
+                status_code=422,
+                code="houseless_parent_conflict",
+            )
+        if (mission_kind or "").strip().lower() != "hop":
+            from agent_bus_store.houseless_mailbox_thread import resolve_mailbox_thread
+
+            resolved_mailbox = resolve_mailbox_thread(
+                mailbox_thread=mailbox_thread,
+                caller_agent=caller_agent,
+                thread_id=provisional_thread or None,
+            )
+            if not resolved_mailbox:
+                raise FrontierEndpointError(
+                    request_id=request_id,
+                    field="mailbox_thread",
+                    reason=(
+                        "houseless generate requires mailbox_thread or "
+                        "unambiguous caller_agent mailbox resolve"
+                    ),
+                    status_code=422,
+                    code="mailbox_thread_required",
+                )
+            mailbox_thread = resolved_mailbox
     generation_opts = getattr(body, "generation_options", None)
     impresario_role: str | None = None
     if isinstance(generation_opts, dict):
@@ -863,6 +906,10 @@ async def dispatch_cdp_generate(
             "parent_thread": parent_thread,
             "topic": dispatch_topic,
         }
+        if mailbox_thread:
+            worker_kwargs["mailbox_thread"] = mailbox_thread
+        if client_platform:
+            worker_kwargs["client_platform"] = client_platform
         if (mission_kind or "").strip() == "hop":
             worker_kwargs["predecessor_registration_id"] = getattr(
                 body, "predecessor_registration_id", None
