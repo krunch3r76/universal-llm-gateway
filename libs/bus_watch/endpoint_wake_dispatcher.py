@@ -3083,6 +3083,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         route: str | None,
         subscription_id: int | None,
         cse_registration_id: str | None,
+        wake_detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         record(
             store,
@@ -3093,6 +3094,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             subscription_id=subscription_id,
             cse_registration_id=cse_registration_id,
             decided_by_rule=decided_by_rule,
+            wake_detail=wake_detail,
         )
         return claimed
 
@@ -3357,6 +3359,14 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         )
     else:
         state, reason = _display_post_maybe_missed(primary, sub, turn_arg)
+    from bus_watch.endpoint_wake_composer_defer import is_composer_defer_reason
+
+    wake_detail: dict[str, Any] | None = None
+    if state == "pending" and is_composer_defer_reason(reason):
+        wake_detail = {
+            "release_claim_for_retry": True,
+            "composer_defer_reason": reason,
+        }
     display_reachable_age = _note_display_post_reason(reason)
     if _update_no_composer_streak_and_gate_unsubscribe(
         sub, thread, reason, display_reachable_age=display_reachable_age
@@ -3382,6 +3392,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         route=route,
         subscription_id=sub.get("id"),
         cse_registration_id=None,
+        wake_detail=wake_detail,
     )
 
 

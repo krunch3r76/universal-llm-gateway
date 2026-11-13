@@ -352,3 +352,81 @@ def test_record_wake_result_sets_last_failure_and_delivered_at(db: None) -> None
         ).fetchone()
     assert row["delivered_at"] == "2031-01-01 00:00:00"
     assert row["last_failure_reason"] is None
+
+
+def test_record_wake_result_sets_last_failure_on_pending_composer_defer(
+    db: None,
+) -> None:
+    detail = create_thread(thread_id=None, slug="lf-pending")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="PEND|lf",
+        body="b",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, wake_id, claimed_at) "
+            "VALUES (?,?,?,?, 'claimed', 'w-pend-lf', datetime('now'))",
+            ("grok-bot-gc1", thread, turn_id, number),
+        )
+    record_wake_result(
+        "w-pend-lf",
+        "pending",
+        "composer_not_empty",
+        "exact",
+        3,
+        None,
+        wake_detail={
+            "release_claim_for_retry": True,
+            "composer_defer_reason": "composer_not_empty",
+        },
+        now="2032-01-01 00:00:00",
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, last_failure_reason FROM endpoint_wake_ledger "
+            "WHERE wake_id IS NULL AND thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "pending"
+    assert row["last_failure_reason"] == "composer_not_empty"
+
+
+def test_record_wake_result_sets_last_failure_on_refused(db: None) -> None:
+    detail = create_thread(thread_id=None, slug="lf-refused")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="REF|lf",
+        body="b",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, wake_id, claimed_at) "
+            "VALUES (?,?,?,?, 'claimed', 'w-ref-lf', datetime('now'))",
+            ("grok-bot-gc1", thread, turn_id, number),
+        )
+    record_wake_result(
+        "w-ref-lf",
+        "refused",
+        "agent_id_mismatch",
+        "exact",
+        4,
+        None,
+        now="2032-02-01 00:00:00",
+    )
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, last_failure_reason FROM endpoint_wake_ledger WHERE wake_id='w-ref-lf'"
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["last_failure_reason"] == "agent_id_mismatch"
