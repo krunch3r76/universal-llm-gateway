@@ -1,7 +1,8 @@
-# propagation_residue — lane-23653 grok hidden confirm + interlocutor select
+# propagation_residue — lane-23653 grok spawn visible-first + interlocutor select
 # Operator/conductor: restart mcp after hub master land (see landed sha in closeout).
 restart_owed:
   - service: mcp
 reason: >-
-  wake_decision selection_agent_id, grok hidden pane confirm, wake_delivery grok
-  probe after select, interlocutor op=select — all served via mcp; reload after land.
+  grok_spawn_steps: deliver+sidebar confirm before hide when initial text;
+  js_confirm_spawn_sidebar_active. Interlocutor spawn path reload.
+  Hidden-target pane confirm guards unchanged.

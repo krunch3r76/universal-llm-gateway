@@ -1,6 +1,8 @@
-"""Spawn phase machine: hide readback, then select, subscribe, steer.
+"""Spawn phase machine: visible create, deliver+confirm, then hide.
 
-Process-local. Create-unknown and unconfirmed steer do not mutate on retry.
+With initial text: select → subscribe → steer → sidebar+delivery confirm → hide.
+Without text: create → hide readback → select. Prior ``currentAgentId`` restores
+on every exit path after a successful select. Process-local idempotency unchanged.
 """
 
 from __future__ import annotations
@@ -16,7 +18,11 @@ from cursor_bridge.grok_agent_subscriptions import (
     preflight_subscriptions,
     subscribe_grok,
 )
-from cursor_bridge.grok_roster_js import js_ensure_hidden, js_spawn
+from cursor_bridge.grok_roster_js import (
+    js_confirm_spawn_sidebar_active,
+    js_ensure_hidden,
+    js_spawn,
+)
 from cursor_bridge.grok_spawn_adopt import adopt_agent_by_name
 from cursor_bridge.grok_spawn_idempotency import (
     begin,
@@ -46,10 +52,10 @@ async def run_spawn(
     authorization_source: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
-    """Create, hide, select, optionally subscribe, then steer.
+    """Create visible, deliver while visible, confirm, then hide when requested.
 
-    Hide readback runs before steer. An unknown create or an unconfirmed
-    steer returns ``needs_operator`` and does not mutate on retry.
+    An unknown create or an unconfirmed steer returns ``needs_operator`` and
+    does not mutate on retry.
     """
     from cursor_bridge import grok_agent_ops as ops
 
@@ -212,7 +218,18 @@ async def run_spawn(
                 "needs_operator": True,
                 "display": ops._display_key(display),
             }
-        if bool(hidden) and not hide_ok:
+
+        prior_agent_id = ""
+        roster = await ops.list_grok_agents_async(display)
+        if roster.get("ok") is True:
+            prior_agent_id = str(roster.get("currentAgentId") or "").strip()
+        did_switch = False
+        spawn_out: dict[str, Any] | None = None
+
+        async def _run_hide() -> dict[str, Any] | None:
+            nonlocal hide_ok
+            if not bool(hidden) or hide_ok:
+                return None
             try:
                 hid = await ops._eval_display(display, js_ensure_hidden(agent_id))
             except asyncio.CancelledError:
@@ -238,16 +255,63 @@ async def run_spawn(
                 }
             hide_ok = True
             note(idem, token, hide_ok=True)
-        prior_agent_id = ""
-        roster = await ops.list_grok_agents_async(display)
-        if roster.get("ok") is True:
-            prior_agent_id = str(roster.get("currentAgentId") or "").strip()
-        should_restore = bool(
-            prior_agent_id and prior_agent_id != agent_id
-        )
-        did_switch = False
-        spawn_out: dict[str, Any] | None = None
+            return None
+
+        async def _confirm_visible_delivery(
+            steer_result: dict[str, Any],
+        ) -> dict[str, Any] | None:
+            if steer_result.get("delivered") is not True:
+                return {
+                    "ok": False,
+                    "code": "initial_text_unconfirmed",
+                    "needs_operator": True,
+                    "agent_id": agent_id,
+                    "display": ops._display_key(display),
+                    "steer": steer_result,
+                    "reason": "delivery_not_confirmed",
+                }
+            if steer_result.get("pasted") is False:
+                return {
+                    "ok": False,
+                    "code": "initial_text_unconfirmed",
+                    "needs_operator": True,
+                    "agent_id": agent_id,
+                    "display": ops._display_key(display),
+                    "steer": steer_result,
+                    "reason": "paste_not_confirmed",
+                }
+            try:
+                side = await ops._eval_display(
+                    display, js_confirm_spawn_sidebar_active(agent_id)
+                )
+            except (OSError, TimeoutError, URLError, RuntimeError, ValueError) as exc:
+                return {
+                    "ok": False,
+                    "code": "initial_text_unconfirmed",
+                    "needs_operator": True,
+                    "agent_id": agent_id,
+                    "display": ops._display_key(display),
+                    "reason": type(exc).__name__,
+                }
+            if not isinstance(side, dict) or side.get("ok") is not True:
+                return {
+                    "ok": False,
+                    "code": "initial_text_unconfirmed",
+                    "needs_operator": True,
+                    "agent_id": agent_id,
+                    "display": ops._display_key(display),
+                    "hidden": False,
+                    "sidebar_confirm": side,
+                    "steer": steer_result,
+                }
+            return None
+
         try:
+            if bool(hidden) and not hide_ok and not body:
+                hide_fail = await _run_hide()
+                if hide_fail is not None:
+                    return hide_fail
+
             sel = await ops.select_grok_agent_async(display, agent_id)
             if sel.get("ok") is not True:
                 release(idem, token, outcome="created")
@@ -258,7 +322,9 @@ async def run_spawn(
                     "display": ops._display_key(display),
                     "select": sel,
                 }
-            did_switch = should_restore
+            if prior_agent_id and prior_agent_id != agent_id:
+                did_switch = True
+
             sub: dict[str, Any] | None = None
             if has_box and not sub_done:
                 sub = await asyncio.to_thread(
@@ -308,6 +374,7 @@ async def run_spawn(
                         "needs_operator": True,
                         "agent_id": agent_id,
                         "display": ops._display_key(display),
+                        "hidden": False,
                     }
                 if steer_result.get("ok") is not True:
                     if known_not_sent(steer_result):
@@ -318,6 +385,7 @@ async def run_spawn(
                             "code": str(steer_result.get("code") or "initial_text_failed"),
                             "agent_id": agent_id,
                             "display": ops._display_key(display),
+                            "hidden": False,
                             "steer": steer_result,
                         }
                     mark_steer(idem, token, "sent_unknown")
@@ -328,9 +396,18 @@ async def run_spawn(
                         "needs_operator": True,
                         "agent_id": agent_id,
                         "display": ops._display_key(display),
+                        "hidden": False,
                         "steer": steer_result,
                     }
+                confirm_fail = await _confirm_visible_delivery(steer_result)
+                if confirm_fail is not None:
+                    mark_steer(idem, token, "sent_unknown")
+                    release(idem, token, outcome="created")
+                    return confirm_fail
                 mark_steer(idem, token, "delivered")
+                hide_fail = await _run_hide()
+                if hide_fail is not None:
+                    return hide_fail
             receipt = {
                 "ok": True,
                 "agent_id": agent_id,
@@ -364,6 +441,21 @@ async def run_spawn(
                     if spawn_out is not None:
                         spawn_out["restore_ok"] = False
                         spawn_out["restore_error"] = type(exc).__name__
+                    else:
+                        logger.warning(
+                            "grok spawn restore failed display=%s prior=%s err=%s",
+                            display,
+                            prior_agent_id,
+                            type(exc).__name__,
+                        )
+                else:
+                    if spawn_out is None and not restored.get("ok"):
+                        logger.warning(
+                            "grok spawn restore failed display=%s prior=%s code=%s",
+                            display,
+                            prior_agent_id,
+                            restored.get("code"),
+                        )
     except asyncio.CancelledError:
         raise
     except Exception as exc:

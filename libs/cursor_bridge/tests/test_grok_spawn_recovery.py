@@ -37,6 +37,13 @@ def _eval_factory(store: dict[str, Any]) -> Any:
                 "hidden": hidden,
                 "code": "hidden" if hidden else "hide_unverified",
             }
+        if "rowMarksActive" in expr:
+            store["sidebar_confirms"] = int(store.get("sidebar_confirms") or 0) + 1
+            return {
+                "ok": bool(store.get("sidebar_ok", True)),
+                "currentAgentId": "agent-1",
+                "row_agent_id": "agent-1",
+            }
         return {"ok": True, "currentAgentId": "agent-1"}
 
     return _eval
@@ -617,6 +624,94 @@ async def test_subscribe_failure_resumes_without_second_create() -> None:
     assert second["ok"] is True
     assert store["creates"] == 1
     assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_text_spawn_hides_after_confirm_not_before_steer() -> None:
+    store: dict[str, Any] = {"hidden": True}
+    order: list[str] = []
+    steer = AsyncMock(return_value={"ok": True, "delivered": True, "pasted": True})
+
+    async def _eval(_display: object, expr: str, **_kw: Any) -> dict[str, Any]:
+        if "createAgent" in expr:
+            order.append("create")
+            return {"ok": True, "created": True, "agent_id": "agent-1"}
+        if "setAgentHiddenFromSidebar" in expr:
+            order.append("hide")
+            return {"ok": True, "hidden": True, "code": "hidden"}
+        if "rowMarksActive" in expr:
+            order.append("sidebar_confirm")
+            return {"ok": True, "row_agent_id": "agent-1", "currentAgentId": "agent-1"}
+        if "currentAgentId" in expr and "agents" in expr:
+            order.append("list")
+            return {"ok": True, "agents": [], "currentAgentId": "prior-1"}
+        order.append("select")
+        return {"ok": True, "currentAgentId": "agent-1"}
+
+    with (
+        patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval),
+        patch("interlocutor.display_adapter.steer_display", steer),
+    ):
+        out = await spawn_grok_agent_async(
+            "9", "bot", text="hi", idempotency_key="order-text", hidden=True
+        )
+    assert out["ok"] is True
+    assert out["hidden"] is True
+    hide_i = order.index("hide")
+    assert "create" in order and "sidebar_confirm" in order
+    assert order.index("sidebar_confirm") < hide_i
+    assert steer.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_sidebar_confirm_leaves_visible_and_skips_hide() -> None:
+    store: dict[str, Any] = {"sidebar_ok": False, "hidden": True}
+    steer = AsyncMock(return_value={"ok": True, "delivered": True, "pasted": True})
+
+    with (
+        patch(
+            "cursor_bridge.grok_agent_ops._eval_display",
+            side_effect=_eval_factory(store),
+        ),
+        patch("interlocutor.display_adapter.steer_display", steer),
+    ):
+        out = await spawn_grok_agent_async(
+            "9", "bot", text="hi", idempotency_key="side-fail", hidden=True
+        )
+    assert out["ok"] is False
+    assert out["code"] == "initial_text_unconfirmed"
+    assert out.get("hidden") is False
+    assert store.get("hides", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_restore_after_failed_text_confirm() -> None:
+    store: dict[str, Any] = {"sidebar_ok": False}
+    selects: list[str] = []
+    steer = AsyncMock(return_value={"ok": True, "delivered": True, "pasted": True})
+
+    async def _eval(_display: object, expr: str, **_kw: Any) -> dict[str, Any]:
+        if "agents" in expr and "currentAgentId" in expr:
+            return {"ok": True, "agents": [], "currentAgentId": "prior-9"}
+        if ".select(" in expr or "selection.select" in expr:
+            return {"ok": True, "currentAgentId": "agent-1"}
+        return await _eval_factory(store)(_display, expr)
+
+    async def _select(display: object, aid: str) -> dict[str, Any]:
+        selects.append(aid)
+        return {"ok": True, "currentAgentId": aid}
+
+    with (
+        patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval),
+        patch("cursor_bridge.grok_agent_ops.select_grok_agent_async", side_effect=_select),
+        patch("interlocutor.display_adapter.steer_display", steer),
+    ):
+        out = await spawn_grok_agent_async(
+            "9", "bot", text="hi", idempotency_key="restore-fail", hidden=True
+        )
+    assert out["code"] == "initial_text_unconfirmed"
+    assert selects[0] == "agent-1"
+    assert selects[-1] == "prior-9"
 
 
 @pytest.mark.asyncio

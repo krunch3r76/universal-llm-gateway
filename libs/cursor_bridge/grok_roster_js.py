@@ -143,6 +143,31 @@ def js_spawn(*, client_nonce: str, name: str, description: str, hidden: bool) ->
 }})()"""
 
 
+def js_confirm_spawn_sidebar_active(agent_id: str) -> str:
+    """Read-only: sidebar row + selection agree on ``agent_id`` for visible spawn confirm."""
+    aid = json.dumps(agent_id)
+    return f"""(async () => {{
+  const client = {_client()};
+  const sel = client?.selection?.snapshots?.get ? client.selection.snapshots.get() : null;
+  const current = sel?.currentAgentId ?? null;
+  const row = document.querySelector('button.sand-agent-item[data-agent-id=' + {aid} + ']');
+  const rowId = row?.getAttribute?.('data-agent-id')?.trim() ?? '';
+  const ariaCurrent = row?.getAttribute?.('aria-current') === 'page';
+  const dataActive = row?.getAttribute?.('data-active') === 'true';
+  const rowMarksActive = Boolean(row && rowId === {aid} && (ariaCurrent || dataActive));
+  const selectionMatch = current === {aid};
+  const ok = Boolean(rowMarksActive && selectionMatch && rowId === {aid});
+  return {{
+    ok,
+    currentAgentId: current,
+    row_agent_id: rowId || null,
+    aria_current: ariaCurrent,
+    data_active: dataActive,
+    expected: {aid},
+  }};
+}})()"""
+
+
 def js_ensure_hidden(agent_id: str) -> str:
     """Hide ``agent_id`` and report the roster readback, not the request flag."""
     aid = json.dumps(agent_id)
@@ -185,6 +210,7 @@ def js_retire(agent_id: str) -> str:
 __all__ = [
     "FIND_CLIENT",
     "RETIRED_SUFFIX",
+    "js_confirm_spawn_sidebar_active",
     "js_ensure_hidden",
     "js_list",
     "js_retire",
