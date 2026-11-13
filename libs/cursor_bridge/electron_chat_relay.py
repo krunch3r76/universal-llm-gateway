@@ -47,7 +47,10 @@ from cursor_bridge.electron_chat_grok_wait import (
     messages_fingerprint,
     probe_grok_after_select,
 )
-from cursor_bridge.grok_agent_ops import select_grok_agent_async
+from cursor_bridge.grok_agent_ops import (
+    grok_selection_current_agent_id_async,
+    select_grok_agent_async,
+)
 from cursor_bridge.grok_computer import probe_grok_computer, resolve_grok_cdp_port
 from cursor_bridge.wake_delivery import (
     _busy_or_draft_reason,
@@ -104,12 +107,12 @@ async def _grok_select_and_confirm(
     grok_agent: str,
     surface: dict[str, Any],
     verdict: dict[str, Any],
+    selection_prior_agent_id: str = "",
 ) -> dict[str, Any]:
     """Select ``grok_agent`` via CDP roster, confirm active surface, apply target guards."""
-    did_switch = bool(
-        str(surface.get("active_agent_id") or "").strip()
-        and str(surface.get("active_agent_id") or "").strip() != grok_agent
-    )
+    surface_prior = str(surface.get("active_agent_id") or "").strip()
+    prior = (selection_prior_agent_id or surface_prior).strip()
+    did_switch = bool(prior and prior != grok_agent)
     async with display_switch_lock(disp):
         try:
             surface = await probe_surface(ws_url)
@@ -233,6 +236,7 @@ async def _grok_select_and_confirm(
         baseline_agent_id=baseline_agent,
         prior_message_fp=prior_fp,
         prior_generating=prior_generating,
+        display=disp,
     )
     surface = grok_wait["surface"]
     verdict = grok_wait["verdict"]
@@ -529,17 +533,21 @@ async def _resolve_and_select_endpoint(
         agent_id=endpoint.agent_id or None,
     )
     grok_agent = str(endpoint.agent_id or "").strip()
-    prior_agent_id = str(surface.get("active_agent_id") or "").strip()
+    selection_prior = ""
+    if app == "grok" and grok_agent:
+        selection_prior = await grok_selection_current_agent_id_async(disp)
+    surface_prior = str(surface.get("active_agent_id") or "").strip()
+    prior_agent_id = selection_prior or surface_prior
     restore_agent_id = (
         prior_agent_id
         if app == "grok" and grok_agent and prior_agent_id and prior_agent_id != grok_agent
         else ""
     )
+    did_switch = bool(restore_agent_id)
     selected = False
-    did_switch = False
     restore_meta = _grok_restore_fields(
         restore_agent_id=restore_agent_id,
-        did_switch=False,
+        did_switch=did_switch,
         target_agent_id=grok_agent,
     )
     need_grok_switch = (
@@ -553,8 +561,10 @@ async def _resolve_and_select_endpoint(
             grok_agent=grok_agent,
             surface=surface,
             verdict=verdict,
+            selection_prior_agent_id=selection_prior,
         )
-        did_switch = bool(switched.get("did_switch"))
+        if not bool(switched.get("did_switch")) and did_switch:
+            switched = {**switched, "did_switch": did_switch}
         restore_meta = _grok_restore_fields(
             restore_agent_id=restore_agent_id,
             did_switch=did_switch,
@@ -703,7 +713,11 @@ async def read_endpoint_turn(
                 out["supervision"] = surface["supervision"]
             return out
         finally:
-            if did_switch and endpoint.app == "grok":
+            if (
+                endpoint.app == "grok"
+                and restore_agent_id
+                and restore_agent_id != target_agent
+            ):
                 await _restore_grok_prior_selection(
                     disp, restore_agent_id, target_agent, out
                 )
@@ -1009,7 +1023,11 @@ async def paste_endpoint_message(
             out = outcome
             return out
         finally:
-            if did_switch and endpoint.app == "grok":
+            if (
+                endpoint.app == "grok"
+                and restore_agent_id
+                and restore_agent_id != target_agent
+            ):
                 await _restore_grok_prior_selection(
                     disp, restore_agent_id, target_agent, out
                 )

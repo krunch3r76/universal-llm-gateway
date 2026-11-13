@@ -118,6 +118,14 @@ async def list_grok_agents_async(
     return {**raw, "display": _display_key(display), "cdp_port": _port(display)}
 
 
+async def grok_selection_current_agent_id_async(display: str | int) -> str:
+    """``currentAgentId`` from Grok client selection state (not conversation DOM)."""
+    roster = await list_grok_agents_async(display, include_hidden=True)
+    if roster.get("ok") is not True:
+        return ""
+    return str(roster.get("currentAgentId") or "").strip()
+
+
 def list_grok_agents(
     display: str | int,
     *,
@@ -307,6 +315,7 @@ def retire_grok_agent(
 
 
 __all__ = [
+    "grok_selection_current_agent_id_async",
     "list_grok_agents",
     "list_grok_agents_async",
     "retire_grok_agent",

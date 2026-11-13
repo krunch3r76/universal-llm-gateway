@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from cursor_bridge.chat_surface import classify_surface
@@ -167,6 +167,57 @@ def _chat_surface(**overrides: Any) -> dict[str, Any]:
     }
     base.update(overrides)
     return base
+
+
+@pytest.mark.asyncio
+async def test_probe_waits_selection_on_target_while_supervisor_fingerprint_lingers() -> None:
+    """Break: selection already on target must not stale_dom on first supervisor prose."""
+    supervisor_line = "supervisor still visible"
+    prior_fp = messages_fingerprint({"recent_messages": [supervisor_line]})
+    lagging = _chat_surface(
+        active_agent_id="",
+        recent_messages=[supervisor_line],
+        has_active_chat=True,
+        generating=True,
+    )
+    bound = _chat_surface(
+        active_agent_id="target-id",
+        recent_messages=["hidden target line"],
+        has_active_chat=True,
+        generating=False,
+    )
+    probes = [dict(lagging), dict(lagging), dict(bound)]
+    selection_reads = iter(["target-id", "target-id", "target-id"])
+
+    async def _fake_probe(_ws: str) -> dict[str, Any]:
+        return probes.pop(0) if probes else dict(bound)
+
+    async def _fake_selection(_display: object) -> str:
+        del _display
+        return next(selection_reads, "target-id")
+
+    with (
+        patch(
+            "cursor_bridge.electron_chat_grok_wait.probe_surface",
+            side_effect=_fake_probe,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_grok_wait._selection_agent_id",
+            side_effect=_fake_selection,
+        ),
+        patch("cursor_bridge.electron_chat_grok_wait.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        out = await probe_grok_after_select(
+            "ws://fake",
+            endpoint=_Ep(),
+            expected_agent_id="target-id",
+            baseline_agent_id="supervisor-id",
+            prior_message_fp=prior_fp,
+            prior_generating=True,
+            display="14",
+        )
+    assert out["ok"] is True
+    assert out.get("stale_dom") is False
 
 
 @pytest.mark.asyncio
