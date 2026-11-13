@@ -210,6 +210,53 @@ def set_tab_chat_url(
             updated["execution_id"] = execution_id
         active[rid] = updated
         _store.write_active(active)
+    _maybe_append_houseless_tab_provenance(
+        registration_id=rid,
+        chat_url=url,
+        execution_id=execution_id,
+    )
+
+
+def _maybe_append_houseless_tab_provenance(
+    *,
+    registration_id: str,
+    chat_url: str,
+    execution_id: str | None,
+) -> None:
+    """When a STATUS_TAB row receives a URL, backfill provenance if seated missed it."""
+    from claude_bundles.what_is_running_view import is_houseless_purpose
+
+    active = _store.load_active()
+    row = active.get(registration_id)
+    if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
+        return
+    if not is_houseless_purpose(str(row.get("purpose") or "")):
+        return
+    try:
+        from agent_bus_store.db.cse_associations import (
+            latest_thread_id_for_registration,
+        )
+
+        from claude_bundles.cse_provenance import append_episode, latest_episode
+
+        lane = latest_thread_id_for_registration(registration_id)
+        if not lane:
+            return
+        if latest_episode(chat_url=chat_url) is not None:
+            return
+        port = row.get("port")
+        cdp_url = f"http://127.0.0.1:{port}" if isinstance(port, int) else ""
+        append_episode(
+            chat_url=chat_url,
+            registration_id=registration_id,
+            cdp_url=cdp_url or "http://127.0.0.1:0",
+            lane_thread=lane,
+            correlation_id=(execution_id or "").strip() or None,
+            lineage_state="claimed",
+            evidence_class="observed",
+        )
+    except Exception:  # noqa: BLE001 — tab URL write must not fail
+        return
 
 
 def sweep_kept_tab_rows() -> list[str]:

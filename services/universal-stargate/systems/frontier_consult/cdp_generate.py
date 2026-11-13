@@ -696,25 +696,25 @@ async def dispatch_cdp_generate(
                 code="houseless_parent_conflict",
             )
         if (mission_kind or "").strip().lower() != "hop":
-            from agent_bus_store.houseless_mailbox_thread import resolve_mailbox_thread
-
-            resolved_mailbox = resolve_mailbox_thread(
-                mailbox_thread=mailbox_thread,
-                caller_agent=caller_agent,
-                thread_id=provisional_thread or None,
+            from agent_bus_store.houseless_mailbox_thread import (
+                MailboxThreadResolveError,
+                resolve_mailbox_thread_at_admit,
             )
-            if not resolved_mailbox:
+
+            try:
+                mailbox_thread = resolve_mailbox_thread_at_admit(
+                    mailbox_thread=mailbox_thread,
+                    caller_agent=caller_agent,
+                    thread_id=provisional_thread or None,
+                )
+            except MailboxThreadResolveError as exc:
                 raise FrontierEndpointError(
                     request_id=request_id,
-                    field="mailbox_thread",
-                    reason=(
-                        "houseless generate requires mailbox_thread or "
-                        "unambiguous caller_agent mailbox resolve"
-                    ),
+                    field=exc.field,
+                    reason=exc.reason,
                     status_code=422,
-                    code="mailbox_thread_required",
-                )
-            mailbox_thread = resolved_mailbox
+                    code=exc.code,
+                ) from exc
     generation_opts = getattr(body, "generation_options", None)
     impresario_role: str | None = None
     if isinstance(generation_opts, dict):

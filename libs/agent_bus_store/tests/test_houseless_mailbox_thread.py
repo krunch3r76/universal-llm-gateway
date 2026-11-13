@@ -6,8 +6,9 @@ import pytest
 from agent_bus_store.db import create_thread, init_db
 from agent_bus_store.db.lane_associations import associate_lane
 from agent_bus_store.houseless_mailbox_thread import (
+    MailboxThreadResolveError,
     is_houseless_mailbox_thread,
-    resolve_mailbox_thread,
+    resolve_mailbox_thread_at_admit,
 )
 
 pytestmark = pytest.mark.offline
@@ -72,7 +73,7 @@ def test_resolve_mailbox_thread_explicit(tmp_path, monkeypatch: pytest.MonkeyPat
     assert detail is not None
     tid = str(detail["id"])
     assert (
-        resolve_mailbox_thread(
+        resolve_mailbox_thread_at_admit(
             mailbox_thread=tid, caller_agent=None, thread_id=None
         )
         == tid
@@ -87,7 +88,7 @@ def test_resolve_mailbox_thread_from_caller_slug(
     init_db()
     detail = create_thread(thread_id=None, slug="my-seat-mailbox", tags=["mailbox"])
     assert detail is not None
-    resolved = resolve_mailbox_thread(
+    resolved = resolve_mailbox_thread_at_admit(
         mailbox_thread=None,
         caller_agent="my-seat-mailbox",
         thread_id=None,
@@ -103,9 +104,43 @@ def test_resolve_mailbox_thread_ambiguous_caller_returns_none(
     init_db()
     create_thread(thread_id=None, slug="dup-slug", tags=["mailbox"])
     create_thread(thread_id=None, slug="dup-slug", tags=["mailbox"])
-    assert (
-        resolve_mailbox_thread(
+    with pytest.raises(MailboxThreadResolveError) as exc:
+        resolve_mailbox_thread_at_admit(
             mailbox_thread=None, caller_agent="dup-slug", thread_id=None
         )
-        is None
-    )
+    assert exc.value.code == "mailbox_thread_ambiguous"
+
+
+def test_resolve_explicit_invalid_fails_closed(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="not-mailbox-tag")
+    assert detail is not None
+    with pytest.raises(MailboxThreadResolveError) as exc:
+        resolve_mailbox_thread_at_admit(
+            mailbox_thread=str(detail["id"]),
+            caller_agent=None,
+            thread_id=None,
+        )
+    assert exc.value.code == "mailbox_thread_invalid"
+
+
+def test_resolve_explicit_does_not_fall_through_to_thread_id(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    mailbox = create_thread(thread_id=None, slug="real-mailbox", tags=["mailbox"])
+    assert mailbox is not None
+    other = create_thread(thread_id=None, slug="other-thread")
+    assert other is not None
+    with pytest.raises(MailboxThreadResolveError):
+        resolve_mailbox_thread_at_admit(
+            mailbox_thread=str(other["id"]),
+            caller_agent=None,
+            thread_id=str(mailbox["id"]),
+        )

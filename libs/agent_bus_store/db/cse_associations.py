@@ -49,22 +49,44 @@ def _prior_row(conn, *, thread_id: str) -> Any | None:
     ).fetchone()
 
 
+def _latest_bound_by_mint_url(
+    conn, *, thread_id: str, bound_by: str
+) -> str | None:
+    row = conn.execute(
+        "SELECT cse_chat_url FROM thread_cse_associations "
+        "WHERE thread_id = ? AND bound_by = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (thread_id, bound_by),
+    ).fetchone()
+    if row is None:
+        return None
+    url = str(row["cse_chat_url"] or "")
+    return url or None
+
+
 def _latest_hop_mint_url(conn, *, thread_id: str) -> str | None:
     """URL of the newest hop-mint row, or None when this lane has never minted.
 
     Same-URL appends write a later row with a relay ``bound_by``. The hold
     follows this mint URL, not the newest row.
     """
-    row = conn.execute(
-        "SELECT cse_chat_url FROM thread_cse_associations "
-        "WHERE thread_id = ? AND bound_by = ? "
-        "ORDER BY id DESC LIMIT 1",
-        (thread_id, HOP_SEATED_BOUND_BY),
-    ).fetchone()
-    if row is None:
-        return None
-    url = str(row["cse_chat_url"] or "")
-    return url or None
+    return _latest_bound_by_mint_url(
+        conn, thread_id=thread_id, bound_by=HOP_SEATED_BOUND_BY
+    )
+
+
+def _houseless_mint_blocks_other_url(
+    *,
+    mint_url: str | None,
+    prior_url: str,
+    bound_by: str | None,
+    url: str,
+) -> bool:
+    if not mint_url or mint_url != prior_url:
+        return False
+    if (bound_by or "") == HOUSELESS_FIRST_SEATED_BOUND_BY:
+        return False
+    return url != prior_url
 
 
 def _hop_mint_blocks_other_url(
@@ -124,6 +146,17 @@ def associate_cse(
             prior_reg = _normalize_registration_id(prior["cse_registration_id"])
             if _hop_mint_blocks_other_url(
                 mint_url=_latest_hop_mint_url(conn, thread_id=thread_id),
+                prior_url=prior_url,
+                bound_by=bound_by,
+                url=url,
+            ):
+                return None
+            if _houseless_mint_blocks_other_url(
+                mint_url=_latest_bound_by_mint_url(
+                    conn,
+                    thread_id=thread_id,
+                    bound_by=HOUSELESS_FIRST_SEATED_BOUND_BY,
+                ),
                 prior_url=prior_url,
                 bound_by=bound_by,
                 url=url,

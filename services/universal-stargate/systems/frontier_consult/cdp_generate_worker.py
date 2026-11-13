@@ -506,8 +506,8 @@ async def run_cdp_worker(
                 registration_id=registration_id,
                 execution_id=execution_id,
                 prompt_uri=prompt_uri,
+                purpose=purpose,
                 mailbox_thread=mailbox_thread,
-                caller_agent=caller_agent,
                 client_platform=client_platform,
                 attested_by=attested_by,
             )

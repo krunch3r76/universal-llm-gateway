@@ -110,7 +110,6 @@ def _post_tab_bind_seat_registration_stamp(
     successor_birth_id: str | None,
     prompt_uri: str | None,
     parent_thread: str,
-    forced_successor_birth_id: str | None = None,
 ) -> None:
     reg = registration_id.strip()
     exec_id = execution_id.strip()
@@ -119,12 +118,10 @@ def _post_tab_bind_seat_registration_stamp(
     dedupe_key = (lane, exec_id, reg)
     if dedupe_key in _STAMP_POSTED:
         return
-    birth = (forced_successor_birth_id or "").strip() or None
-    if not birth:
-        birth = _resolve_successor_birth_id_for_stamp(
-            successor_birth_id=successor_birth_id,
-            prompt_uri=prompt_uri,
-        )
+    birth = _resolve_successor_birth_id_for_stamp(
+        successor_birth_id=successor_birth_id,
+        prompt_uri=prompt_uri,
+    )
     if not birth:
         logger.warning(
             "hop seated seat registration stamp skipped: no successor_birth_id lane=%s",
@@ -207,43 +204,50 @@ def _post_houseless_tab_bind_seat_registration_stamp(
         )
 
 
-def _houseless_seated_lane(
+def _append_houseless_provenance_episode(
     *,
-    mission_kind: str | None,
-    thread_id: str,
-    parent_thread: str | None,
-    mailbox_thread: str | None,
-    caller_agent: str | None,
-) -> str | None:
-    kind = (mission_kind or "").strip().lower()
-    if kind == "hop":
-        return None
-    if (parent_thread or "").strip():
-        return None
-    from agent_bus_store.houseless_mailbox_thread import resolve_mailbox_thread
+    lane: str,
+    chat_url: str,
+    registration_id: str,
+    execution_id: str,
+    association_id: int | None,
+) -> None:
+    try:
+        from claude_bundles import cdp_registry_store as store
+        from claude_bundles.cse_provenance import append_episode
 
-    return resolve_mailbox_thread(
-        mailbox_thread=mailbox_thread,
-        caller_agent=caller_agent,
-        thread_id=thread_id,
-    )
+        row = store.load_active().get(registration_id)
+        port = row.get("port") if isinstance(row, dict) else None
+        cdp_url = f"http://127.0.0.1:{port}" if isinstance(port, int) else ""
+        append_episode(
+            chat_url=chat_url,
+            registration_id=registration_id,
+            cdp_url=cdp_url or "http://127.0.0.1:0",
+            lane_thread=lane,
+            correlation_id=execution_id,
+            lineage_state="claimed",
+            evidence_class="observed",
+        )
+    except Exception as exc:  # noqa: BLE001 — provenance must not fail seating
+        logger.warning(
+            "houseless provenance episode failed lane=%s reg=%s err=%s",
+            lane,
+            registration_id,
+            exc,
+        )
 
 
 def _associate_houseless_first_seated_cse(
     *,
-    thread_id: str,
     chat_url: str,
     registration_id: str | None,
     execution_id: str,
-    mailbox_thread: str | None = None,
-    caller_agent: str | None = None,
+    mailbox_thread: str,
     client_platform: str | None = None,
     attested_by: str | None = None,
 ) -> None:
     """Bind and stamp a houseless mailbox on its first seated generate."""
-    from agent_bus_store.houseless_mailbox_thread import resolve_mailbox_thread
-
-    lane = (mailbox_thread or "").strip() or (thread_id or "").strip()
+    lane = (mailbox_thread or "").strip()
     if not lane or not (chat_url or "").strip():
         return
     from agent_bus_store.db.cse_associations import (
@@ -253,7 +257,7 @@ def _associate_houseless_first_seated_cse(
     from hop_handoff.body import execution_id_as_successor_birth_id
 
     try:
-        associate_cse(
+        bound = associate_cse(
             thread_id=lane,
             cse_chat_url=chat_url,
             cse_registration_id=registration_id,
@@ -268,9 +272,19 @@ def _associate_houseless_first_seated_cse(
             exc,
         )
         return
+    if bound is None:
+        return
     reg = (registration_id or "").strip()
     birth = execution_id_as_successor_birth_id(execution_id)
     if reg and birth:
+        assoc_id = bound.get("id") if isinstance(bound, dict) else None
+        _append_houseless_provenance_episode(
+            lane=lane,
+            chat_url=chat_url,
+            registration_id=reg,
+            execution_id=execution_id,
+            association_id=int(assoc_id) if assoc_id is not None else None,
+        )
         _persist_client_platform(reg, client_platform)
         _post_houseless_tab_bind_seat_registration_stamp(
             mailbox_thread=lane,
@@ -293,15 +307,15 @@ def associate_hop_seated_cse(
     execution_id: str = "",
     successor_birth_id: str | None = None,
     prompt_uri: str | None = None,
+    purpose: str | None = None,
     mailbox_thread: str | None = None,
-    caller_agent: str | None = None,
     client_platform: str | None = None,
     attested_by: str | None = None,
 ) -> None:
     """Append the lane CSE association once a hop successor chat URL is known.
 
-    Non-hop seating returns without a write unless the mailbox is a houseless
-    first-seat lane (no generate ``parent_thread``, parentless bus thread).
+    Non-hop seating returns without a write unless ``purpose`` is houseless and
+    a ``mailbox_thread`` was resolved at admit.
     ``parent_thread`` is the lane pointer when set; otherwise ``thread_id``.
     Fail-soft: a missing thread or store error is logged and does not fail the
     generate poll. ``bound_by`` is ``cdp.generate.seated``, not a relay agent
@@ -310,21 +324,19 @@ def associate_hop_seated_cse(
     """
     kind = (mission_kind or "").strip().lower()
     if kind != "hop":
-        houseless_lane = _houseless_seated_lane(
-            mission_kind=mission_kind,
-            thread_id=thread_id,
-            parent_thread=parent_thread,
-            mailbox_thread=mailbox_thread,
-            caller_agent=caller_agent,
-        )
-        if houseless_lane:
+        from claude_bundles.what_is_running_view import is_houseless_purpose
+
+        lane = (mailbox_thread or "").strip()
+        if (
+            is_houseless_purpose(purpose)
+            and not (parent_thread or "").strip()
+            and lane
+        ):
             _associate_houseless_first_seated_cse(
-                thread_id=thread_id,
                 chat_url=chat_url,
                 registration_id=registration_id,
                 execution_id=execution_id,
-                mailbox_thread=houseless_lane,
-                caller_agent=caller_agent,
+                mailbox_thread=lane,
                 client_platform=client_platform,
                 attested_by=attested_by,
             )

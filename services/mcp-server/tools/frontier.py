@@ -507,6 +507,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        mailbox_thread: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Houseless first-seat mailbox lane (numeric thread id) on "
+                    "model=cdp/… generate with purpose=houseless. Resolved at "
+                    "admit; carried to tab-bind registration. Distinct from "
+                    "dispatch_thread_id (handoff transcript thread)."
+                ),
+            ),
+        ] = None,
         wake_lane: Annotated[
             str | None,
             Field(
@@ -1259,6 +1270,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["claude_surface"] = claude_surface
             if parent_thread is not None:
                 body["parent_thread"] = parent_thread
+            if mailbox_thread is not None:
+                body["mailbox_thread"] = mailbox_thread
             if wake_lane is not None:
                 body["wake_lane"] = wake_lane
             if mission_kind is not None:

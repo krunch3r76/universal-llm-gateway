@@ -64,6 +64,8 @@ def test_non_hop_child_lane_without_houseless_shape_does_not_associate(
             chat_url=_SUCCESSOR,
             registration_id=_REG,
             execution_id="f1f2f3f4-1111-4222-8333-444455556666",
+            purpose="ask",
+            mailbox_thread=child_id,
         )
     associate.assert_not_called()
 
@@ -92,6 +94,8 @@ def test_houseless_first_seat_associates_and_stamps(
             chat_url=_SUCCESSOR,
             registration_id=_REG,
             execution_id=exec_id,
+            purpose="houseless",
+            mailbox_thread=thread_id,
         )
     from agent_bus_store.db.cse_associations import get_current_cse
 
@@ -160,6 +164,7 @@ def test_houseless_stamp_on_distinct_mailbox_not_handoff_thread(
             chat_url=_SUCCESSOR,
             registration_id=_REG,
             execution_id="a1a2a3a4-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+            purpose="houseless",
             mailbox_thread=mailbox_id,
         )
     turns_mailbox = get_turns(thread=mailbox_id, last=5)
@@ -193,8 +198,59 @@ def test_parentless_thread_without_mailbox_tag_does_not_associate(
             chat_url=_SUCCESSOR,
             registration_id=_REG,
             execution_id="f1f2f3f4-1111-4222-8333-444455556666",
+            purpose="houseless",
         )
     associate.assert_not_called()
+
+
+def test_seated_houseless_does_not_rebind_on_non_houseless_consult(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later purpose=ask generate must not hijack the mailbox CSE."""
+    from agent_bus_store.db import create_thread, get_turns
+    from agent_bus_store.db.cse_associations import (
+        HOUSELESS_FIRST_SEATED_BOUND_BY,
+        get_current_cse,
+    )
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="seated-mailbox", tags=["mailbox"])
+    assert detail is not None
+    thread_id = str(detail["id"])
+    other_url = "https://claude.ai/cowork/cse_01OTHERSEATXXXXXXXXXXXX"
+    cdp_hop_cse_bind._STAMP_POSTED.clear()
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_hop_seated_cse(
+            mission_kind=None,
+            thread_id=thread_id,
+            parent_thread=None,
+            chat_url=_SUCCESSOR,
+            registration_id=_REG,
+            execution_id="a1a2a3a4-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+            purpose="houseless",
+            mailbox_thread=thread_id,
+        )
+    with patch("agent_bus_store.db.cse_associations.associate_cse") as associate:
+        associate_hop_seated_cse(
+            mission_kind=None,
+            thread_id=thread_id,
+            parent_thread=None,
+            chat_url=other_url,
+            registration_id="other-reg-id",
+            execution_id="b2b3b4b5-cccc-4ddd-9eee-ffffffffffff",
+            purpose="ask",
+            mailbox_thread=thread_id,
+        )
+    associate.assert_not_called()
+    cse = get_current_cse(thread_id=thread_id)
+    assert cse["cse_chat_url"] == _SUCCESSOR
+    assert cse["bound_by"] == HOUSELESS_FIRST_SEATED_BOUND_BY
+    turns = get_turns(thread=thread_id, last=10)
+    assert sum(
+        1 for t in turns if str(t.get("body") or "").startswith("TYPE: SEAT_REGISTRATION")
+    ) == 1
 
 
 def test_houseless_seated_callback_is_idempotent(
@@ -220,6 +276,8 @@ def test_houseless_seated_callback_is_idempotent(
                 chat_url=_SUCCESSOR,
                 registration_id=_REG,
                 execution_id=exec_id,
+                purpose="houseless",
+                mailbox_thread=thread_id,
             )
     turns = get_turns(thread=thread_id, last=10)
     stamp_turns = [
@@ -349,6 +407,61 @@ def test_hop_seated_thread_get_matches_successor(
 
 
 @pytest.mark.asyncio
+async def test_worker_seated_hook_passes_houseless_mailbox_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import cdp_generate_worker as worker_mod
+
+    seen: dict[str, Any] = {}
+
+    def _fake_generate(**kwargs: Any) -> CdpGenerateResult:
+        kwargs["on_url_bound"](_SUCCESSOR, _REG, 1)
+        return CdpGenerateResult(
+            ok=True,
+            body="ok",
+            execution_id=str(kwargs["execution_id"]),
+            satellite_execution_id=None,
+            prompt_uri=str(kwargs["prompt_uri"]),
+            picker_model="opus-5",
+        )
+
+    def _record_bind(**kwargs: Any) -> None:
+        seen.update(kwargs)
+
+    monkeypatch.setattr(worker_mod, "run_cdp_generate", _fake_generate)
+    monkeypatch.setattr(worker_mod, "publish_cdp_kwargs", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.maybe_expand_cdp_prompt",
+        lambda **kwargs: kwargs["prompt_uri"],
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.finalize_cdp_generate",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.threads_atomic.update_dispatch_link_chat_url",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_hop_cse_bind.associate_hop_seated_cse",
+        _record_bind,
+    )
+
+    await worker_mod.run_cdp_worker(
+        execution_id="exec-hl",
+        model_id="cdp/opus-5.5",
+        thread_id="99901",
+        caller_agent="seat-mailbox",
+        prompt_uri="cortex://notes/system/ephemeral/prompt.md",
+        request_id="req-hl",
+        purpose="houseless",
+        mailbox_thread="22760",
+    )
+    assert seen["purpose"] == "houseless"
+    assert seen["mailbox_thread"] == "22760"
+
+
+@pytest.mark.asyncio
 async def test_worker_seated_hook_calls_hop_associate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -404,6 +517,7 @@ async def test_worker_seated_hook_calls_hop_associate(
         mission_kind="hop",
         parent_thread="12286",
     )
+    assert seen.get("mailbox_thread") is None
     assert seen["mission_kind"] == "hop"
     assert seen["parent_thread"] == "12286"
     assert seen["thread_id"] == "child"
