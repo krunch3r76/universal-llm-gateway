@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from cdp_ask.unverifiable import is_unverifiable_stall, model_select_status_lines
+from claude_bundles.cdp_archive_verdict_fallback import apply_archive_verdict_fallback
 from claude_bundles.cdp_model_endpoint import (
     CDP_REPLY_FROM,
     DEFAULT_MAX_WALL_S,
@@ -541,6 +542,14 @@ async def run_cdp_worker(
                 via="worker",
             )
             return
+        from .cdp_pre_paste_context import build_pre_paste_retry_context
+
+        pre_paste = build_pre_paste_retry_context(
+            thread_id=thread_id,
+            execution_id=execution_id,
+            request_id=request_id,
+            purpose=purpose,
+        )
         result = await asyncio.to_thread(
             run_cdp_generate,
             execution_id=execution_id,
@@ -559,6 +568,7 @@ async def run_cdp_worker(
             on_submitted=_on_submitted,
             on_url_bound=_on_url_bound,
             claude_surface=claude_surface,  # type: ignore[arg-type]
+            pre_paste_retry=pre_paste,
         )
     except asyncio.CancelledError:
         leg_satellite: str | None = None
@@ -686,6 +696,7 @@ async def run_cdp_worker(
                     stall_stage=fallback.stall_stage,
                 )
 
+    result = apply_archive_verdict_fallback(result)
     await finalize_cdp_generate(
         result=result,
         request_id=request_id,

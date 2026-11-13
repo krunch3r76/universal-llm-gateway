@@ -107,6 +107,24 @@ class CdpAskClient:
             path = f"{path}?{urlencode({'chat_url': chat_url})}"
         return self._request("GET", path, client=client)
 
+    def health(self, *, client: httpx.Client | None = None) -> dict[str, Any]:
+        """GET ``/health`` on the satellite."""
+        return self._request("GET", "/health", client=client)
+
+    def reattach_house(
+        self,
+        *,
+        purpose: str = "ask",
+        client: httpx.Client | None = None,
+    ) -> dict[str, Any]:
+        """POST ``/v1/project-ask/reattach-house`` — wake driving operator seat."""
+        return self._request(
+            "POST",
+            "/v1/project-ask/reattach-house",
+            json_body={"purpose": purpose},
+            client=client,
+        )
+
     def abort(
         self,
         execution_id: str,

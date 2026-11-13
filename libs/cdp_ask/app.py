@@ -591,6 +591,45 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             status_code=200, content=result.model_dump(exclude_none=True)
         )
 
+    class ReattachHouseRequest(BaseModel):
+        purpose: str = "ask"
+
+    @app.post("/v1/project-ask/reattach-house")
+    async def reattach_house(req: ReattachHouseRequest) -> dict[str, object]:
+        """Wake or mint the driving operator seat before a pre-paste retry."""
+
+        def _run() -> dict[str, object]:
+            from claude_bundles import cdp_registry
+            from claude_bundles.cdp_registry.models import STATUS_DORMANT
+
+            holder = "cdp-pre-paste-retry"
+            for lane in cdp_registry.list_active():
+                if lane.purpose != req.purpose:
+                    continue
+                if lane.status == STATUS_DORMANT:
+                    seat = cdp_registry.reattach(lane.registration_id, holder=holder)
+                    return {
+                        "ok": True,
+                        "registration_id": seat.registration_id,
+                        "cdp_url": seat.cdp_url,
+                        "reattached": True,
+                    }
+            minted = cdp_registry.register_lane(
+                holder=holder,
+                purpose=req.purpose,
+            )
+            return {
+                "ok": True,
+                "registration_id": minted.registration_id,
+                "cdp_url": minted.cdp_url,
+                "reattached": False,
+            }
+
+        try:
+            return await asyncio.to_thread(_run)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)[:400]}
+
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
         harvest = peek_harvest_root_health()

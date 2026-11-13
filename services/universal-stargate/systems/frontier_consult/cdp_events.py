@@ -97,6 +97,48 @@ def CdpGenerateRefusedSeatHeld(  # noqa: N802
 
 
 @event_factory
+def CdpGeneratePrePasteRetryAttempt(  # noqa: N802
+    request_id: str,
+    execution_id: str,
+    thread_id: str,
+    attempt: int,
+    error: str,
+) -> Event:
+    """Pre-paste satellite submit retry (reattach + backoff)."""
+    return Event(
+        signal="cdp.generate.pre_paste_retry.attempt",
+        payload={
+            "request_id": request_id,
+            "execution_id": execution_id,
+            "thread_id": thread_id,
+            "attempt": attempt,
+            "error": error,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def CdpGeneratePrePasteRetryExhausted(  # noqa: N802
+    request_id: str,
+    execution_id: str,
+    thread_id: str,
+    error: str,
+) -> Event:
+    """Pre-paste retries exhausted for one dispatch_id."""
+    return Event(
+        signal="cdp.generate.pre_paste_retry.exhausted",
+        payload={
+            "request_id": request_id,
+            "execution_id": execution_id,
+            "thread_id": thread_id,
+            "error": error,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def CdpGenerateSubmitted(  # noqa: N802
     request_id: str,
     execution_id: str,

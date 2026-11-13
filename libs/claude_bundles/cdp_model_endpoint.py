@@ -31,6 +31,10 @@ from claude_bundles.cdp_model_endpoint_staging import (
     stage_cdp_prompt_with_skills,
     sweep_ephemeral,
 )
+from claude_bundles.cdp_pre_paste_retry import (
+    PrePasteRetryContext,
+    submit_with_pre_paste_retry,
+)
 from claude_bundles.cdp_progress_trace import ProgressTrace
 from claude_bundles.cdp_progress_trace import fingerprint as progress_fingerprint
 from claude_bundles.chat_model_match import normalize_picker_request
@@ -1051,6 +1055,7 @@ def run_cdp_generate(
     on_url_bound: Callable[[str, str | None, int], None] | None = None,
     contract: str | None = None,
     claude_surface: Literal["cowork", "code"] | None = None,
+    pre_paste_retry: PrePasteRetryContext | None = None,
 ) -> CdpGenerateResult:
     """Stage → native CDP submit → poll-to-proof (or stall/fail).
 
@@ -1148,11 +1153,12 @@ def run_cdp_generate(
         claude_surface=claude_surface or "cowork",
     )
     try:
-        submitted = _submit_with_overload_retry(
+        submitted = submit_with_pre_paste_retry(
             relay,
             submit_req,
             client=client,
             sleep=sleep,
+            ctx=pre_paste_retry,
         )
     except CdpAskClientError as exc:
         sweep_ephemeral(execution_id)

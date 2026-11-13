@@ -494,6 +494,59 @@ def admit_dispatch(
     return get_thread_with_links(thread_id)
 
 
+def read_dispatch_link_chat_url(
+    *,
+    thread_id: str,
+    execution_id: str,
+) -> str | None:
+    """Return projected chat_url for one dispatch link row."""
+    with write_connect() as conn:
+        row = conn.execute(
+            "SELECT chat_url FROM thread_dispatch_links "
+            "WHERE thread_id = ? AND execution_id = ? LIMIT 1",
+            (thread_id, execution_id),
+        ).fetchone()
+    if row is None:
+        return None
+    url = row["chat_url"]
+    return str(url) if url else None
+
+
+def read_pre_paste_retry_attempts(
+    *,
+    thread_id: str,
+    execution_id: str,
+) -> int:
+    with write_connect() as conn:
+        row = conn.execute(
+            "SELECT pre_paste_retry_attempts FROM thread_dispatch_links "
+            "WHERE thread_id = ? AND execution_id = ? LIMIT 1",
+            (thread_id, execution_id),
+        ).fetchone()
+    if row is None:
+        return 0
+    try:
+        return int(row["pre_paste_retry_attempts"] or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def record_pre_paste_retry_attempt(
+    *,
+    thread_id: str,
+    execution_id: str,
+    attempt: int,
+) -> int:
+    with write_connect() as conn:
+        cur = conn.execute(
+            "UPDATE thread_dispatch_links "
+            "SET pre_paste_retry_attempts = ? "
+            "WHERE thread_id = ? AND execution_id = ?",
+            (attempt, thread_id, execution_id),
+        )
+        return int(cur.rowcount)
+
+
 def update_dispatch_link_chat_url(
     *,
     thread_id: str,
