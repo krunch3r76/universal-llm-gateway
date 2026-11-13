@@ -480,6 +480,52 @@ def _stage_inputs(
         raise
 
 
+def apply_houseless_purpose_generate_admit(
+    *,
+    request_id: str,
+    purpose: str | None,
+    mission_kind: str | None,
+    parent_thread: str | None,
+    mailbox_thread: str | None,
+    caller_agent: str,
+    provisional_thread: str,
+) -> str | None:
+    """Houseless generate admit guards (422 fail-closed). Returns resolved mailbox."""
+    from claude_bundles.what_is_running_view import is_houseless_purpose
+
+    if not is_houseless_purpose(purpose):
+        return mailbox_thread
+    if parent_thread:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="parent_thread",
+            reason="houseless purpose cannot bind parent_thread on generate",
+            status_code=422,
+            code="houseless_parent_conflict",
+        )
+    if (mission_kind or "").strip().lower() == "hop":
+        return mailbox_thread
+    from agent_bus_store.houseless_mailbox_thread import (
+        MailboxThreadResolveError,
+        resolve_mailbox_thread_at_admit,
+    )
+
+    try:
+        return resolve_mailbox_thread_at_admit(
+            mailbox_thread=mailbox_thread,
+            caller_agent=caller_agent,
+            thread_id=provisional_thread or None,
+        )
+    except MailboxThreadResolveError as exc:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field=exc.field,
+            reason=exc.reason,
+            status_code=422,
+            code=exc.code,
+        ) from exc
+
+
 async def dispatch_cdp_generate(
     *,
     request_id: str,
@@ -684,37 +730,15 @@ async def dispatch_cdp_generate(
         else ""
     )
     declared_parent = parent_thread
-    from claude_bundles.what_is_running_view import is_houseless_purpose
-
-    if is_houseless_purpose(purpose):
-        if parent_thread:
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field="parent_thread",
-                reason="houseless purpose cannot bind parent_thread on generate",
-                status_code=422,
-                code="houseless_parent_conflict",
-            )
-        if (mission_kind or "").strip().lower() != "hop":
-            from agent_bus_store.houseless_mailbox_thread import (
-                MailboxThreadResolveError,
-                resolve_mailbox_thread_at_admit,
-            )
-
-            try:
-                mailbox_thread = resolve_mailbox_thread_at_admit(
-                    mailbox_thread=mailbox_thread,
-                    caller_agent=caller_agent,
-                    thread_id=provisional_thread or None,
-                )
-            except MailboxThreadResolveError as exc:
-                raise FrontierEndpointError(
-                    request_id=request_id,
-                    field=exc.field,
-                    reason=exc.reason,
-                    status_code=422,
-                    code=exc.code,
-                ) from exc
+    mailbox_thread = apply_houseless_purpose_generate_admit(
+        request_id=request_id,
+        purpose=purpose,
+        mission_kind=mission_kind,
+        parent_thread=parent_thread,
+        mailbox_thread=mailbox_thread,
+        caller_agent=caller_agent,
+        provisional_thread=provisional_thread,
+    )
     generation_opts = getattr(body, "generation_options", None)
     impresario_role: str | None = None
     if isinstance(generation_opts, dict):

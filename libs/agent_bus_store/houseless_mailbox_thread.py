@@ -54,14 +54,11 @@ def _houseless_threads_for_slug(slug: str) -> list[str]:
     slug = (slug or "").strip()
     if not slug:
         return []
-    try:
-        with connect() as conn:
-            rows = conn.execute(
-                "SELECT id FROM threads WHERE slug = ? COLLATE NOCASE",
-                (slug,),
-            ).fetchall()
-    except Exception:  # noqa: BLE001 — admit resolve is fail-closed
-        return []
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id FROM threads WHERE slug = ? COLLATE NOCASE",
+            (slug,),
+        ).fetchall()
     return [
         str(row["id"])
         for row in rows

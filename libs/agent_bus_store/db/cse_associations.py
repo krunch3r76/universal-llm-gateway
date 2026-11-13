@@ -82,9 +82,15 @@ def _houseless_mint_blocks_other_url(
     bound_by: str | None,
     url: str,
 ) -> bool:
+    """Block non-mint writers from replacing the houseless first-seat URL.
+
+    ``HOUSELESS_FIRST_SEATED_BOUND_BY`` may replace (re-birth). ``HOP_SEATED_BOUND_BY``
+    may supersede when the mailbox later hops (22824-shaped houseless hop mailboxes).
+    """
     if not mint_url or mint_url != prior_url:
         return False
-    if (bound_by or "") == HOUSELESS_FIRST_SEATED_BOUND_BY:
+    writer = bound_by or ""
+    if writer in (HOUSELESS_FIRST_SEATED_BOUND_BY, HOP_SEATED_BOUND_BY):
         return False
     return url != prior_url
 
@@ -124,7 +130,9 @@ def associate_cse(
     Returns None when the URL is missing/invalid (registration-only is not a
     bind), when the folded current pair already matches, or when the latest
     hop-mint URL (``bound_by`` ``cdp.generate.seated``) is still the current
-    URL, this caller is not that mint path, and the incoming URL differs.
+    URL, this caller is not that mint path, and the incoming URL differs;
+    or when a houseless first-seat mint URL is still current and this caller
+    is neither houseless nor hop seated mint (hop seated may replace houseless).
     A same-URL append does not clear that hold. Returns the insert echo when
     a row is appended. Emits ``mcp.agentbus.thread.cse.bound`` only on append.
     """

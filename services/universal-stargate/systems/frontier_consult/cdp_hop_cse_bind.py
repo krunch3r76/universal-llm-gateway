@@ -210,7 +210,6 @@ def _append_houseless_provenance_episode(
     chat_url: str,
     registration_id: str,
     execution_id: str,
-    association_id: int | None,
 ) -> None:
     try:
         from claude_bundles import cdp_registry_store as store
@@ -246,7 +245,11 @@ def _associate_houseless_first_seated_cse(
     client_platform: str | None = None,
     attested_by: str | None = None,
 ) -> None:
-    """Bind and stamp a houseless mailbox on its first seated generate."""
+    """Bind and stamp a houseless mailbox on its first seated generate.
+
+    A later ``purpose=houseless`` re-birth on the same mailbox replaces the
+    prior first-seat URL (intended; mint path ``cdp.generate.houseless_seated``).
+    """
     lane = (mailbox_thread or "").strip()
     if not lane or not (chat_url or "").strip():
         return
@@ -277,13 +280,11 @@ def _associate_houseless_first_seated_cse(
     reg = (registration_id or "").strip()
     birth = execution_id_as_successor_birth_id(execution_id)
     if reg and birth:
-        assoc_id = bound.get("id") if isinstance(bound, dict) else None
         _append_houseless_provenance_episode(
             lane=lane,
             chat_url=chat_url,
             registration_id=reg,
             execution_id=execution_id,
-            association_id=int(assoc_id) if assoc_id is not None else None,
         )
         _persist_client_platform(reg, client_platform)
         _post_houseless_tab_bind_seat_registration_stamp(
@@ -350,7 +351,7 @@ def associate_hop_seated_cse(
     )
 
     try:
-        associate_cse(
+        bound = associate_cse(
             thread_id=lane,
             cse_chat_url=chat_url,
             cse_registration_id=registration_id,
@@ -363,6 +364,14 @@ def associate_hop_seated_cse(
             lane,
             registration_id,
             exc,
+        )
+        return
+    if bound is None:
+        logger.warning(
+            "hop seated cse bind produced no association; skipping seat stamp "
+            "lane=%s registration_id=%s",
+            lane,
+            registration_id,
         )
         return
     reg = (registration_id or "").strip()

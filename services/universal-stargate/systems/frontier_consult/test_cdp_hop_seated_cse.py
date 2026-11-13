@@ -253,6 +253,55 @@ def test_seated_houseless_does_not_rebind_on_non_houseless_consult(
     ) == 1
 
 
+_U2_HOP_AFTER_HOUSELESS = (
+    "https://claude.ai/cowork/cse_01HopAfterHouselessXXXXXXXXXXXX"
+)
+
+
+def test_hop_on_houseless_mailbox_replaces_first_seat_url(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Houseless first seat on mailbox M at U1, hop seat on M at U2 → current is U2.
+
+    Falsifies B4 when houseless mint hold blocks ``HOP_SEATED_BOUND_BY``.
+    """
+    from agent_bus_store.db import create_thread
+    from agent_bus_store.db.cse_associations import (
+        HOP_SEATED_BOUND_BY,
+        get_current_cse,
+    )
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="hl-then-hop-mailbox", tags=["mailbox"])
+    assert detail is not None
+    mailbox_id = str(detail["id"])
+    cdp_hop_cse_bind._STAMP_POSTED.clear()
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_hop_seated_cse(
+            mission_kind=None,
+            thread_id=mailbox_id,
+            parent_thread=None,
+            chat_url=_SUCCESSOR,
+            registration_id=_REG,
+            execution_id="a1a2a3a4-bbbb-4ccc-8ddd-111111111111",
+            purpose="houseless",
+            mailbox_thread=mailbox_id,
+        )
+        associate_hop_seated_cse(
+            mission_kind="hop",
+            thread_id="hop-child",
+            parent_thread=mailbox_id,
+            chat_url=_U2_HOP_AFTER_HOUSELESS,
+            registration_id="reg-hop-after-houseless",
+            execution_id="b2b3b4b5-cccc-4ddd-8eee-222222222222",
+        )
+    cse = get_current_cse(thread_id=mailbox_id)
+    assert cse["cse_chat_url"] == _U2_HOP_AFTER_HOUSELESS
+    assert cse["bound_by"] == HOP_SEATED_BOUND_BY
+
+
 def test_houseless_seated_callback_is_idempotent(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
