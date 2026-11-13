@@ -64,6 +64,12 @@ def is_successor_birth_id(value: str | None) -> bool:
     return bool(value) and _BIRTH_ID_RE.fullmatch(value or "") is not None
 
 
+def execution_id_as_successor_birth_id(execution_id: str | None) -> str | None:
+    """Map a generate ``execution_id`` UUID into the 32-hex birth id shape."""
+    compact = (execution_id or "").strip().replace("-", "")
+    return compact if is_successor_birth_id(compact) else None
+
+
 def parse_hop_kind(body: str) -> str:
     """Return ``hop_kind`` from a handoff body; ``mission`` when the line is absent."""
     for line in (body or "").splitlines():
@@ -249,6 +255,42 @@ def build_seat_registration_stamp(
             "recovery: /v1/project-ask/active-work"
         ),
     ]
+    return "\n".join(lines) + "\n"
+
+
+def build_houseless_seat_registration_stamp(
+    *,
+    successor_birth_id: str,
+    registration_id: str,
+    execution_id: str,
+    mailbox_thread: str,
+    chat_url: str | None = None,
+    observed_at: str | None = None,
+    client_platform: str | None = None,
+    attested_by: str | None = None,
+) -> str:
+    """Houseless first-seat tab bind stamp — ``mailbox_thread:``, no ``parent_thread:``."""
+    observed = observed_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    url = (chat_url or "").strip()
+    lines = [
+        "TYPE: SEAT_REGISTRATION",
+        f"{_BIRTH_ID_PREFIX} {successor_birth_id}",
+        f"registration_id: {registration_id}",
+        f"execution_id: {execution_id}",
+        f"chat_url: {url}" if url else "chat_url:",
+        f"mailbox_thread: {mailbox_thread}",
+        f"observed_at: {observed}",
+        (
+            "source: cursor-auto — projection of cdp-registry active store; "
+            "recovery: /v1/project-ask/active-work"
+        ),
+    ]
+    platform = (client_platform or "").strip()
+    if platform:
+        lines.append(f"client_platform: {platform}")
+    attest = (attested_by or "").strip()
+    if attest:
+        lines.append(f"attested_by: {attest}")
     return "\n".join(lines) + "\n"
 
 

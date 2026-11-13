@@ -142,6 +142,10 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     mission_kind: str | None = None
     # Bus private-request parent lane (hop/side parent). Not SDK nest_under.
     parent_thread: str | None = None
+    # Houseless mailbox lane for first-seat registration (purpose=houseless).
+    mailbox_thread: str | None = None
+    # MCP client surface adjunct (corroborating metadata, not lane proof).
+    client_platform: str | None = None
     # Hop only (mission_kind=hop): CSE registration of the seat being replaced.
     # The external-gate check excludes that seat's live generate and still
     # refuses any other live gate on the lane. Ignored unless mission_kind=hop.
