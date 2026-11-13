@@ -319,6 +319,11 @@ async def _deliver_locked(
     if page is None:
         return _refuse("no_page", display=disp, app=app, pages=len(pages))
     ws_url = page["web_socket_debugger_url"]
+    grok_selection = ""
+    if app == "grok" and aid_s:
+        from cursor_bridge.grok_agent_ops import grok_selection_current_agent_id_async
+
+        grok_selection = await grok_selection_current_agent_id_async(disp)
     try:
         surface = await probe_surface(ws_url)
     except (TimeoutError, RuntimeError, OSError) as exc:
@@ -350,6 +355,7 @@ async def _deliver_locked(
             slug=slug_s,
             title=title_s or None,
             agent_id=aid_s or None,
+            selection_agent_id=grok_selection or None,
         )
     except ValueError:
         return _refuse("bad_options", display=disp, app=app)
@@ -409,6 +415,7 @@ async def _deliver_locked(
                 slug=slug_s,
                 title=title_s or None,
                 agent_id=aid_s or None,
+                selection_agent_id=grok_selection or None,
             )
         except ValueError:
             return _refuse("bad_options", display=disp, app=app)
@@ -445,16 +452,37 @@ async def _deliver_locked(
             cdp_pick = await select_grok_agent_async(disp, aid_s)
             if cdp_pick.get("ok"):
                 selected = True
-                await asyncio.sleep(0.15)
+                from cursor_bridge.electron_chat_grok_wait import (
+                    messages_fingerprint,
+                    probe_grok_after_select,
+                )
+                from cursor_bridge.electron_chat_relay import ElectronEndpoint
+
+                prior_fp = messages_fingerprint(surface)
+                ep = ElectronEndpoint(
+                    label="wake",
+                    app="grok",
+                    display=disp,
+                    thread=thread_s,
+                    slug=slug_s,
+                    title=title_s or "",
+                    agent_id=aid_s,
+                )
                 try:
-                    surface = await probe_surface(ws_url)
-                    verdict = wake_decision(
-                        surface,
-                        thread=thread_s,
-                        slug=slug_s,
-                        title=title_s or None,
-                        agent_id=aid_s or None,
+                    grok_selection = await grok_selection_current_agent_id_async(
+                        disp
                     )
+                    wait = await probe_grok_after_select(
+                        ws_url,
+                        endpoint=ep,
+                        expected_agent_id=aid_s,
+                        baseline_agent_id=pre_active_agent,
+                        prior_message_fp=prior_fp,
+                        prior_generating=bool(surface.get("generating")),
+                        display=disp,
+                    )
+                    surface = wait["surface"]
+                    verdict = wait["verdict"]
                 except Exception:
                     return _refuse(
                         "surface_probe_failed",
@@ -484,6 +512,7 @@ async def _deliver_locked(
                     slug=slug_s,
                     title=title_s or None,
                     agent_id=aid_s or None,
+                    selection_agent_id=grok_selection or None,
                 )
 
         if not verdict.get("ok"):

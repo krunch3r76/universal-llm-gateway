@@ -76,6 +76,26 @@ def _grok_restore_fields(
     }
 
 
+async def _grok_wake_decision(
+    surface: dict[str, Any],
+    *,
+    endpoint: ElectronEndpoint,
+    disp: str,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
+    """``wake_decision`` with Grok roster ``currentAgentId`` for hidden seats."""
+    aid = str(agent_id or endpoint.agent_id or "").strip()
+    selection = await grok_selection_current_agent_id_async(disp) if aid else ""
+    return wake_decision(
+        surface,
+        thread=endpoint.thread,
+        slug=endpoint.slug,
+        title=endpoint.title or None,
+        agent_id=aid or None,
+        selection_agent_id=selection or None,
+    )
+
+
 async def _restore_grok_prior_selection(
     display: str,
     restore_agent_id: str,
@@ -143,12 +163,8 @@ async def _grok_select_and_confirm(
                     "detail": type(exc).__name__,
                     "did_switch": did_switch,
                 }
-            pick_verdict = wake_decision(
-                fresh,
-                thread=endpoint.thread,
-                slug=endpoint.slug,
-                title=endpoint.title or None,
-                agent_id=grok_agent,
+            pick_verdict = await _grok_wake_decision(
+                fresh, endpoint=endpoint, disp=disp, agent_id=grok_agent
             )
             if pick_verdict.get("ok") and not _busy_or_draft_reason(fresh):
                 return {
@@ -158,12 +174,8 @@ async def _grok_select_and_confirm(
                     "selected": False,
                     "did_switch": did_switch,
                 }
-            pick_verdict = wake_decision(
-                surface,
-                thread=endpoint.thread,
-                slug=endpoint.slug,
-                title=endpoint.title or None,
-                agent_id=grok_agent,
+            pick_verdict = await _grok_wake_decision(
+                surface, endpoint=endpoint, disp=disp, agent_id=grok_agent
             )
             click_res = await select_sidebar_target(
                 ws_url,
@@ -194,12 +206,8 @@ async def _grok_select_and_confirm(
                     "detail": type(exc).__name__,
                     "did_switch": did_switch,
                 }
-            verdict = wake_decision(
-                surface,
-                thread=endpoint.thread,
-                slug=endpoint.slug,
-                title=endpoint.title or None,
-                agent_id=grok_agent,
+            verdict = await _grok_wake_decision(
+                surface, endpoint=endpoint, disp=disp, agent_id=grok_agent
             )
             guard = _busy_or_draft_reason(surface)
             if guard:
@@ -275,12 +283,8 @@ async def _grok_select_and_confirm(
             }
         busy = _busy_or_draft_reason(fresh_after_wait)
         if busy:
-            reprobe_verdict = wake_decision(
-                fresh_after_wait,
-                thread=endpoint.thread,
-                slug=endpoint.slug,
-                title=endpoint.title or None,
-                agent_id=grok_agent,
+            reprobe_verdict = await _grok_wake_decision(
+                fresh_after_wait, endpoint=endpoint, disp=disp, agent_id=grok_agent
             )
             return {
                 **base,
@@ -305,12 +309,8 @@ async def _grok_select_and_confirm(
                     "detail": type(exc).__name__,
                     "did_switch": did_switch,
                 }
-            verdict = wake_decision(
-                surface,
-                thread=endpoint.thread,
-                slug=endpoint.slug,
-                title=endpoint.title or None,
-                agent_id=grok_agent,
+            verdict = await _grok_wake_decision(
+                surface, endpoint=endpoint, disp=disp, agent_id=grok_agent
             )
             guard = _busy_or_draft_reason(surface)
             if guard:
@@ -331,12 +331,8 @@ async def _grok_select_and_confirm(
         if click_res.get("clicked"):
             await asyncio.sleep(0.25)
             surface = await probe_surface(ws_url)
-            verdict = wake_decision(
-                surface,
-                thread=endpoint.thread,
-                slug=endpoint.slug,
-                title=endpoint.title or None,
-                agent_id=grok_agent,
+            verdict = await _grok_wake_decision(
+                surface, endpoint=endpoint, disp=disp, agent_id=grok_agent
             )
         if not verdict.get("ok"):
             return {
@@ -525,14 +521,17 @@ async def _resolve_and_select_endpoint(
             "app": app,
             "detail": type(exc).__name__,
         }
-    verdict = wake_decision(
-        surface,
-        thread=endpoint.thread,
-        slug=endpoint.slug,
-        title=endpoint.title or None,
-        agent_id=endpoint.agent_id or None,
-    )
     grok_agent = str(endpoint.agent_id or "").strip()
+    if app == "grok" and grok_agent:
+        verdict = await _grok_wake_decision(surface, endpoint=endpoint, disp=disp)
+    else:
+        verdict = wake_decision(
+            surface,
+            thread=endpoint.thread,
+            slug=endpoint.slug,
+            title=endpoint.title or None,
+            agent_id=endpoint.agent_id or None,
+        )
     selection_prior = ""
     if app == "grok" and grok_agent:
         selection_prior = await grok_selection_current_agent_id_async(disp)
@@ -603,13 +602,18 @@ async def _resolve_and_select_endpoint(
                     "detail": type(exc).__name__,
                     **restore_meta,
                 }
-            verdict = wake_decision(
-                surface,
-                thread=endpoint.thread,
-                slug=endpoint.slug,
-                title=endpoint.title or None,
-                agent_id=endpoint.agent_id or None,
-            )
+            if app == "grok" and grok_agent:
+                verdict = await _grok_wake_decision(
+                    surface, endpoint=endpoint, disp=disp, agent_id=grok_agent
+                )
+            else:
+                verdict = wake_decision(
+                    surface,
+                    thread=endpoint.thread,
+                    slug=endpoint.slug,
+                    title=endpoint.title or None,
+                    agent_id=endpoint.agent_id or None,
+                )
             guard = _busy_or_draft_reason(surface)
             if guard:
                 return {
@@ -635,13 +639,18 @@ async def _resolve_and_select_endpoint(
             selected = True
             await asyncio.sleep(0.25)
             surface = await probe_surface(ws_url)
-            verdict = wake_decision(
-                surface,
-                thread=endpoint.thread,
-                slug=endpoint.slug,
-                title=endpoint.title or None,
-                agent_id=endpoint.agent_id or None,
-            )
+            if app == "grok" and grok_agent:
+                verdict = await _grok_wake_decision(
+                    surface, endpoint=endpoint, disp=disp, agent_id=grok_agent
+                )
+            else:
+                verdict = wake_decision(
+                    surface,
+                    thread=endpoint.thread,
+                    slug=endpoint.slug,
+                    title=endpoint.title or None,
+                    agent_id=endpoint.agent_id or None,
+                )
     if not verdict.get("ok"):
         return {
             **verdict,
@@ -708,6 +717,8 @@ async def read_endpoint_turn(
                 "recent_messages": messages,
                 "latest_message": latest,
                 "latest_fingerprint": message_fingerprint(latest) if latest else "",
+                "restore_agent_id": restore_agent_id,
+                "did_switch": did_switch,
             }
             if isinstance(surface, dict) and surface.get("supervision"):
                 out["supervision"] = surface["supervision"]

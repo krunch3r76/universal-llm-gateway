@@ -8,6 +8,7 @@ from interlocutor.facade import (
     execute_list,
     execute_read,
     execute_retire,
+    execute_select,
     execute_spawn,
     execute_steer,
 )
@@ -29,7 +30,7 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Interlocutor")
     def interlocutor(
-        op: Literal["read", "steer", "list", "spawn", "retire"],
+        op: Literal["read", "steer", "select", "list", "spawn", "retire"],
         target: str,
         coverage: Literal["latest", "from_turn", "full", "meta"] = "latest",
         after_turn: int | None = None,
@@ -49,11 +50,18 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
         include_hidden: bool = True,
         include_retired: bool = False,
     ) -> dict[str, Any]:
-        """Read or steer an interlocutor target (Cowork, display :8, or Grok roster ops).
+        """Read, deliver (steer), select, or roster ops on an interlocutor target.
 
+        ``select`` sets grok ``currentAgentId`` only (no paste, no restore).
         ``list`` / ``spawn`` accept bare ``display:<n>`` for each row in grok-windows.json.
         ``retire`` requires ``display:<n>/<agent_id>`` on those grok window displays.
         """
+        if op == "select":
+            result = execute_select(target=target)
+            outcome = "refused" if result.get("ok") is False else "completed"
+            _record(f"interlocutor.select.{outcome}", target=target)
+            return {**result, "op": "select", "target": target}
+
         if op == "read":
             result = execute_read(
                 target=target,

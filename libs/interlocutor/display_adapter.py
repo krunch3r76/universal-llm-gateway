@@ -221,6 +221,53 @@ def read_display_latest_sync(target: DisplayEightTarget) -> dict[str, Any]:
     return asyncio.run(read_display_latest(target))
 
 
+async def select_display_target(target: DisplayEightTarget) -> dict[str, Any]:
+    """Roster-select only — does not restore a prior ``currentAgentId``."""
+    if target.app != "grok":
+        return {
+            "ok": False,
+            "code": "unsupported_app",
+            "reason": f"select supports grok only (got {target.app!r})",
+            "adapter": "display_eight",
+        }
+    from cursor_bridge.grok_agent_ops import (
+        grok_selection_current_agent_id_async,
+        select_grok_agent_async,
+    )
+
+    aid = str(target.agent_id or "").strip()
+    if not aid:
+        return {
+            "ok": False,
+            "code": "agent_id_required",
+            "reason": "select requires agent_id",
+            "adapter": "display_eight",
+        }
+    picked = await select_grok_agent_async(target.display, aid)
+    current = await grok_selection_current_agent_id_async(target.display)
+    ok = bool(picked.get("ok")) and current == aid
+    out: dict[str, Any] = {
+        "ok": ok,
+        "selected": ok,
+        "adapter": "display_eight",
+        "display": target.display,
+        "app": target.app,
+        "agent_id": aid,
+        "currentAgentId": current,
+        "select": picked,
+    }
+    if not ok:
+        out["code"] = str(picked.get("code") or "selection_failed")
+        out["reason"] = str(
+            picked.get("reason") or picked.get("code") or "selection_failed"
+        )
+    return out
+
+
+def select_display_target_sync(target: DisplayEightTarget) -> dict[str, Any]:
+    return asyncio.run(select_display_target(target))
+
+
 def steer_display_sync(
     target: DisplayEightTarget,
     *,
@@ -302,6 +349,8 @@ __all__ = [
     "list_grok_window_sync",
     "read_display_latest_sync",
     "retire_grok_agent_sync",
+    "select_display_target",
+    "select_display_target_sync",
     "spawn_grok_window_sync",
     "steer_display_sync",
 ]
