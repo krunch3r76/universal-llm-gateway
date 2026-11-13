@@ -8,26 +8,28 @@ from typing import Any
 
 from cdp_ask.client import CdpAskClient, CdpAskClientError
 
-PRE_PASTE_BACKOFF_S = (10.0, 30.0, 90.0)
+PRE_PASTE_BACKOFF_S = (10.0, 30.0)
 MAX_PRE_PASTE_ATTEMPTS = 3
 _CLAUDE_URL_MARKERS = ("claude.ai/",)
 
 _PRE_PASTE_TOKENS = (
-    "cdp-ask unreachable",
     "connection refused",
     "econnrefused",
     "connect timeout",
-    "timed out",
     "no tab",
     "no attachment",
     "not attached",
-    "cdp connect",
-    "target closed",
-    "browser has been closed",
+    "cdp connect timeout",
     "project_ask_url not configured",
     "no registration",
     "no host",
     "reattach_no_host",
+)
+
+_READ_TIMEOUT_MARKERS = (
+    "read timeout",
+    "readtimedout",
+    "timed out waiting",
 )
 
 
@@ -49,13 +51,19 @@ def is_post_paste_state(
 
 
 def is_pre_paste_failure(exc: CdpAskClientError | str | None) -> bool:
-    """Classify satellite errors that occur before paste."""
+    """Classify connect-phase satellite errors that occur before paste."""
     if exc is None:
         return False
     text = str(exc).lower()
     if "http 529" in text or "http 503" in text or "upstream_overloaded" in text:
         return False
     if isinstance(exc, CdpAskClientError) and exc.status_code in (529, 503):
+        return False
+    if any(marker in text for marker in _READ_TIMEOUT_MARKERS):
+        return False
+    if "timed out" in text and "connect" not in text:
+        return False
+    if "cdp-ask unreachable" in text and "connection" not in text:
         return False
     return any(token in text for token in _PRE_PASTE_TOKENS)
 
@@ -69,11 +77,11 @@ class PrePasteRetryContext:
     request_id: str
     read_chat_url: Callable[[], str | None]
     read_attempt_count: Callable[[], int]
+    read_satellite_execution_id: Callable[[], str | None]
     record_attempt: Callable[[int], None]
     emit_attempt: Callable[[int, str], None]
     emit_exhausted: Callable[[str], None]
     reattach_house: Callable[[], dict[str, Any]]
-    probe_health: Callable[[], dict[str, Any]]
 
 
 def submit_with_pre_paste_retry(
@@ -90,19 +98,23 @@ def submit_with_pre_paste_retry(
     )
 
     if ctx is None:
-        return _submit_once_or_overload(
-            relay, submit_req, client=client, sleep=sleep
+        return _submit_once_or_overload(relay, submit_req, client=client, sleep=sleep)
+
+    def _post_paste() -> bool:
+        return is_post_paste_state(
+            chat_url=ctx.read_chat_url(),
+            satellite_execution_id=ctx.read_satellite_execution_id(),
         )
 
-    if is_post_paste_state(
-        chat_url=ctx.read_chat_url(),
-        satellite_execution_id=None,
-    ):
-        return _submit_once_or_overload(
-            relay, submit_req, client=client, sleep=sleep
-        )
+    if _post_paste():
+        return _submit_once_or_overload(relay, submit_req, client=client, sleep=sleep)
 
     attempt_base = max(0, min(ctx.read_attempt_count(), MAX_PRE_PASTE_ATTEMPTS))
+    if attempt_base >= MAX_PRE_PASTE_ATTEMPTS:
+        msg = "pre_paste_retry_exhausted"
+        ctx.emit_exhausted(msg)
+        raise CdpAskClientError(msg)
+
     last_exc: CdpAskClientError | None = None
     for offset in range(MAX_PRE_PASTE_ATTEMPTS - attempt_base):
         attempt_no = attempt_base + offset + 1
@@ -116,10 +128,7 @@ def submit_with_pre_paste_retry(
                 )
             if not is_pre_paste_failure(exc):
                 raise
-            if is_post_paste_state(
-                chat_url=ctx.read_chat_url(),
-                satellite_execution_id=None,
-            ):
+            if _post_paste():
                 raise
             if attempt_no >= MAX_PRE_PASTE_ATTEMPTS:
                 ctx.record_attempt(attempt_no)
@@ -127,14 +136,13 @@ def submit_with_pre_paste_retry(
                 raise
             ctx.record_attempt(attempt_no)
             ctx.emit_attempt(attempt_no, str(exc))
-            with_health = ctx.probe_health()
-            if not with_health.get("ok", True):
-                pass
             ctx.reattach_house()
             backoff = PRE_PASTE_BACKOFF_S[
                 min(attempt_no - 1, len(PRE_PASTE_BACKOFF_S) - 1)
             ]
             sleep(backoff)
+            if _post_paste():
+                raise
     assert last_exc is not None
     raise last_exc
 

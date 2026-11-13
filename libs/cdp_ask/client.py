@@ -107,10 +107,6 @@ class CdpAskClient:
             path = f"{path}?{urlencode({'chat_url': chat_url})}"
         return self._request("GET", path, client=client)
 
-    def health(self, *, client: httpx.Client | None = None) -> dict[str, Any]:
-        """GET ``/health`` on the satellite."""
-        return self._request("GET", "/health", client=client)
-
     def reattach_house(
         self,
         *,

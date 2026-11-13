@@ -163,12 +163,28 @@ def upsert_inflight_leg(
     bus_body_norm = str(bus_body).strip() if bus_body else None
     conn = _connect()
     try:
+        prior = conn.execute(
+            "SELECT pre_paste_retry_attempts, satellite_execution_id "
+            "FROM cdp_inflight_leg WHERE execution_id = ? LIMIT 1",
+            (execution_id,),
+        ).fetchone()
+        prior_attempts = 0
+        prior_satellite: str | None = None
+        if prior is not None:
+            try:
+                prior_attempts = int(prior["pre_paste_retry_attempts"] or 0)
+            except (TypeError, ValueError, KeyError):
+                prior_attempts = 0
+            sat = prior["satellite_execution_id"]
+            if sat:
+                prior_satellite = str(sat).strip() or None
         conn.execute(
             "INSERT OR REPLACE INTO cdp_inflight_leg "
             "(execution_id, request_id, thread_id, pointer_turn, caller_agent, "
             "prompt_uri, model_id, max_wall_s, admitted_at, proof_emitted, delivered, "
-            "abandoned, purpose, owner, bus_body) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?)",
+            "abandoned, purpose, owner, bus_body, pre_paste_retry_attempts, "
+            "satellite_execution_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, ?, ?)",
             (
                 execution_id,
                 request_id,
@@ -182,6 +198,8 @@ def upsert_inflight_leg(
                 purpose_norm,
                 owner_norm,
                 bus_body_norm,
+                prior_attempts,
+                prior_satellite,
             ),
         )
         conn.commit()

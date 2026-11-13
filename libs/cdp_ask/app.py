@@ -591,34 +591,37 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             status_code=200, content=result.model_dump(exclude_none=True)
         )
 
-    class ReattachHouseRequest(BaseModel):
-        purpose: str = "ask"
-
     @app.post("/v1/project-ask/reattach-house")
-    async def reattach_house(req: ReattachHouseRequest) -> dict[str, object]:
+    async def reattach_house(request: Request) -> JSONResponse:
         """Wake or mint the driving operator seat before a pre-paste retry."""
+        body = await request.json()
+        purpose_raw = body.get("purpose") if isinstance(body, dict) else None
+        purpose = (str(purpose_raw or "ask").strip()) or "ask"
 
-        def _run() -> dict[str, object]:
+        def _run() -> tuple[int, dict[str, object]]:
             from claude_bundles import cdp_registry
+            from claude_bundles import cdp_registry_store as store
             from claude_bundles.cdp_registry.models import STATUS_DORMANT
-
-            holder = "cdp-pre-paste-retry"
-            for lane in cdp_registry.list_active():
-                if lane.purpose != req.purpose:
+            submit_holder = "cdp-model-endpoint"
+            for row in store.load_active().values():
+                if str(row.get("purpose") or "") != purpose:
                     continue
-                if lane.status == STATUS_DORMANT:
-                    seat = cdp_registry.reattach(lane.registration_id, holder=holder)
-                    return {
-                        "ok": True,
-                        "registration_id": seat.registration_id,
-                        "cdp_url": seat.cdp_url,
-                        "reattached": True,
-                    }
+                if row.get("status") != STATUS_DORMANT:
+                    continue
+                row_holder = str(row.get("holder") or "").strip() or submit_holder
+                reg_id = str(row.get("registration_id") or "")
+                seat = cdp_registry.reattach(reg_id, holder=row_holder)
+                return 200, {
+                    "ok": True,
+                    "registration_id": seat.registration_id,
+                    "cdp_url": seat.cdp_url,
+                    "reattached": True,
+                }
             minted = cdp_registry.register_lane(
-                holder=holder,
-                purpose=req.purpose,
+                holder=submit_holder,
+                purpose=purpose,
             )
-            return {
+            return 200, {
                 "ok": True,
                 "registration_id": minted.registration_id,
                 "cdp_url": minted.cdp_url,
@@ -626,9 +629,23 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             }
 
         try:
-            return await asyncio.to_thread(_run)
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": str(exc)[:400]}
+            status, body = await asyncio.to_thread(_run)
+            return JSONResponse(status_code=status, content=body)
+        except Exception as exc:
+            from claude_bundles.cdp_registry.models import RegistryError
+
+            if not isinstance(exc, RegistryError):
+                return JSONResponse(
+                    status_code=503,
+                    content=_chat_session_refuse_body(
+                        "reattach_failed",
+                        str(exc)[:400],
+                    ),
+                )
+            return JSONResponse(
+                status_code=409,
+                content=_chat_session_refuse_body("reattach_refused", str(exc)[:400]),
+            )
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:

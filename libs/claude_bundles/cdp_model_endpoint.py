@@ -855,31 +855,6 @@ def _upstream_overloaded_extras(
     return out
 
 
-def _submit_with_overload_retry(
-    relay: CdpAskClient,
-    submit_req: SubmitProjectAskRequest,
-    *,
-    client: httpx.Client | None,
-    sleep: Callable[[float], None],
-) -> dict[str, Any]:
-    """Submit once with a single bounded retry on HTTP 529/503 overload."""
-    last_exc: CdpAskClientError | None = None
-    for attempt in range(MAX_OVERLOAD_SUBMIT_ATTEMPTS):
-        try:
-            return relay.submit(submit_req, client=client)
-        except CdpAskClientError as exc:
-            last_exc = exc
-            if (
-                attempt + 1 < MAX_OVERLOAD_SUBMIT_ATTEMPTS
-                and _is_retryable_overload_status(exc)
-            ):
-                sleep(SUBMIT_RETRY_BACKOFF_S)
-                continue
-            raise
-    assert last_exc is not None
-    raise last_exc
-
-
 def result_from_snapshot(
     *,
     snapshot: dict[str, Any],

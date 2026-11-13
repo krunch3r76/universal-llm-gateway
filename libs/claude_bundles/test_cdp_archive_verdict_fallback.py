@@ -32,7 +32,9 @@ def test_parse_archive_verdict_approve() -> None:
     assert parse_archive_verdict(_BAB9_BODY) == "APPROVE"
 
 
-def test_archive_verdict_promotes_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_archive_verdict_promotes_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     archive = tmp_path / "cdp-ask-archive-bab9e73a.md"
     archive.write_text(_BAB9_BODY, encoding="utf-8")
     uri = f"file://{archive}"
@@ -52,6 +54,40 @@ def test_archive_verdict_promotes_ok(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert out.ok is True
     assert out.extras.get("verdict_source") == "archive"
     assert out.extras.get("archive_verdict") == "APPROVE"
+
+
+def test_prose_approve_after_request_changes_not_approve() -> None:
+    body = (
+        "REQUEST_CHANGES on scope.\n"
+        "The operator would not approve this without a revisit.\n"
+    )
+    assert parse_archive_verdict(body) is None
+
+
+def test_prompt_echo_verdict_not_parsed() -> None:
+    body = "VERDICT <APPROVE|REQUEST_CHANGES>\n"
+    assert parse_archive_verdict(body) is None
+
+
+def test_stays_unverified_without_parseable_archive(tmp_path: Path) -> None:
+    archive = tmp_path / "archive-no-verdict.md"
+    archive.write_text(
+        "# harvest\n\nSeat finished but forgot the verdict block.\n",
+        encoding="utf-8",
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error="skill_receipt_unverified: missing",
+        archive_uri=f"file://{archive}",
+    )
+    out = apply_archive_verdict_fallback(result)
+    assert out.ok is False
+    assert "verdict_source" not in (out.extras or {})
 
 
 def test_no_archive_stays_unverified() -> None:

@@ -49,9 +49,6 @@ def parse_archive_verdict(body: str) -> str | None:
     match = _ARCHIVE_VERDICT_RE.search(body)
     if match:
         return match.group(1).upper().replace("-", "_")
-    for token in ("APPROVE", "REQUEST_CHANGES", "PASS", "FAIL", "SHIP"):
-        if re.search(rf"(?i)\b{re.escape(token)}\b", body):
-            return token
     return None
 
 

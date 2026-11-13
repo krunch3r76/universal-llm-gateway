@@ -14,6 +14,7 @@ from .cdp_events import (
     publish_cdp_kwargs,
 )
 from .cdp_generate_inflight_ledger import (
+    read_inflight_leg,
     read_pre_paste_retry_attempts,
     record_pre_paste_retry_attempt,
 )
@@ -62,11 +63,11 @@ def build_pre_paste_retry_context(
             error=error,
         )
 
-    def _probe() -> dict[str, Any]:
-        try:
-            return client.health()
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": str(exc)}
+    def _read_satellite_id() -> str | None:
+        leg = read_inflight_leg(execution_id)
+        if leg is None or not leg.satellite_execution_id:
+            return None
+        return str(leg.satellite_execution_id).strip() or None
 
     def _reattach() -> dict[str, Any]:
         try:
@@ -80,11 +81,11 @@ def build_pre_paste_retry_context(
         request_id=request_id,
         read_chat_url=_read_chat,
         read_attempt_count=_read_count,
+        read_satellite_execution_id=_read_satellite_id,
         record_attempt=_record,
         emit_attempt=_emit_attempt,
         emit_exhausted=_emit_exhausted,
         reattach_house=_reattach,
-        probe_health=_probe,
     )
 
 
