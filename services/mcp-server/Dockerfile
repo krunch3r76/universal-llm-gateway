@@ -5,7 +5,8 @@ WORKDIR /app
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # git is needed for `git ls-files` in the project directory tools
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+# libatomic1: Playwright's bundled Node driver (playwright/driver/node) needs libatomic.so.1
+RUN apt-get update && apt-get install -y --no-install-recommends git libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /ms-playwright /data/databases

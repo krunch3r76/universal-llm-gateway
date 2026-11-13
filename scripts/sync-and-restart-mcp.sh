@@ -847,13 +847,17 @@ sync_source_into_container() {
   fi
 }
 
-# Create container stopped, sync working tree, then start — never boot stale image COPY alone.
+# Compose create without auto-start; tar sync uses docker exec and needs a running
+# container. Overlay host tree before callers stamp/restart (no-cache path restarts).
 bootstrap_mcp_container_from_tree() {
-  echo "Creating mcp-server (stopped) → sync tree → start..."
+  echo "Creating mcp-server → start for sync → overlay working tree..."
   arm_restore_window
   docker compose "${COMPOSE_ARGS[@]}" up -d --no-start mcp-server
+  if ! docker start mcp-server >/dev/null; then
+    _START_FAILED=1
+    return 1
+  fi
   sync_source_into_container
-  docker start mcp-server
 }
 
 ensure_mcp_container() {
