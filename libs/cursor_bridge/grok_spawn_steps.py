@@ -238,102 +238,132 @@ async def run_spawn(
                 }
             hide_ok = True
             note(idem, token, hide_ok=True)
-        sel = await ops.select_grok_agent_async(display, agent_id)
-        if sel.get("ok") is not True:
-            release(idem, token, outcome="created")
-            return {
-                "ok": False,
-                "code": "selection_failed",
-                "agent_id": agent_id,
-                "display": ops._display_key(display),
-                "select": sel,
-            }
-        sub: dict[str, Any] | None = None
-        if has_box and not sub_done:
-            sub = await asyncio.to_thread(
-                subscribe_grok,
-                mailbox=str(mailbox),
-                thread_scope=str(thread_scope),
-                display=ops._display_key(display),
-                agent_id=agent_id,
-                title=nm,
-            )
-            if sub.get("ok") is not True:
+        prior_agent_id = ""
+        roster = await ops.list_grok_agents_async(display)
+        if roster.get("ok") is True:
+            prior_agent_id = str(roster.get("currentAgentId") or "").strip()
+        should_restore = bool(
+            prior_agent_id and prior_agent_id != agent_id
+        )
+        did_switch = False
+        spawn_out: dict[str, Any] | None = None
+        try:
+            sel = await ops.select_grok_agent_async(display, agent_id)
+            if sel.get("ok") is not True:
                 release(idem, token, outcome="created")
                 return {
                     "ok": False,
-                    "code": str(sub.get("code") or "subscription_failed"),
+                    "code": "selection_failed",
                     "agent_id": agent_id,
                     "display": ops._display_key(display),
-                    "subscription": sub,
+                    "select": sel,
                 }
-            note(idem, token, sub_done=True)
-        steer_result: dict[str, Any] | None = None
-        if body:
-            mark_steer(idem, token, "attempting")
-            try:
-                from interlocutor.display_adapter import steer_display
-                from interlocutor.targets import DisplayEightTarget
-
-                steer_result = await steer_display(
-                    DisplayEightTarget(
-                        display=ops._display_key(display), app="grok", agent_id=agent_id
-                    ),
-                    text=body,
-                    voice=(voice or "self").strip().lower(),
-                    grant=grant,
-                    authorization_source=authorization_source,
-                    scope=None,
+            did_switch = should_restore
+            sub: dict[str, Any] | None = None
+            if has_box and not sub_done:
+                sub = await asyncio.to_thread(
+                    subscribe_grok,
+                    mailbox=str(mailbox),
+                    thread_scope=str(thread_scope),
+                    display=ops._display_key(display),
+                    agent_id=agent_id,
+                    title=nm,
                 )
-            except asyncio.CancelledError:
-                release(idem, token, outcome="created")
-                raise
-            except Exception:
-                logger.exception("grok spawn steer failed")
-                release(idem, token, outcome="created")
-                return {
-                    "ok": False,
-                    "code": "initial_text_unconfirmed",
-                    "needs_operator": True,
-                    "agent_id": agent_id,
-                    "display": ops._display_key(display),
-                }
-            if steer_result.get("ok") is not True:
-                if known_not_sent(steer_result):
-                    mark_steer(idem, token, "not_sent")
+                if sub.get("ok") is not True:
                     release(idem, token, outcome="created")
                     return {
                         "ok": False,
-                        "code": str(steer_result.get("code") or "initial_text_failed"),
+                        "code": str(sub.get("code") or "subscription_failed"),
+                        "agent_id": agent_id,
+                        "display": ops._display_key(display),
+                        "subscription": sub,
+                    }
+                note(idem, token, sub_done=True)
+            steer_result: dict[str, Any] | None = None
+            if body:
+                mark_steer(idem, token, "attempting")
+                try:
+                    from interlocutor.display_adapter import steer_display
+                    from interlocutor.targets import DisplayEightTarget
+
+                    steer_result = await steer_display(
+                        DisplayEightTarget(
+                            display=ops._display_key(display), app="grok", agent_id=agent_id
+                        ),
+                        text=body,
+                        voice=(voice or "self").strip().lower(),
+                        grant=grant,
+                        authorization_source=authorization_source,
+                        scope=None,
+                    )
+                except asyncio.CancelledError:
+                    release(idem, token, outcome="created")
+                    raise
+                except Exception:
+                    logger.exception("grok spawn steer failed")
+                    release(idem, token, outcome="created")
+                    return {
+                        "ok": False,
+                        "code": "initial_text_unconfirmed",
+                        "needs_operator": True,
+                        "agent_id": agent_id,
+                        "display": ops._display_key(display),
+                    }
+                if steer_result.get("ok") is not True:
+                    if known_not_sent(steer_result):
+                        mark_steer(idem, token, "not_sent")
+                        release(idem, token, outcome="created")
+                        return {
+                            "ok": False,
+                            "code": str(steer_result.get("code") or "initial_text_failed"),
+                            "agent_id": agent_id,
+                            "display": ops._display_key(display),
+                            "steer": steer_result,
+                        }
+                    mark_steer(idem, token, "sent_unknown")
+                    release(idem, token, outcome="created")
+                    return {
+                        "ok": False,
+                        "code": "initial_text_unconfirmed",
+                        "needs_operator": True,
                         "agent_id": agent_id,
                         "display": ops._display_key(display),
                         "steer": steer_result,
                     }
-                mark_steer(idem, token, "sent_unknown")
-                release(idem, token, outcome="created")
-                return {
-                    "ok": False,
-                    "code": "initial_text_unconfirmed",
-                    "needs_operator": True,
-                    "agent_id": agent_id,
-                    "display": ops._display_key(display),
-                    "steer": steer_result,
-                }
-            mark_steer(idem, token, "delivered")
-        receipt = {
-            "ok": True,
-            "agent_id": agent_id,
-            "name": nm,
-            "display": ops._display_key(display),
-            "hidden": hide_ok if hidden else False,
-            "clientNonce": nonce,
-            "select": sel,
-            "subscription": sub,
-            "steer": steer_result,
-            "currentAgentId": sel.get("currentAgentId"),
-        }
-        release(idem, token, outcome="verified", receipt=receipt)
-        return receipt
+                mark_steer(idem, token, "delivered")
+            receipt = {
+                "ok": True,
+                "agent_id": agent_id,
+                "name": nm,
+                "display": ops._display_key(display),
+                "hidden": hide_ok if hidden else False,
+                "clientNonce": nonce,
+                "select": sel,
+                "subscription": sub,
+                "steer": steer_result,
+                "currentAgentId": sel.get("currentAgentId"),
+            }
+            release(idem, token, outcome="verified", receipt=receipt)
+            spawn_out = receipt
+            return spawn_out
+        finally:
+            if did_switch and prior_agent_id:
+                try:
+                    restored = await ops.select_grok_agent_async(
+                        display, prior_agent_id
+                    )
+                    if spawn_out is not None:
+                        spawn_out["restore_ok"] = bool(restored.get("ok"))
+                        if not restored.get("ok"):
+                            spawn_out["restore_error"] = str(
+                                restored.get("code")
+                                or restored.get("reason")
+                                or "restore_failed"
+                            )
+                except (TimeoutError, RuntimeError, OSError) as exc:
+                    if spawn_out is not None:
+                        spawn_out["restore_ok"] = False
+                        spawn_out["restore_error"] = type(exc).__name__
     except asyncio.CancelledError:
         raise
     except Exception as exc:
