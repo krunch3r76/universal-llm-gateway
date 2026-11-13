@@ -4,11 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_bus_store.db.threads_atomic import (
-    read_dispatch_link_chat_url,
-    read_pre_paste_retry_attempts,
-    record_pre_paste_retry_attempt,
-)
+from agent_bus_store.db.threads_atomic import read_dispatch_link_chat_url
 from cdp_ask.client import CdpAskClient
 from claude_bundles.cdp_pre_paste_retry import PrePasteRetryContext
 
@@ -16,6 +12,10 @@ from .cdp_events import (
     CdpGeneratePrePasteRetryAttempt,
     CdpGeneratePrePasteRetryExhausted,
     publish_cdp_kwargs,
+)
+from .cdp_generate_inflight_ledger import (
+    read_pre_paste_retry_attempts,
+    record_pre_paste_retry_attempt,
 )
 
 
@@ -38,17 +38,10 @@ def build_pre_paste_retry_context(
         )
 
     def _read_count() -> int:
-        return read_pre_paste_retry_attempts(
-            thread_id=thread_id,
-            execution_id=execution_id,
-        )
+        return read_pre_paste_retry_attempts(execution_id=execution_id)
 
     def _record(attempt: int) -> None:
-        record_pre_paste_retry_attempt(
-            thread_id=thread_id,
-            execution_id=execution_id,
-            attempt=attempt,
-        )
+        record_pre_paste_retry_attempt(execution_id=execution_id, attempt=attempt)
 
     def _emit_attempt(attempt: int, error: str) -> None:
         publish_cdp_kwargs(

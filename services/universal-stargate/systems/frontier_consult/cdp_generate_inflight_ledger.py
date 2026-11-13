@@ -76,6 +76,16 @@ def _ensure_owner_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE cdp_inflight_leg ADD COLUMN owner TEXT")
 
 
+def _ensure_pre_paste_retry_column(conn: sqlite3.Connection) -> None:
+    """Durable pre-paste attempt count per dispatch execution (a:43814)."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(cdp_inflight_leg)")}
+    if "pre_paste_retry_attempts" not in cols:
+        conn.execute(
+            "ALTER TABLE cdp_inflight_leg "
+            "ADD COLUMN pre_paste_retry_attempts INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path(), timeout=5.0)
     conn.row_factory = sqlite3.Row
@@ -84,6 +94,7 @@ def _connect() -> sqlite3.Connection:
     _ensure_purpose_column(conn)
     _ensure_owner_column(conn)
     _ensure_bus_body_column(conn)
+    _ensure_pre_paste_retry_column(conn)
     return conn
 
 
@@ -189,6 +200,40 @@ def attach_satellite_execution_id(
             (satellite_execution_id, execution_id),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def read_pre_paste_retry_attempts(*, execution_id: str) -> int:
+    """Return durable pre-paste retry count for one dispatch leg."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT pre_paste_retry_attempts FROM cdp_inflight_leg "
+            "WHERE execution_id = ? LIMIT 1",
+            (execution_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return 0
+    try:
+        return int(row["pre_paste_retry_attempts"] or 0)
+    except (TypeError, ValueError, KeyError):
+        return 0
+
+
+def record_pre_paste_retry_attempt(*, execution_id: str, attempt: int) -> int:
+    """Persist attempt count on the in-flight leg row (dispatch-scoped dedupe)."""
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "UPDATE cdp_inflight_leg SET pre_paste_retry_attempts = ? "
+            "WHERE execution_id = ?",
+            (attempt, execution_id),
+        )
+        conn.commit()
+        return int(cur.rowcount)
     finally:
         conn.close()
 
