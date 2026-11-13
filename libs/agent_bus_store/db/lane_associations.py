@@ -246,4 +246,4 @@ def lane_bind_incomplete_envelope(*, provided: list[str]) -> dict[str, object]:
     }
 
 
-from agent_bus_store.house_paste_lane_gate import paste_lane_for  # noqa: E402
+from agent_bus_store.house_paste_lane_gate import paste_lane_for  # noqa: E402, F401
