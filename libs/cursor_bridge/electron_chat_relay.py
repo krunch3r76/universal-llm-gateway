@@ -525,6 +525,7 @@ async def _resolve_and_select_endpoint(
             "app": app,
             "detail": type(exc).__name__,
         }
+    grok_agent = str(endpoint.agent_id or "").strip()
     verdict = wake_decision(
         surface,
         thread=endpoint.thread,
@@ -532,7 +533,6 @@ async def _resolve_and_select_endpoint(
         title=endpoint.title or None,
         agent_id=endpoint.agent_id or None,
     )
-    grok_agent = str(endpoint.agent_id or "").strip()
     selection_prior = ""
     if app == "grok" and grok_agent:
         selection_prior = await grok_selection_current_agent_id_async(disp)
@@ -708,6 +708,8 @@ async def read_endpoint_turn(
                 "recent_messages": messages,
                 "latest_message": latest,
                 "latest_fingerprint": message_fingerprint(latest) if latest else "",
+                "restore_agent_id": restore_agent_id,
+                "did_switch": did_switch,
             }
             if isinstance(surface, dict) and surface.get("supervision"):
                 out["supervision"] = surface["supervision"]

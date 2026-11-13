@@ -24,6 +24,27 @@ def _refuse(refuse: ClassifyRefuse) -> dict[str, Any]:
     return refuse_dict(refuse)
 
 
+def execute_select(*, target: str) -> dict[str, Any]:
+    resolved = resolve_target(target)
+    if isinstance(resolved, ClassifyRefuse):
+        return _refuse(resolved)
+    if not isinstance(resolved, DisplayEightTarget):
+        return _refuse(
+            ClassifyRefuse(
+                code="unsupported_target",
+                reason="select requires display:<n>/<agent_id>[/grok]",
+            )
+        )
+    if resolved.app != "grok":
+        return _refuse(
+            ClassifyRefuse(
+                code="unsupported_app",
+                reason="select is supported on grok displays only",
+            )
+        )
+    return display_adapter.select_display_target_sync(resolved)
+
+
 def execute_read(
     *,
     target: str,
@@ -256,6 +277,7 @@ def execute_retire(*, target: str) -> dict[str, Any]:
 __all__ = [
     "execute_list",
     "execute_read",
+    "execute_select",
     "execute_retire",
     "execute_spawn",
     "execute_steer",

@@ -1,8 +1,7 @@
-# propagation_residue — lane-23653 grok :14 commission (selection restore + pane wait)
+# propagation_residue — lane-23653 grok hidden confirm + interlocutor select
 # Operator/conductor: restart mcp after hub master land (see landed sha in closeout).
 restart_owed:
   - service: mcp
 reason: >-
-  electron_chat_relay and electron_chat_grok_wait changes for selection-state prior
-  capture and bounded pane attribution; interlocutor display_eight deliver/read
-  requires live mcp process reload.
+  wake_decision selection_agent_id, grok hidden pane confirm, wake_delivery grok
+  probe after select, interlocutor op=select — all served via mcp; reload after land.
