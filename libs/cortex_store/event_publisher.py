@@ -99,15 +99,24 @@ class _UDSPublisher:
                 )
 
     def _connect(self) -> socket.socket:
+        """Open the ingest socket; a failed connect closes it here and re-raises.
+
+        The caller's ``sock`` stays ``None`` on failure, so cleanup must live
+        here — closing in ``_run`` raised AttributeError and killed the thread.
+        """
         if self._tcp_target is not None:
             host, port = self._tcp_target
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            target: Any = (host, port)
+        else:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            target = self._sock_path
+        try:
             sock.settimeout(_SEND_TIMEOUT)
-            sock.connect((host, port))
-            return sock
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(_SEND_TIMEOUT)
-        sock.connect(self._sock_path)
+            sock.connect(target)
+        except OSError:
+            sock.close()
+            raise
         return sock
 
     def _run(self) -> None:
@@ -118,10 +127,6 @@ class _UDSPublisher:
                     sock = self._connect()
                 except OSError as e:
                     logger.warning("cortex-api event publisher connect error: %s", e)
-                    try:
-                        sock.close()
-                    except OSError:
-                        pass
                     sock = None
                     time.sleep(_RECONNECT_DELAY)
                     continue

@@ -48,6 +48,40 @@ def test_publisher_connect_uses_tcp_when_events_ingest_tcp_set(
     assert _FakeSock.instances[0].connected == ("10.0.0.67", 7101)
 
 
+class _RefusingSock(_FakeSock):
+    closed = False
+
+    def connect(self, addr: tuple[str, ...] | tuple[str, int]) -> None:
+        raise ConnectionRefusedError("refused")
+
+    def close(self) -> None:
+        _RefusingSock.closed = True
+
+
+class _StopLoopError(Exception):
+    """Raised from the patched sleep to leave the publisher's infinite loop."""
+
+
+def test_run_survives_failed_connect_and_closes_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a failed connect left ``sock`` None and ``sock.close()`` raised
+    AttributeError, killing the publisher thread instead of retrying."""
+    _RefusingSock.closed = False
+    monkeypatch.setenv("EVENTS_INGEST_TCP", "10.0.0.67:7101")
+    monkeypatch.setattr(ep.socket, "socket", _RefusingSock)
+    monkeypatch.setattr(ep.threading.Thread, "start", lambda self: None)
+
+    def _sleep(_s: float) -> None:
+        raise _StopLoopError
+
+    monkeypatch.setattr(ep.time, "sleep", _sleep)
+    pub = ep._UDSPublisher("/tmp/no-such.sock")
+    with pytest.raises(_StopLoopError):
+        pub._run()
+    assert _RefusingSock.closed is True
+
+
 def test_publisher_connect_uses_uds_when_tcp_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
