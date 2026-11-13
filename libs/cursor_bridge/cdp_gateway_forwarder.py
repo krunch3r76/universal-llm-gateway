@@ -1,12 +1,12 @@
 """Gateway-only TCP forwarder for host Cursor and Grok CDP ports.
 
-The mcp-server container cannot open ``127.0.0.1:9338``, ``:9339``, ``:9340``, or ``:19338``
+The mcp-server container cannot open ``127.0.0.1:9338``, ``:9339``, ``:9340``, ``:9344``, or ``:19338``
 because that loopback is the container, not the host where Cursor and grok-bot
 listen. This module is the container-side origin rewrite and the host-side
 listener that compose runs as ``cdp-gateway-forwarder``. Host and Stargate
 callers stay on loopback. A process that does not own ``172.18.0.1`` does not
 bind those ports. Membership is read from local addresses; nothing here
-connects to 9338, 9339, or 19338 to decide.
+connects to those CDP ports to decide.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 GATEWAY_HOST = "172.18.0.1"
 LOOPBACK_HOST = "127.0.0.1"
-FORWARDED_PORTS = (9338, 9339, 9340, 19338)
+FORWARDED_PORTS = (9338, 9339, 9340, 9344, 19338)
 _BRIDGE = ipaddress.ip_network("172.18.0.0/16")
 _GATEWAY = ipaddress.ip_address(GATEWAY_HOST)
 _TRIE = Path("/proc/net/fib_trie")
@@ -185,11 +185,11 @@ def _gateway_origin(origin: str) -> str | None:
 def container_cdp_origin(
     origin: str, *, addresses: frozenset[str] | None = None
 ) -> str:
-    """Rewrite loopback 9338/9339/9340/19338 to the gateway only for a bridge client.
+    """Rewrite loopback ports in ``FORWARDED_PORTS`` to the gateway for a bridge client.
 
     Any other loopback port is returned unchanged.
     When ``addresses`` is omitted the local
-    fib_trie is read. This function does not open 9338, 9339, or 19338.
+    fib_trie is read. This function does not dial CDP ports to decide.
     """
     rewritten = _gateway_origin(origin)
     if rewritten is None:
@@ -203,7 +203,7 @@ def container_cdp_origin(
 def bind_targets(addresses: frozenset[str]) -> tuple[tuple[str, int], ...]:
     """Listener addresses for the forwarder, or empty when the gateway is absent.
 
-    Only ``172.18.0.1`` on 9338, 9339, and 19338. An empty result means the
+    Only ``172.18.0.1`` on ``FORWARDED_PORTS``. An empty result means the
     caller must not create those sockets. ``0.0.0.0`` is never a target.
     """
     if GATEWAY_HOST not in addresses:

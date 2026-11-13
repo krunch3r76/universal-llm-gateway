@@ -97,7 +97,7 @@ def normalize_target(display: object, app: object) -> dict[str, Any]:
     """Map one display and app to its debug-port origin.
 
     The table is loopback. A process on the mcp docker bridge rewrites only
-    ports 9338, 9339, 9340, and 19338 to the gateway forwarder. Host and Stargate
+    ``FORWARDED_PORTS`` to the gateway forwarder. Host and Stargate
     callers keep ``127.0.0.1``. Unknown display/app pairs stay unknown.
     """
     disp = str(display or "").strip().lstrip(":").lower()
