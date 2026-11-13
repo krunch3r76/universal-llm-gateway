@@ -17,11 +17,9 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from scripts.model_manager.observation_event import (
-    emit_fleet_operation_completed,
-    emit_fleet_operation_started,
-)
+from scripts.model_manager.observation_event import emit_fleet_operation_started
 
+from .fleet_decision_events import record_fleet_operation_completed
 from .fleet_local import (
     parallel_build,
     restart_local_services,
@@ -36,6 +34,7 @@ from .fleet_remote import (
     stop_remote_before_operation,
     verify_relay_connection,
 )
+from .fleet_single_flight import claim_fleet_operation, release_fleet_operation
 from .restart_window_ctl import clear_fleet_windows, open_fleet_window
 from .topology import list_remotes
 
@@ -93,11 +92,39 @@ class FleetOrchestrator:
         self._root = root
         self._sink = sink
 
-    async def sync_restart_all(self, *, build: bool, scope: str) -> FleetResult:
+    async def sync_restart_all(
+        self,
+        *,
+        build: bool,
+        scope: str,
+        caller: str | None = None,
+        reason: str | None = None,
+    ) -> FleetResult:
         """Run the full fleet operation (stop → optional build → restart → verify)."""
+        operation = "rebuild_deploy" if build else "sync_restart"
+        await claim_fleet_operation(operation)
+        try:
+            return await self._sync_restart_all_locked(
+                build=build,
+                scope=scope,
+                operation=operation,
+                caller=caller,
+                reason=reason,
+            )
+        finally:
+            await release_fleet_operation()
+
+    async def _sync_restart_all_locked(
+        self,
+        *,
+        build: bool,
+        scope: str,
+        operation: str,
+        caller: str | None,
+        reason: str | None,
+    ) -> FleetResult:
         ctl = self._ctl
         mk = _MASTER_ROW_KEY
-        operation = "rebuild_deploy" if build else "sync_restart"
         remotes = [h for h, _ in _parse_remote_targets(list_remotes())]
         t0 = time.monotonic()
         failures: list[str] = []
@@ -105,14 +132,21 @@ class FleetOrchestrator:
         ctl.shutdown_gate.set_activity("fleet_deploy", True)
         self._sink.focus(mk)
         try:
+            # AC3: emit before event_service bootstrap so a failed/partial start still
+            # leaves a ``fleet.operation.started`` row (missing-started defect).
+            await emit_fleet_operation_started(
+                operation=operation,
+                build=build,
+                scope=scope,
+                remotes=remotes,
+                caller=caller,
+                reason=reason,
+            )
+
             if not await wait_event_service_healthy(ctl, timeout=3):
                 self._sink.line(mk, "  ○ starting event_service (for observability)")
                 await ctl.start_event_service()
                 await wait_event_service_healthy(ctl, timeout=10)
-
-            await emit_fleet_operation_started(
-                operation=operation, build=build, scope=scope, remotes=remotes
-            )
 
             await open_fleet_window(
                 ctl.restart_intent_store,
@@ -131,12 +165,14 @@ class FleetOrchestrator:
             # or hung emit cannot leave fleet_deploy pinned on the quit drain.
             elapsed = time.monotonic() - t0
             try:
-                await emit_fleet_operation_completed(
+                await record_fleet_operation_completed(
                     operation=operation,
                     build=build,
                     success=not failures,
                     duration_s=elapsed,
                     failures=failures,
+                    caller=caller,
+                    reason=reason,
                 )
                 await clear_fleet_windows(
                     ctl.restart_intent_store,
