@@ -270,11 +270,72 @@ def test_hop_on_houseless_mailbox_replaces_first_seat_url(
         HOP_SEATED_BOUND_BY,
         get_current_cse,
     )
+    from hop_handoff.body import execution_id_as_successor_birth_id
 
     db_path = tmp_path / "bus.db"
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
     init_db()
     detail = create_thread(thread_id=None, slug="hl-then-hop-mailbox", tags=["mailbox"])
+    assert detail is not None
+    mailbox_id = str(detail["id"])
+    cdp_hop_cse_bind._STAMP_POSTED.clear()
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_hop_seated_cse(
+            mission_kind=None,
+            thread_id=mailbox_id,
+            parent_thread=None,
+            chat_url=_SUCCESSOR,
+            registration_id=_REG,
+            execution_id="a1a2a3a4-bbbb-4ccc-8ddd-111111111111",
+            purpose="houseless",
+            mailbox_thread=mailbox_id,
+        )
+        hop_exec = "b2b3b4b5-cccc-4ddd-8eee-222222222222"
+        associate_hop_seated_cse(
+            mission_kind="hop",
+            thread_id="hop-child",
+            parent_thread=mailbox_id,
+            chat_url=_U2_HOP_AFTER_HOUSELESS,
+            registration_id="reg-hop-after-houseless",
+            execution_id=hop_exec,
+            successor_birth_id=execution_id_as_successor_birth_id(hop_exec),
+        )
+    from agent_bus_store.db import get_turns
+
+    cse = get_current_cse(thread_id=mailbox_id)
+    assert cse["cse_chat_url"] == _U2_HOP_AFTER_HOUSELESS
+    assert cse["bound_by"] == HOP_SEATED_BOUND_BY
+    stamp_turns = [
+        t
+        for t in get_turns(thread=mailbox_id, last=10)
+        if str(t.get("body") or "").startswith("TYPE: SEAT_REGISTRATION")
+    ]
+    assert len(stamp_turns) == 2
+    bodies = "\n".join(str(t.get("body") or "") for t in stamp_turns)
+    assert _SUCCESSOR in bodies
+    assert _U2_HOP_AFTER_HOUSELESS in bodies
+
+
+_U3_HOUSELESS_REBIRTH = (
+    "https://claude.ai/cowork/cse_01HouselessRebirthAfterHopXXXXXX"
+)
+
+
+def test_houseless_hop_then_rebirth_replaces_successor(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Houseless → hop on mailbox → houseless re-birth with new URL."""
+    from agent_bus_store.db import create_thread
+    from agent_bus_store.db.cse_associations import (
+        HOP_SEATED_BOUND_BY,
+        HOUSELESS_FIRST_SEATED_BOUND_BY,
+        get_current_cse,
+    )
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="hl-hop-rebirth", tags=["mailbox"])
     assert detail is not None
     mailbox_id = str(detail["id"])
     cdp_hop_cse_bind._STAMP_POSTED.clear()
@@ -297,9 +358,63 @@ def test_hop_on_houseless_mailbox_replaces_first_seat_url(
             registration_id="reg-hop-after-houseless",
             execution_id="b2b3b4b5-cccc-4ddd-8eee-222222222222",
         )
+        associate_hop_seated_cse(
+            mission_kind=None,
+            thread_id=mailbox_id,
+            parent_thread=None,
+            chat_url=_U3_HOUSELESS_REBIRTH,
+            registration_id="reg-rebirth",
+            execution_id="c3c4c5c6-dddd-4eee-8fff-333333333333",
+            purpose="houseless",
+            mailbox_thread=mailbox_id,
+        )
     cse = get_current_cse(thread_id=mailbox_id)
-    assert cse["cse_chat_url"] == _U2_HOP_AFTER_HOUSELESS
-    assert cse["bound_by"] == HOP_SEATED_BOUND_BY
+    assert cse["cse_chat_url"] == _U3_HOUSELESS_REBIRTH
+    assert cse["bound_by"] == HOUSELESS_FIRST_SEATED_BOUND_BY
+    assert HOP_SEATED_BOUND_BY != cse["bound_by"]
+
+
+def test_hop_seated_stamps_when_cse_url_already_current(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identical folded URL must still post the seat stamp on first seated poll."""
+    from agent_bus_store.db import create_thread, get_turns
+    from agent_bus_store.db.cse_associations import associate_cse
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="hop-stamp-idempotent")
+    assert detail is not None
+    thread_id = str(detail["id"])
+    birth = "d" * 32
+    exec_id = "e1e2e3e4-ffff-4aaa-8bbb-cccccccccccc"
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_SUCCESSOR,
+            cse_registration_id=_REG,
+            bound_by=HOP_SEATED_BOUND_BY,
+        )
+    cdp_hop_cse_bind._STAMP_POSTED.clear()
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_hop_seated_cse(
+            mission_kind="hop",
+            thread_id="child",
+            parent_thread=thread_id,
+            chat_url=_SUCCESSOR,
+            registration_id=_REG,
+            execution_id=exec_id,
+            successor_birth_id=birth,
+        )
+    turns = get_turns(thread=thread_id, last=5)
+    stamp_turns = [
+        t
+        for t in turns
+        if str(t.get("body") or "").startswith("TYPE: SEAT_REGISTRATION")
+    ]
+    assert len(stamp_turns) == 1
+    assert f"successor_birth_id: {birth}" in stamp_turns[0]["body"]
 
 
 def test_houseless_seated_callback_is_idempotent(
