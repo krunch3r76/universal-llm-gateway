@@ -55,9 +55,7 @@ def test_read_after_failed_attempt_not_already_read(db: None) -> None:
         body="body",
     )
     with write_connect() as conn:
-        conn.execute(
-            "UPDATE turns SET read_at=datetime('now') WHERE id=?", (turn_id,)
-        )
+        conn.execute("UPDATE turns SET read_at=datetime('now') WHERE id=?", (turn_id,))
         conn.execute(
             "INSERT INTO endpoint_wake_ledger "
             "(agent, thread_id, turn_id, turn_number, state, reason, created_at, "

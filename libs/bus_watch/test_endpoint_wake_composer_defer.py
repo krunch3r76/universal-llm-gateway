@@ -140,7 +140,8 @@ def test_escalate_drop_at_cap_one_notice_per_row(db: None) -> None:
     with connect() as conn:
         row_id = int(
             conn.execute(
-                "SELECT id FROM endpoint_wake_ledger WHERE thread_id=? LIMIT 1", (thread,)
+                "SELECT id FROM endpoint_wake_ledger WHERE thread_id=? LIMIT 1",
+                (thread,),
             ).fetchone()["id"]
         )
     with write_connect() as conn:
