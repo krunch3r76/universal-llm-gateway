@@ -5016,8 +5016,6 @@ def test_agent_id_mismatch_records_refused_not_pending(db: None) -> None:
 
 def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
     from bus_watch.endpoint_wake_composer_defer import (
-        COMPOSER_DEFER_ESCALATED,
-        COMPOSER_DEFER_ESCALATED_NOTICED,
         COMPOSER_DEFER_SWEEP,
         escalate_composer_deferred_on_sweep,
         finalize_composer_defer_pass,
@@ -5160,8 +5158,6 @@ def test_legacy_agent_id_mismatch_pending_refused_after_normalize(db: None) -> N
 
 def test_legacy_composer_not_empty_two_pass_escalation(db: None) -> None:
     from bus_watch.endpoint_wake_composer_defer import (
-        COMPOSER_DEFER_ESCALATED,
-        COMPOSER_DEFER_ESCALATED_NOTICED,
         COMPOSER_DEFER_SWEEP,
         run_dispatcher_pass_legacy_sweep,
     )

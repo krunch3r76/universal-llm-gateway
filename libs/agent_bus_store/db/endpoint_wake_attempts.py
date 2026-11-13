@@ -21,8 +21,12 @@ _MISSED_CAP = 5
 
 
 def display_composer_defer_retry_delay_s(attempt: int) -> int:
+    """Backoff schedule 30/60/120s then 300s cap (attempt 4+)."""
+    steps = (30, 60, 120, _COMPOSER_DEFER_BACKOFF_CAP_S)
     n = max(1, int(attempt))
-    return min(_COMPOSER_DEFER_BACKOFF_CAP_S, 30 * (2 ** (n - 1)))
+    if n > len(steps):
+        return steps[-1]
+    return steps[n - 1]
 
 
 def _parse_stamp(stamp: str) -> datetime:
@@ -138,7 +142,11 @@ def patch_ledger_timestamps(
 
 
 def composer_defer_over_cap(row: sqlite3.Row | dict[str, Any], *, stamp: str) -> bool:
-    raw_attempt = row.get("wake_attempt_count") if isinstance(row, dict) else row["wake_attempt_count"]
+    raw_attempt = (
+        row.get("wake_attempt_count")
+        if isinstance(row, dict)
+        else row["wake_attempt_count"]
+    )
     attempt = int(raw_attempt or 0)
     if attempt >= DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS:
         return True
@@ -277,19 +285,18 @@ def schedule_composer_defer_retry(
     return updated
 
 
-def compose_missed_prefix(
+def _missed_row_ids(
     conn: sqlite3.Connection,
     *,
-    subscription_id: int | None,
+    subscription_id: int,
     stamp: str,
-) -> str:
+) -> list[int]:
     cols = ledger_cols(conn)
-    if "surfaced_at" not in cols or subscription_id is None:
-        return ""
+    if "surfaced_at" not in cols or "subscription_id" not in cols:
+        return []
     rows = conn.execute(
         """
-        SELECT id, thread_id, turn_number, drop_reason, last_failure_reason,
-               wake_attempt_count
+        SELECT id
         FROM endpoint_wake_ledger
         WHERE subscription_id=? AND surfaced_at IS NULL
           AND (
@@ -304,8 +311,28 @@ def compose_missed_prefix(
         """,
         (subscription_id, stamp, _MISSED_CAP + 20),
     ).fetchall()
-    if not rows:
-        return ""
+    return [int(r["id"]) for r in rows]
+
+
+def preview_missed_prefix(
+    conn: sqlite3.Connection,
+    *,
+    subscription_id: int | None,
+    stamp: str,
+) -> tuple[str, list[int]]:
+    if subscription_id is None:
+        return "", []
+    ids = _missed_row_ids(conn, subscription_id=int(subscription_id), stamp=stamp)
+    if not ids:
+        return "", []
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"""
+        SELECT thread_id, turn_number, drop_reason, last_failure_reason, wake_attempt_count
+        FROM endpoint_wake_ledger WHERE id IN ({placeholders}) ORDER BY id DESC
+        """,
+        tuple(ids),
+    ).fetchall()
     shown = rows[:_MISSED_CAP]
     extra = max(0, len(rows) - _MISSED_CAP)
     lines = [
@@ -317,35 +344,52 @@ def compose_missed_prefix(
     prefix = "\n".join(lines)
     if extra:
         prefix += f"\nmissed: +{extra} more"
-    ids = [int(r["id"]) for r in rows]
-    placeholders = ",".join("?" * len(ids))
+    return prefix, ids
+
+
+def stamp_missed_surfaced(
+    conn: sqlite3.Connection,
+    *,
+    subscription_id: int | None,
+    row_ids: list[int],
+    stamp: str,
+) -> None:
+    if subscription_id is None or not row_ids:
+        return
+    cols = ledger_cols(conn)
+    if "surfaced_at" not in cols:
+        return
+    placeholders = ",".join("?" * len(row_ids))
     conn.execute(
         f"UPDATE endpoint_wake_ledger SET surfaced_at=? WHERE id IN ({placeholders})",
-        (stamp, *ids),
+        (stamp, *row_ids),
     )
     try:
         from bus_watch.events import emit_endpoint_wake_overdue_surfaced
 
         emit_endpoint_wake_overdue_surfaced(
             subscription_id=int(subscription_id),
-            surfaced_count=len(ids),
+            surfaced_count=len(row_ids),
         )
     except Exception:
         pass
-    return prefix
 
 
-def prepend_missed_to_paste(
-    conn: sqlite3.Connection,
-    *,
-    subscription_id: int | None,
-    paste_text: str,
-    stamp: str,
-) -> str:
-    prefix = compose_missed_prefix(conn, subscription_id=subscription_id, stamp=stamp)
+def merge_missed_into_paste(paste_text: str, prefix: str) -> str:
     if not prefix.strip():
         return paste_text
     base = (paste_text or "").strip()
     if base:
         return f"{prefix}\n\n{base}"
     return prefix
+
+
+def expected_delivery_at_for_enqueue(
+    agent: str,
+    thread_id: str,
+    enqueued_at: str,
+) -> str:
+    from agent_bus_store.db.endpoint_wake_ledger import endpoint_wake_debounce_s
+
+    window_s = int(endpoint_wake_debounce_s(agent, thread_id))
+    return _shift(enqueued_at, window_s)
