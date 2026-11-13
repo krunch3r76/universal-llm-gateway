@@ -1,6 +1,6 @@
 """Grok window slots (tracked config) and live routing (state file).
 
-Config: ``config/grok-windows.json`` names the two displays, CDP ports,
+Config: ``config/grok-windows.json`` names grok window displays and CDP ports
 fixed roles, and the initial default/insyncerator pair.
 
 State: ``~/.gateway/grok-window-routing.json`` is rewritten atomically.
@@ -73,6 +73,32 @@ def _window_ids(config: dict[str, Any]) -> dict[str, int]:
     for key, row in config["windows"].items():
         out[str(key).lstrip(":")] = int(row["cdp_port"])
     return out
+
+
+def _promote_pair_window_ids(config: dict[str, Any]) -> dict[str, int]:
+    """gc1/gc2 displays only; auxiliary slots (e.g. gw3 on :14) stay out of promote()."""
+    out: dict[str, int] = {}
+    for key, row in config["windows"].items():
+        slot = str(row.get("slot") or "").strip().lower()
+        if slot in {"gc1", "gc2"}:
+            out[str(key).lstrip(":")] = int(row["cdp_port"])
+    if len(out) != 2:
+        raise ValueError("promote pair requires exactly two gc1/gc2 windows")
+    return out
+
+
+def configured_grok_window_displays() -> frozenset[str]:
+    """Display numbers registered in grok-windows.json (list/spawn/retire)."""
+    try:
+        config = load_config()
+    except (OSError, ValueError, json.JSONDecodeError):
+        return frozenset()
+    return frozenset(_window_ids(config))
+
+
+def configured_grok_cdp_ports() -> frozenset[int]:
+    """CDP ports for every window row in ``grok-windows.json`` (explicit set)."""
+    return frozenset(_window_ids(load_config()).values())
 
 
 def cdp_port_for_display(display: str) -> int | None:
@@ -379,12 +405,14 @@ def sync_endpoint_subscriptions(*, updated_by: str | None = None) -> dict[str, A
 
 
 def promote(display: str, *, updated_by: str | None = None) -> dict[str, Any]:
-    """Make ``display`` the grok-bot home and park insyncerator on the other."""
+    """Make ``display`` the grok-bot home and park insyncerator on the other gc1/gc2 window."""
     config = load_config()
-    home = _require_window(config, display)
-    ids = [key for key in _window_ids(config) if key != home]
-    if len(ids) != 1:
-        raise ValueError("promote expects exactly two windows")
+    pair = _promote_pair_window_ids(config)
+    home = str(display or "").strip().lstrip(":")
+    if home not in pair:
+        raise ValueError(f"promote expects a gc1/gc2 window, not {display!r}")
+    ids = [key for key in pair if key != home]
+    assert len(ids) == 1
     state = write_routing(
         default_window=home,
         insyncerator_window=ids[0],

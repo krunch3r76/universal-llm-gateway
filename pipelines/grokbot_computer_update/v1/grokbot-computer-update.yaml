@@ -1,7 +1,7 @@
 # grokbot-computer-update — status, wake, or update a Grok Bot computer.
 #
 # Zero LLM calls. Options: action (status|wake|update), display, cdp_port, require_idle.
-# display :9 → CDP 9339 and :10 → CDP 9340 via config/grok-windows.json when
+# display → CDP port via config/grok-windows.json (:9/:10/:14 → 9339/9340/9344) when
 # cdp_port is omitted or left at the default 9339. An explicit other port wins.
 #
 #   pipeline(op="run", pipeline_id="grokbot-computer-update",

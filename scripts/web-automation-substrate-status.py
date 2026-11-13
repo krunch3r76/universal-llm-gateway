@@ -180,7 +180,16 @@ def build_report() -> dict[str, Any]:
     if supervision_gate_mode is not None and supervision_gate_mode() == "observe":
         import asyncio
 
-        for disp, port in ((":9", 9339), (":10", 9340)):
+        from cursor_bridge.grok_window_bindings import (
+            cdp_port_for_display,
+            configured_grok_window_displays,
+        )
+
+        for disp_num in sorted(configured_grok_window_displays(), key=int):
+            disp = f":{disp_num}"
+            port = cdp_port_for_display(disp_num)
+            if port is None:
+                continue
             try:
                 from cursor_bridge.electron_chat_relay import probe_electron_supervision
 

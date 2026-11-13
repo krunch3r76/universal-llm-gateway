@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -154,6 +155,68 @@ def test_lane_seat_holder_ignores_houseless(monkeypatch: pytest.MonkeyPatch) -> 
     assert holder["registration_id"] == "op-seat"
     resolved = resolve_operator_seat("22760", get_lane_snapshot=lambda: snap)
     assert resolved["registration_id"] == "op-seat"
+
+
+def test_houseless_bind_claims_bus_mailbox_lane_thread(
+    isolated_registry: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """STATUS_TAB row + seated hook + set_tab_chat_url (runner order) → lane claim."""
+    from agent_bus_store.db import create_thread, init_db
+    from claude_bundles import cse_provenance
+    import time
+    import uuid
+
+    from claude_bundles.cdp_registry.models import STATUS_TAB
+    from claude_bundles.cdp_registry.tab_rows import set_tab_chat_url
+    from systems.frontier_consult.cdp_hop_cse_bind import associate_hop_seated_cse
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="hl-prov-mailbox", tags=["mailbox"])
+    assert detail is not None
+    mailbox = str(detail["id"])
+    host = reg.register_lane(holder="cdp-tab-pool", purpose="tab_host", launch=False)
+    tab_id = uuid.uuid4().hex
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        active[tab_id] = {
+            "registration_id": tab_id,
+            "status": STATUS_TAB,
+            "host_registration_id": host.registration_id,
+            "port": host.port,
+            "holder": "seat",
+            "purpose": "houseless",
+            "mission_kind": None,
+            "parent_thread": None,
+            "started_at": time.time(),
+        }
+        reg._store.write_active(active)
+    url = "https://claude.ai/cowork/cse_hl_prov"
+    exec_id = "a1a2a3a4-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_hop_seated_cse(
+            mission_kind=None,
+            thread_id=mailbox,
+            parent_thread=None,
+            chat_url=url,
+            registration_id=tab_id,
+            execution_id=exec_id,
+            purpose="houseless",
+            mailbox_thread=mailbox,
+        )
+    set_tab_chat_url(tab_id, chat_url=url, execution_id=exec_id)
+    active = reg._store.load_active()[tab_id]
+    assert active.get("status") == STATUS_TAB
+    assert not str(active.get("parent_thread") or "").strip()
+    episode = cse_provenance.latest_episode(chat_url=url)
+    assert episode is not None
+    assert episode.lane_thread == mailbox
+    resolved = cse_provenance.resolve(chat_url=url, registration_id=tab_id)
+    assert resolved.get("lane_thread_claim") == mailbox
+    assert resolved.get("reason") != "no_episode"
 
 
 def test_register_lane_houseless_rejects_parent_thread(

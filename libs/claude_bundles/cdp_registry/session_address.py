@@ -100,8 +100,18 @@ def _append_lane_less_episode(
 ) -> None:
     """Record a host receipt; registry ``parent_thread`` becomes ``lane_thread`` claim."""
     from claude_bundles.cse_provenance import append_episode
+    from claude_bundles.what_is_running_view import is_houseless_purpose
 
     parent_claim = str(updated.get("parent_thread") or "").strip() or None
+    if not parent_claim and is_houseless_purpose(str(updated.get("purpose") or "")):
+        try:
+            from agent_bus_store.db.cse_associations import (
+                latest_thread_id_for_registration,
+            )
+
+            parent_claim = latest_thread_id_for_registration(registration_id)
+        except Exception:  # noqa: BLE001 — provenance claim is best-effort
+            parent_claim = None
     append_episode(
         chat_url=url,
         registration_id=registration_id,
@@ -373,8 +383,8 @@ def _gate_seated_allows_commit(
 ) -> bool:
     """Whether the reattach gate accepted a mint over a different lane holder.
 
-  ``gate_seated_at``, when set, requires the row's ``seat_bound_at`` to match —
-  concurrent re-seating between gate and commit still refuses.
+    ``gate_seated_at``, when set, requires the row's ``seat_bound_at`` to match —
+    concurrent re-seating between gate and commit still refuses.
     """
     rid = (registration_id or "").strip()
     lane_key = (lane or "").strip()

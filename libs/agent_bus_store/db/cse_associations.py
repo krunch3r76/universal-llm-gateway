@@ -22,6 +22,7 @@ _CSE_PATH_MARKER = "/cowork/cse_"
 # non-mint associate must not replace the latest mint URL with a different
 # URL, including after a same-URL append whose bound_by is the relay.
 HOP_SEATED_BOUND_BY = "cdp.generate.seated"
+HOUSELESS_FIRST_SEATED_BOUND_BY = "cdp.generate.houseless_seated"
 
 logger = get_logger(__name__)
 
@@ -48,22 +49,48 @@ def _prior_row(conn, *, thread_id: str) -> Any | None:
     ).fetchone()
 
 
+def _latest_bound_by_mint_url(conn, *, thread_id: str, bound_by: str) -> str | None:
+    row = conn.execute(
+        "SELECT cse_chat_url FROM thread_cse_associations "
+        "WHERE thread_id = ? AND bound_by = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (thread_id, bound_by),
+    ).fetchone()
+    if row is None:
+        return None
+    url = str(row["cse_chat_url"] or "")
+    return url or None
+
+
 def _latest_hop_mint_url(conn, *, thread_id: str) -> str | None:
     """URL of the newest hop-mint row, or None when this lane has never minted.
 
     Same-URL appends write a later row with a relay ``bound_by``. The hold
     follows this mint URL, not the newest row.
     """
-    row = conn.execute(
-        "SELECT cse_chat_url FROM thread_cse_associations "
-        "WHERE thread_id = ? AND bound_by = ? "
-        "ORDER BY id DESC LIMIT 1",
-        (thread_id, HOP_SEATED_BOUND_BY),
-    ).fetchone()
-    if row is None:
-        return None
-    url = str(row["cse_chat_url"] or "")
-    return url or None
+    return _latest_bound_by_mint_url(
+        conn, thread_id=thread_id, bound_by=HOP_SEATED_BOUND_BY
+    )
+
+
+def _houseless_mint_blocks_other_url(
+    *,
+    mint_url: str | None,
+    prior_url: str,
+    bound_by: str | None,
+    url: str,
+) -> bool:
+    """Block non-mint writers from replacing the houseless first-seat URL.
+
+    ``HOUSELESS_FIRST_SEATED_BOUND_BY`` may replace (re-birth). ``HOP_SEATED_BOUND_BY``
+    may supersede when the mailbox later hops (22824-shaped houseless hop mailboxes).
+    """
+    if not mint_url or mint_url != prior_url:
+        return False
+    writer = bound_by or ""
+    if writer in (HOUSELESS_FIRST_SEATED_BOUND_BY, HOP_SEATED_BOUND_BY):
+        return False
+    return url != prior_url
 
 
 def _hop_mint_blocks_other_url(
@@ -75,15 +102,15 @@ def _hop_mint_blocks_other_url(
 ) -> bool:
     """True when a non-mint writer would replace the hop successor URL.
 
-    Blocks when the latest mint URL is still the current URL, the incoming
-    URL differs, and the writer is not the mint path. The next hop seats
-    with ``bound_by`` equal to ``HOP_SEATED_BOUND_BY`` and still appends.
-    The same URL with a new registration still appends so a Chrome host
-    recycle on the successor is recorded.
+    Blocks when the latest hop mint URL is still the current URL, the incoming
+    URL differs, and the writer is not hop seated or houseless first-seat mint.
+    Houseless re-birth after a hop may replace the successor URL when the new URL
+    differs. The same URL with a new registration still appends so a Chrome
+    host recycle on the successor is recorded.
     """
     if not mint_url or mint_url != prior_url:
         return False
-    if (bound_by or "") == HOP_SEATED_BOUND_BY:
+    if (bound_by or "") in (HOP_SEATED_BOUND_BY, HOUSELESS_FIRST_SEATED_BOUND_BY):
         return False
     return url != prior_url
 
@@ -101,7 +128,10 @@ def associate_cse(
     Returns None when the URL is missing/invalid (registration-only is not a
     bind), when the folded current pair already matches, or when the latest
     hop-mint URL (``bound_by`` ``cdp.generate.seated``) is still the current
-    URL, this caller is not that mint path, and the incoming URL differs.
+    URL, this caller is not hop or houseless first-seat mint, and the incoming
+    URL differs;
+    or when a houseless first-seat mint URL is still current and this caller
+    is neither houseless nor hop seated mint (hop seated may replace houseless).
     A same-URL append does not clear that hold. Returns the insert echo when
     a row is appended. Emits ``mcp.agentbus.thread.cse.bound`` only on append.
     """
@@ -123,6 +153,17 @@ def associate_cse(
             prior_reg = _normalize_registration_id(prior["cse_registration_id"])
             if _hop_mint_blocks_other_url(
                 mint_url=_latest_hop_mint_url(conn, thread_id=thread_id),
+                prior_url=prior_url,
+                bound_by=bound_by,
+                url=url,
+            ):
+                return None
+            if _houseless_mint_blocks_other_url(
+                mint_url=_latest_bound_by_mint_url(
+                    conn,
+                    thread_id=thread_id,
+                    bound_by=HOUSELESS_FIRST_SEATED_BOUND_BY,
+                ),
                 prior_url=prior_url,
                 bound_by=bound_by,
                 url=url,
@@ -200,6 +241,25 @@ def associate_cse(
 
         _record_shadow_hook_error(where="associate_cse", thread_id=thread_id)
     return result
+
+
+def latest_thread_id_for_registration(
+    cse_registration_id: str | None,
+) -> str | None:
+    """Newest lane that bound *cse_registration_id*, or None when unknown."""
+    reg = _normalize_registration_id(cse_registration_id)
+    if not reg:
+        return None
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT thread_id FROM thread_cse_associations "
+            "WHERE cse_registration_id = ? ORDER BY id DESC LIMIT 1",
+            (reg,),
+        ).fetchone()
+    if row is None:
+        return None
+    tid = str(row["thread_id"] or "").strip()
+    return tid or None
 
 
 def get_current_cse(*, thread_id: str) -> dict[str, Any]:

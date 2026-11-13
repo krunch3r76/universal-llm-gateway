@@ -8,10 +8,11 @@ from cursor_bridge.cdp_pages import (
     assert_loopback_cdp_http_origin,
     assert_web_socket_debugger_url_allowed,
 )
+from cursor_bridge.grok_window_bindings import configured_grok_cdp_ports
 
 pytestmark = pytest.mark.offline
 
-_EDGE_PORTS = frozenset({9339, 9340})
+_EDGE_PORTS = configured_grok_cdp_ports()
 
 
 def test_http_origin_must_be_loopback() -> None:

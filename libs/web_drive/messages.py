@@ -54,11 +54,10 @@ def _cdp(explicit: str | None) -> str:
 
 def _paired(page: Page) -> bool:
     url = (page.url or "").lower()
-    return (
-        "messages.google.com/web/conversations" in url
-        and "welcome" not in url
-        and "accounts.google.com" not in url
-    )
+    if "welcome" in url or "accounts.google.com" in url:
+        return False
+    # Signed-in inbox uses /web/u/<n>/conversations, not /web/conversations.
+    return "messages.google.com/web/" in url and "conversations" in url
 
 
 async def _inbox(cdp: str) -> tuple[Any, Page]:

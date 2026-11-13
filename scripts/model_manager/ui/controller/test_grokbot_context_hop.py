@@ -137,8 +137,8 @@ def test_ac1c_probe_default_multi_port_dedupe_and_tolerate_failure(
     monkeypatch.setattr("cursor_bridge.grok_computer._cdp_eval", fake_eval)
 
     rows = asyncio.run(probe_grok_agent_context())
-    assert DEFAULT_CDP_PORTS == (9340, 9339)
-    assert ports_probed == [9340, 9339]
+    assert DEFAULT_CDP_PORTS == (9344, 9340, 9339)
+    assert ports_probed == [9344, 9340, 9339]
     by_id = {str(r["agent_id"]): r for r in rows}
     assert by_id["only-9340"]["updated_at_ms"] == 500
     assert by_id["dup"]["updated_at_ms"] == 50
@@ -181,7 +181,7 @@ def test_probe_ports_skips_runtime_error_and_falls_back_to_9339(
     monkeypatch.setattr("cursor_bridge.grok_computer._cdp_eval", fake_eval)
 
     rows = asyncio.run(probe_ports())
-    assert probed_ports == [9340, 9339]
+    assert probed_ports == [9344, 9340, 9339]
     assert len(rows) == 1
     assert rows[0]["agent_id"] == "gc1"
 

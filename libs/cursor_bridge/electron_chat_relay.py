@@ -47,7 +47,10 @@ from cursor_bridge.electron_chat_grok_wait import (
     messages_fingerprint,
     probe_grok_after_select,
 )
-from cursor_bridge.grok_agent_ops import select_grok_agent_async
+from cursor_bridge.grok_agent_ops import (
+    grok_selection_current_agent_id_async,
+    select_grok_agent_async,
+)
 from cursor_bridge.grok_computer import probe_grok_computer, resolve_grok_cdp_port
 from cursor_bridge.wake_delivery import (
     _busy_or_draft_reason,
@@ -58,6 +61,306 @@ from cursor_bridge.wake_delivery import (
 
 HANDOFF_MARKERS = ("HANDOFF_TO_BUS", "BRIDGE_WAKE", "AGENT_BUS_READY")
 _GROK_WINDOW_TITLE = "Grok Bot"
+
+
+def _grok_restore_fields(
+    *,
+    restore_agent_id: str,
+    did_switch: bool,
+    target_agent_id: str,
+) -> dict[str, Any]:
+    return {
+        "restore_agent_id": restore_agent_id,
+        "did_switch": did_switch,
+        "target_agent_id": target_agent_id,
+    }
+
+
+async def _restore_grok_prior_selection(
+    display: str,
+    restore_agent_id: str,
+    target_agent_id: str,
+    result: dict[str, Any] | None,
+) -> None:
+    """Return the window to ``restore_agent_id`` after commission on another agent."""
+    if not restore_agent_id or restore_agent_id == target_agent_id:
+        return
+    try:
+        picked = await select_grok_agent_async(display, restore_agent_id)
+        if result is not None:
+            result["restore_ok"] = bool(picked.get("ok"))
+            if not picked.get("ok"):
+                result["restore_error"] = str(
+                    picked.get("code") or picked.get("reason") or "restore_failed"
+                )
+    except (TimeoutError, RuntimeError, OSError) as exc:
+        if result is not None:
+            result["restore_ok"] = False
+            result["restore_error"] = type(exc).__name__
+
+
+async def _grok_select_and_confirm(
+    endpoint: ElectronEndpoint,
+    *,
+    ws_url: str,
+    disp: str,
+    grok_agent: str,
+    surface: dict[str, Any],
+    verdict: dict[str, Any],
+    selection_prior_agent_id: str = "",
+) -> dict[str, Any]:
+    """Select ``grok_agent`` via CDP roster, confirm active surface, apply target guards."""
+    surface_prior = str(surface.get("active_agent_id") or "").strip()
+    prior = (selection_prior_agent_id or surface_prior).strip()
+    did_switch = bool(prior and prior != grok_agent)
+    async with display_switch_lock(disp):
+        try:
+            surface = await probe_surface(ws_url)
+        except (TimeoutError, RuntimeError, OSError) as exc:
+            return {
+                "ok": False,
+                "reason": "surface_probe_failed",
+                "endpoint": endpoint.label,
+                "display": disp,
+                "app": "grok",
+                "detail": type(exc).__name__,
+                "did_switch": did_switch,
+            }
+        baseline_agent = str(surface.get("active_agent_id") or "").strip()
+        prior_fp = messages_fingerprint(surface)
+        prior_generating = bool(surface.get("generating"))
+        cdp_pick = await select_grok_agent_async(disp, grok_agent)
+        if not cdp_pick.get("ok"):
+            try:
+                fresh = await probe_surface(ws_url)
+            except (TimeoutError, RuntimeError, OSError) as exc:
+                return {
+                    "ok": False,
+                    "reason": "surface_probe_failed",
+                    "endpoint": endpoint.label,
+                    "display": disp,
+                    "app": "grok",
+                    "detail": type(exc).__name__,
+                    "did_switch": did_switch,
+                }
+            pick_verdict = wake_decision(
+                fresh,
+                thread=endpoint.thread,
+                slug=endpoint.slug,
+                title=endpoint.title or None,
+                agent_id=grok_agent,
+            )
+            if pick_verdict.get("ok") and not _busy_or_draft_reason(fresh):
+                return {
+                    "ok": True,
+                    "surface": fresh,
+                    "verdict": pick_verdict,
+                    "selected": False,
+                    "did_switch": did_switch,
+                }
+            pick_verdict = wake_decision(
+                surface,
+                thread=endpoint.thread,
+                slug=endpoint.slug,
+                title=endpoint.title or None,
+                agent_id=grok_agent,
+            )
+            click_res = await select_sidebar_target(
+                ws_url,
+                expected_title=str(pick_verdict.get("expected_title") or ""),
+                expected_agent_id=grok_agent,
+            )
+            if not click_res.get("clicked"):
+                return {
+                    "ok": False,
+                    "reason": "selection_failed",
+                    "code": str(cdp_pick.get("code") or "selection_failed"),
+                    "endpoint": endpoint.label,
+                    "display": disp,
+                    "app": "grok",
+                    "select": cdp_pick,
+                    "did_switch": False,
+                }
+            await asyncio.sleep(0.25)
+            try:
+                surface = await probe_surface(ws_url)
+            except (TimeoutError, RuntimeError, OSError) as exc:
+                return {
+                    "ok": False,
+                    "reason": "surface_probe_failed",
+                    "endpoint": endpoint.label,
+                    "display": disp,
+                    "app": "grok",
+                    "detail": type(exc).__name__,
+                    "did_switch": did_switch,
+                }
+            verdict = wake_decision(
+                surface,
+                thread=endpoint.thread,
+                slug=endpoint.slug,
+                title=endpoint.title or None,
+                agent_id=grok_agent,
+            )
+            guard = _busy_or_draft_reason(surface)
+            if guard:
+                return {
+                    "ok": False,
+                    "reason": guard,
+                    "endpoint": endpoint.label,
+                    "display": disp,
+                    "app": "grok",
+                    "selected": True,
+                    "did_switch": did_switch,
+                }
+            if not verdict.get("ok"):
+                return {
+                    **verdict,
+                    "ok": False,
+                    "endpoint": endpoint.label,
+                    "display": disp,
+                    "app": "grok",
+                    "selected": True,
+                    "did_switch": did_switch,
+                }
+            return {
+                "ok": True,
+                "surface": surface,
+                "verdict": verdict,
+                "selected": True,
+                "did_switch": did_switch,
+            }
+    grok_wait = await probe_grok_after_select(
+        ws_url,
+        endpoint=endpoint,
+        expected_agent_id=grok_agent,
+        baseline_agent_id=baseline_agent,
+        prior_message_fp=prior_fp,
+        prior_generating=prior_generating,
+        display=disp,
+    )
+    surface = grok_wait["surface"]
+    verdict = grok_wait["verdict"]
+    base = {
+        "endpoint": endpoint.label,
+        "display": disp,
+        "app": "grok",
+        "selected": True,
+        "did_switch": did_switch,
+    }
+    if grok_wait.get("stale_dom"):
+        unconfirmed: dict[str, Any] = {
+            **base,
+            "ok": False,
+            "code": "conversation_unconfirmed",
+            "reason": "conversation DOM stale after select",
+            "active_agent_id": verdict.get("active_agent_id"),
+            "stale_dom": True,
+        }
+        foreign = grok_wait.get("foreign_agent_id")
+        if foreign:
+            unconfirmed["foreign_agent_id"] = foreign
+        return unconfirmed
+    if not verdict.get("ok"):
+        try:
+            fresh_after_wait = await probe_surface(ws_url)
+        except (TimeoutError, RuntimeError, OSError) as exc:
+            return {
+                "ok": False,
+                "reason": "surface_probe_failed",
+                "endpoint": endpoint.label,
+                "display": disp,
+                "app": "grok",
+                "detail": type(exc).__name__,
+                "did_switch": did_switch,
+            }
+        busy = _busy_or_draft_reason(fresh_after_wait)
+        if busy:
+            reprobe_verdict = wake_decision(
+                fresh_after_wait,
+                thread=endpoint.thread,
+                slug=endpoint.slug,
+                title=endpoint.title or None,
+                agent_id=grok_agent,
+            )
+            return {
+                **base,
+                "ok": False,
+                "reason": busy,
+                "active_title": reprobe_verdict.get("active_title"),
+                "active_agent_id": reprobe_verdict.get("active_agent_id"),
+                "titles": reprobe_verdict.get("titles"),
+                "did_switch": did_switch,
+            }
+        click_res: dict[str, Any] = {"clicked": False}
+        async with display_switch_lock(disp):
+            try:
+                surface = await probe_surface(ws_url)
+            except (TimeoutError, RuntimeError, OSError) as exc:
+                return {
+                    "ok": False,
+                    "reason": "surface_probe_failed",
+                    "endpoint": endpoint.label,
+                    "display": disp,
+                    "app": "grok",
+                    "detail": type(exc).__name__,
+                    "did_switch": did_switch,
+                }
+            verdict = wake_decision(
+                surface,
+                thread=endpoint.thread,
+                slug=endpoint.slug,
+                title=endpoint.title or None,
+                agent_id=grok_agent,
+            )
+            guard = _busy_or_draft_reason(surface)
+            if guard:
+                return {
+                    **base,
+                    "ok": False,
+                    "reason": guard,
+                    "active_title": verdict.get("active_title"),
+                    "active_agent_id": verdict.get("active_agent_id"),
+                    "titles": verdict.get("titles"),
+                    "did_switch": did_switch,
+                }
+            click_res = await select_sidebar_target(
+                ws_url,
+                expected_title=str(verdict.get("expected_title") or ""),
+                expected_agent_id=grok_agent,
+            )
+        if click_res.get("clicked"):
+            await asyncio.sleep(0.25)
+            surface = await probe_surface(ws_url)
+            verdict = wake_decision(
+                surface,
+                thread=endpoint.thread,
+                slug=endpoint.slug,
+                title=endpoint.title or None,
+                agent_id=grok_agent,
+            )
+        if not verdict.get("ok"):
+            return {
+                **verdict,
+                **base,
+                "ok": False,
+                "did_switch": did_switch,
+            }
+    guard = _busy_or_draft_reason(surface)
+    if guard:
+        return {
+            **base,
+            "ok": False,
+            "reason": guard,
+            "active_title": verdict.get("active_title"),
+            "active_agent_id": verdict.get("active_agent_id"),
+            "titles": verdict.get("titles"),
+        }
+    return {
+        **base,
+        "ok": True,
+        "surface": surface,
+        "verdict": verdict,
+    }
 
 
 def _grok_ws_url(cdp_port: int, *, timeout_s: float = 5.0) -> str:
@@ -222,6 +525,7 @@ async def _resolve_and_select_endpoint(
             "app": app,
             "detail": type(exc).__name__,
         }
+    grok_agent = str(endpoint.agent_id or "").strip()
     verdict = wake_decision(
         surface,
         thread=endpoint.thread,
@@ -229,8 +533,49 @@ async def _resolve_and_select_endpoint(
         title=endpoint.title or None,
         agent_id=endpoint.agent_id or None,
     )
+    selection_prior = ""
+    if app == "grok" and grok_agent:
+        selection_prior = await grok_selection_current_agent_id_async(disp)
+    surface_prior = str(surface.get("active_agent_id") or "").strip()
+    prior_agent_id = selection_prior or surface_prior
+    restore_agent_id = (
+        prior_agent_id
+        if app == "grok" and grok_agent and prior_agent_id and prior_agent_id != grok_agent
+        else ""
+    )
+    did_switch = bool(restore_agent_id)
     selected = False
-    if not verdict.get("ok") and select and verdict.get("state") == "chat_list":
+    restore_meta = _grok_restore_fields(
+        restore_agent_id=restore_agent_id,
+        did_switch=did_switch,
+        target_agent_id=grok_agent,
+    )
+    need_grok_switch = (
+        app == "grok" and grok_agent and select and prior_agent_id != grok_agent
+    )
+    if need_grok_switch:
+        switched = await _grok_select_and_confirm(
+            endpoint,
+            ws_url=ws_url,
+            disp=disp,
+            grok_agent=grok_agent,
+            surface=surface,
+            verdict=verdict,
+            selection_prior_agent_id=selection_prior,
+        )
+        if not bool(switched.get("did_switch")) and did_switch:
+            switched = {**switched, "did_switch": did_switch}
+        restore_meta = _grok_restore_fields(
+            restore_agent_id=restore_agent_id,
+            did_switch=did_switch,
+            target_agent_id=grok_agent,
+        )
+        if not switched.get("ok"):
+            return {**switched, **restore_meta}
+        surface = switched["surface"]
+        verdict = switched["verdict"]
+        selected = True
+    elif not verdict.get("ok") and select and verdict.get("state") == "chat_list":
         guard = _busy_or_draft_reason(surface)
         if guard:
             return {
@@ -242,12 +587,9 @@ async def _resolve_and_select_endpoint(
                 "active_title": verdict.get("active_title"),
                 "active_agent_id": verdict.get("active_agent_id"),
                 "titles": verdict.get("titles"),
+                **restore_meta,
             }
         click_res: dict[str, Any] = {"clicked": False}
-        prior_fp = ""
-        prior_generating = False
-        baseline_agent = ""
-        grok_agent = str(endpoint.agent_id or "").strip()
         async with display_switch_lock(disp):
             try:
                 surface = await probe_surface(ws_url)
@@ -259,6 +601,7 @@ async def _resolve_and_select_endpoint(
                     "display": disp,
                     "app": app,
                     "detail": type(exc).__name__,
+                    **restore_meta,
                 }
             verdict = wake_decision(
                 surface,
@@ -278,23 +621,9 @@ async def _resolve_and_select_endpoint(
                     "active_title": verdict.get("active_title"),
                     "active_agent_id": verdict.get("active_agent_id"),
                     "titles": verdict.get("titles"),
+                    **restore_meta,
                 }
-            baseline_agent = str(surface.get("active_agent_id") or "").strip()
-            prior_fp = messages_fingerprint(surface) if app == "grok" else ""
-            prior_generating = (
-                bool(surface.get("generating")) if app == "grok" else False
-            )
-            if app == "grok" and grok_agent:
-                cdp_pick = await select_grok_agent_async(disp, grok_agent)
-                if cdp_pick.get("ok"):
-                    selected = True
-                elif not verdict.get("ok"):
-                    click_res = await select_sidebar_target(
-                        ws_url,
-                        expected_title=str(verdict.get("expected_title") or ""),
-                        expected_agent_id=str(verdict.get("expected_agent_id") or ""),
-                    )
-            elif verdict.get("ok"):
+            if verdict.get("ok"):
                 click_res = {"clicked": False}
             else:
                 click_res = await select_sidebar_target(
@@ -302,70 +631,6 @@ async def _resolve_and_select_endpoint(
                     expected_title=str(verdict.get("expected_title") or ""),
                     expected_agent_id=str(verdict.get("expected_agent_id") or ""),
                 )
-        if app == "grok" and grok_agent and selected:
-            grok_wait = await probe_grok_after_select(
-                ws_url,
-                endpoint=endpoint,
-                expected_agent_id=grok_agent,
-                baseline_agent_id=baseline_agent,
-                prior_message_fp=prior_fp,
-                prior_generating=prior_generating,
-            )
-            surface = grok_wait["surface"]
-            verdict = grok_wait["verdict"]
-            if grok_wait.get("stale_dom"):
-                unconfirmed: dict[str, Any] = {
-                    "ok": False,
-                    "code": "conversation_unconfirmed",
-                    "reason": "conversation DOM stale after select",
-                    "endpoint": endpoint.label,
-                    "display": disp,
-                    "app": app,
-                    "selected": selected,
-                    "active_agent_id": verdict.get("active_agent_id"),
-                    "stale_dom": True,
-                }
-                foreign = grok_wait.get("foreign_agent_id")
-                if foreign:
-                    unconfirmed["foreign_agent_id"] = foreign
-                return unconfirmed
-            if not verdict.get("ok"):
-                async with display_switch_lock(disp):
-                    try:
-                        surface = await probe_surface(ws_url)
-                    except (TimeoutError, RuntimeError, OSError) as exc:
-                        return {
-                            "ok": False,
-                            "reason": "surface_probe_failed",
-                            "endpoint": endpoint.label,
-                            "display": disp,
-                            "app": app,
-                            "detail": type(exc).__name__,
-                        }
-                    verdict = wake_decision(
-                        surface,
-                        thread=endpoint.thread,
-                        slug=endpoint.slug,
-                        title=endpoint.title or None,
-                        agent_id=endpoint.agent_id or None,
-                    )
-                    guard = _busy_or_draft_reason(surface)
-                    if guard:
-                        return {
-                            "ok": False,
-                            "reason": guard,
-                            "endpoint": endpoint.label,
-                            "display": disp,
-                            "app": app,
-                            "active_title": verdict.get("active_title"),
-                            "active_agent_id": verdict.get("active_agent_id"),
-                            "titles": verdict.get("titles"),
-                        }
-                    click_res = await select_sidebar_target(
-                        ws_url,
-                        expected_title=str(verdict.get("expected_title") or ""),
-                        expected_agent_id=str(verdict.get("expected_agent_id") or ""),
-                    )
         if click_res.get("clicked"):
             selected = True
             await asyncio.sleep(0.25)
@@ -385,6 +650,8 @@ async def _resolve_and_select_endpoint(
             "display": disp,
             "app": app,
             "selected": selected,
+            **restore_meta,
+            "did_switch": did_switch,
         }
     return {
         "ok": True,
@@ -394,6 +661,8 @@ async def _resolve_and_select_endpoint(
         "selected": selected,
         "display": disp,
         "app": app,
+        **restore_meta,
+        "did_switch": did_switch,
     }
 
 
@@ -404,37 +673,56 @@ async def read_endpoint_turn(
     target = normalize_target(endpoint.display, endpoint.app)
     disp = str(target.get("display") or endpoint.display)
     lock_id = paste_lock_key(agent_id=endpoint.agent_id, thread=endpoint.thread)
+    out: dict[str, Any] | None = None
+    restore_agent_id = ""
+    target_agent = str(endpoint.agent_id or "").strip()
+    did_switch = False
     async with agent_paste_lock(disp, lock_id):
-        res = await _resolve_and_select_endpoint(endpoint, select=select)
-        if not res.get("ok"):
-            return res
-        surface, verdict = res["surface"], res["verdict"]
-        if surface.get("stale_dom"):
-            messages: list[str] = []
-        else:
-            messages = [
-                str(m).strip()
-                for m in (surface.get("recent_messages") or [])
-                if str(m).strip()
-            ]
-        latest = messages[-1] if messages else ""
-        out: dict[str, Any] = {
-            "ok": True,
-            "endpoint": endpoint.label,
-            "display": res["display"],
-            "app": res["app"],
-            "selected": res["selected"],
-            "active_title": verdict.get("active_title"),
-            "active_agent_id": verdict.get("active_agent_id"),
-            "generating": bool(surface.get("generating")),
-            "composer_draft": str(surface.get("composer_draft") or ""),
-            "recent_messages": messages,
-            "latest_message": latest,
-            "latest_fingerprint": message_fingerprint(latest) if latest else "",
-        }
-        if isinstance(surface, dict) and surface.get("supervision"):
-            out["supervision"] = surface["supervision"]
-        return out
+        try:
+            res = await _resolve_and_select_endpoint(endpoint, select=select)
+            restore_agent_id = str(res.get("restore_agent_id") or "")
+            did_switch = bool(res.get("did_switch"))
+            if not res.get("ok"):
+                out = res
+                return out
+            surface, verdict = res["surface"], res["verdict"]
+            if surface.get("stale_dom"):
+                messages: list[str] = []
+            else:
+                messages = [
+                    str(m).strip()
+                    for m in (surface.get("recent_messages") or [])
+                    if str(m).strip()
+                ]
+            latest = messages[-1] if messages else ""
+            out = {
+                "ok": True,
+                "endpoint": endpoint.label,
+                "display": res["display"],
+                "app": res["app"],
+                "selected": res["selected"],
+                "active_title": verdict.get("active_title"),
+                "active_agent_id": verdict.get("active_agent_id"),
+                "generating": bool(surface.get("generating")),
+                "composer_draft": str(surface.get("composer_draft") or ""),
+                "recent_messages": messages,
+                "latest_message": latest,
+                "latest_fingerprint": message_fingerprint(latest) if latest else "",
+                "restore_agent_id": restore_agent_id,
+                "did_switch": did_switch,
+            }
+            if isinstance(surface, dict) and surface.get("supervision"):
+                out["supervision"] = surface["supervision"]
+            return out
+        finally:
+            if (
+                endpoint.app == "grok"
+                and restore_agent_id
+                and restore_agent_id != target_agent
+            ):
+                await _restore_grok_prior_selection(
+                    disp, restore_agent_id, target_agent, out
+                )
 
 
 def _paste_outcome_base(
@@ -574,159 +862,177 @@ async def paste_endpoint_message(
     target = normalize_target(endpoint.display, endpoint.app)
     disp = str(target.get("display") or endpoint.display)
     lock_id = paste_lock_key(agent_id=endpoint.agent_id, thread=endpoint.thread)
+    out: dict[str, Any] | None = None
+    restore_agent_id = ""
+    target_agent = str(endpoint.agent_id or "").strip()
+    did_switch = False
     async with agent_paste_lock(disp, lock_id):
-        res = await _resolve_and_select_endpoint(endpoint, select=select)
-        if not res.get("ok"):
-            return {**res, "pasted": False, "delivered": False}
-        ws_url, surface, verdict = res["ws_url"], res["surface"], res["verdict"]
-        disp, app, selected = res["display"], res["app"], res["selected"]
-        base = _paste_outcome_base(
-            verdict=verdict,
-            endpoint=endpoint,
-            disp=disp,
-            app=app,
-            selected=selected,
-        )
-        expected = str(
-            endpoint.agent_id or verdict.get("expected_agent_id") or ""
-        ).strip()
-        active = str(verdict.get("active_agent_id") or "").strip()
-        if expected and active and active != expected:
-            return {
-                **base,
-                "ok": False,
-                "code": "target_mismatch",
-                "reason": "target_mismatch",
-                "pasted": False,
-                "delivered": False,
-            }
-        guard = _busy_or_draft_reason(surface)
-        if guard:
-            refused = _refuse(
-                guard, endpoint=endpoint.label, display=disp, app=app, selected=selected
-            )
-            return {**refused, "code": refused.get("reason")}
-        if app not in {"grok", "cursor"}:
-            return {
-                **_refuse(
-                    "composer_unconfirmed",
-                    endpoint=endpoint.label,
-                    display=disp,
-                    app=app,
-                ),
-                "code": "composer_unconfirmed",
-            }
-        sel = composer_selector(
-            app=app,
-            agent_id=str(verdict.get("expected_agent_id") or endpoint.agent_id or ""),
-        )
-        draft_writer = f"interlocutor:{endpoint.agent_id or endpoint.label}"
-        baseline = _user_match_count(text, surface if isinstance(surface, dict) else {})
         try:
-            if app == "cursor":
-                from cursor_bridge.wake_delivery import _paste_cursor_services
-
-                paste_res = await _paste_cursor_services(
-                    ws_url, text, agent_id=str(endpoint.agent_id or "")
-                )
-            else:
-                paste_res = await dom_insert_and_send(
-                    ws_url,
-                    selector=sel,
-                    line=text,
-                    preserve_newlines=True,
-                    draft_writer=draft_writer,
-                )
-        except TimeoutError:
-            return await _reconcile_uncertain_send(
-                ws_url,
-                text,
-                base,
-                baseline=baseline,
-                expected_agent=expected,
-                pasted=False,
-                phase="send_unknown",
+            res = await _resolve_and_select_endpoint(endpoint, select=select)
+            restore_agent_id = str(res.get("restore_agent_id") or "")
+            did_switch = bool(res.get("did_switch"))
+            if not res.get("ok"):
+                out = {**res, "pasted": False, "delivered": False}
+                return out
+            ws_url, surface, verdict = res["ws_url"], res["surface"], res["verdict"]
+            disp, app, selected = res["display"], res["app"], res["selected"]
+            base = _paste_outcome_base(
+                verdict=verdict,
+                endpoint=endpoint,
+                disp=disp,
+                app=app,
+                selected=selected,
             )
-        except (RuntimeError, OSError) as exc:
-            return {
-                **_refuse(
-                    "paste_failed",
-                    endpoint=endpoint.label,
-                    display=disp,
-                    app=app,
-                    detail=type(exc).__name__,
-                ),
-                "code": "paste_failed",
-                "phase": "insertion_failed",
-                "pasted": False,
-                "delivered": False,
-            }
-        phase = str(paste_res.get("phase") or "")
-        inserted = bool(paste_res.get("inserted") or paste_res.get("pasted"))
-        reason = str(paste_res.get("reason") or paste_res.get("code") or "")
-        uncertain = (
-            bool(paste_res.get("clicked_unknown"))
-            or reason
-            in {
-                "cdp_eval_timeout",
-                "clicked_unknown",
-            }
-            or phase == "send_unknown"
-        )
-        if str(paste_res.get("race_winner") or "") == "timer":
-            return {
-                **base,
-                "ok": False,
-                "code": "delivery_unconfirmed",
-                "reason": "delivery_unconfirmed",
-                "pasted": True,
-                "delivered": False,
-                "retryable": False,
-                "phase": "send_unknown",
-                "race_winner": "timer",
-                "generating": bool(surface.get("generating"))
-                if isinstance(surface, dict)
-                else False,
-            }
-        if not paste_res.get("ok"):
-            if uncertain:
-                reconciled = await _reconcile_uncertain_send(
+            expected = str(
+                endpoint.agent_id or verdict.get("expected_agent_id") or ""
+            ).strip()
+            active = str(verdict.get("active_agent_id") or "").strip()
+            if expected and active and active != expected:
+                return {
+                    **base,
+                    "ok": False,
+                    "code": "target_mismatch",
+                    "reason": "target_mismatch",
+                    "pasted": False,
+                    "delivered": False,
+                }
+            guard = _busy_or_draft_reason(surface)
+            if guard:
+                refused = _refuse(
+                    guard, endpoint=endpoint.label, display=disp, app=app, selected=selected
+                )
+                return {**refused, "code": refused.get("reason")}
+            if app not in {"grok", "cursor"}:
+                return {
+                    **_refuse(
+                        "composer_unconfirmed",
+                        endpoint=endpoint.label,
+                        display=disp,
+                        app=app,
+                    ),
+                    "code": "composer_unconfirmed",
+                }
+            sel = composer_selector(
+                app=app,
+                agent_id=str(verdict.get("expected_agent_id") or endpoint.agent_id or ""),
+            )
+            draft_writer = f"interlocutor:{endpoint.agent_id or endpoint.label}"
+            baseline = _user_match_count(text, surface if isinstance(surface, dict) else {})
+            try:
+                if app == "cursor":
+                    from cursor_bridge.wake_delivery import _paste_cursor_services
+
+                    paste_res = await _paste_cursor_services(
+                        ws_url, text, agent_id=str(endpoint.agent_id or "")
+                    )
+                else:
+                    paste_res = await dom_insert_and_send(
+                        ws_url,
+                        selector=sel,
+                        line=text,
+                        preserve_newlines=True,
+                        draft_writer=draft_writer,
+                    )
+            except TimeoutError:
+                return await _reconcile_uncertain_send(
                     ws_url,
                     text,
                     base,
                     baseline=baseline,
                     expected_agent=expected,
-                    pasted=True,
+                    pasted=False,
                     phase="send_unknown",
                 )
-                if paste_res.get("clicked_unknown"):
-                    reconciled["clicked_unknown"] = True
-                return reconciled
-            return {
-                **base,
-                "ok": False,
-                "code": reason or "no_composer",
-                "reason": reason or "no_composer",
-                "pasted": inserted,
-                "inserted": inserted,
-                "delivered": False,
-                "phase": phase or ("inserted" if inserted else "insertion_failed"),
-                **({"retryable": False} if paste_res.get("retryable") is False else {}),
-            }
-        await asyncio.sleep(0.25)
-        post = await probe_surface(ws_url)
-        outcome = _readback_outcome(
-            text,
-            post,
-            base,
-            baseline=baseline,
-            expected_agent=expected,
-            pasted=True,
-            phase="send_unknown",
-        )
-        if outcome.get("ok") and verdict.get("reason"):
-            outcome["reason"] = verdict.get("reason")
-        return outcome
+            except (RuntimeError, OSError) as exc:
+                return {
+                    **_refuse(
+                        "paste_failed",
+                        endpoint=endpoint.label,
+                        display=disp,
+                        app=app,
+                        detail=type(exc).__name__,
+                    ),
+                    "code": "paste_failed",
+                    "phase": "insertion_failed",
+                    "pasted": False,
+                    "delivered": False,
+                }
+            phase = str(paste_res.get("phase") or "")
+            inserted = bool(paste_res.get("inserted") or paste_res.get("pasted"))
+            reason = str(paste_res.get("reason") or paste_res.get("code") or "")
+            uncertain = (
+                bool(paste_res.get("clicked_unknown"))
+                or reason
+                in {
+                    "cdp_eval_timeout",
+                    "clicked_unknown",
+                }
+                or phase == "send_unknown"
+            )
+            if str(paste_res.get("race_winner") or "") == "timer":
+                return {
+                    **base,
+                    "ok": False,
+                    "code": "delivery_unconfirmed",
+                    "reason": "delivery_unconfirmed",
+                    "pasted": True,
+                    "delivered": False,
+                    "retryable": False,
+                    "phase": "send_unknown",
+                    "race_winner": "timer",
+                    "generating": bool(surface.get("generating"))
+                    if isinstance(surface, dict)
+                    else False,
+                }
+            if not paste_res.get("ok"):
+                if uncertain:
+                    reconciled = await _reconcile_uncertain_send(
+                        ws_url,
+                        text,
+                        base,
+                        baseline=baseline,
+                        expected_agent=expected,
+                        pasted=True,
+                        phase="send_unknown",
+                    )
+                    if paste_res.get("clicked_unknown"):
+                        reconciled["clicked_unknown"] = True
+                    return reconciled
+                return {
+                    **base,
+                    "ok": False,
+                    "code": reason or "no_composer",
+                    "reason": reason or "no_composer",
+                    "pasted": inserted,
+                    "inserted": inserted,
+                    "delivered": False,
+                    "phase": phase or ("inserted" if inserted else "insertion_failed"),
+                    **({"retryable": False} if paste_res.get("retryable") is False else {}),
+                }
+            await asyncio.sleep(0.25)
+            post = await probe_surface(ws_url)
+            outcome = _readback_outcome(
+                text,
+                post,
+                base,
+                baseline=baseline,
+                expected_agent=expected,
+                pasted=True,
+                phase="send_unknown",
+            )
+            if outcome.get("ok") and verdict.get("reason"):
+                outcome["reason"] = verdict.get("reason")
+            out = outcome
+            return out
+        finally:
+            if (
+                endpoint.app == "grok"
+                and restore_agent_id
+                and restore_agent_id != target_agent
+            ):
+                await _restore_grok_prior_selection(
+                    disp, restore_agent_id, target_agent, out
+                )
 
 
 async def wait_for_new_settled_turn(

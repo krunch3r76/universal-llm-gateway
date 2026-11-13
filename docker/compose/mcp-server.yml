@@ -131,7 +131,7 @@ services:
       mcp-network: {}
     restart: unless-stopped
 
-  # Host-namespace listener: 172.18.0.1:9338/9339/19338 → 127.0.0.1 on the host.
+  # Host-namespace listener: 172.18.0.1:9338/9339/9340/9344/19338 → 127.0.0.1 on the host.
   # mcp-server stays on the bridge (not host network). The process binds
   # only the gateway address; it does not publish 0.0.0.0. The module is mounted
   # from the project tree so this service does not need an image rebuild. Do not
