@@ -29,17 +29,38 @@ _COMPOSER_IMPRESARIO_PREFIX = "composer-impresario-"
 _PARENT_WAKE_EVIDENCE_MARKERS = ("parent_wake", "parent-wake")
 
 
+def _evidence_has_parent_wake_opt_in(evidence: str) -> bool:
+    """True when ``evidence`` explicitly opts into parent-scope routing (token/key, not substring)."""
+    text = str(evidence or "").strip().lower()
+    if not text:
+        return False
+    for clause in re.split(r"[,;]+", text):
+        clause = clause.strip()
+        if not clause:
+            continue
+        for marker in _PARENT_WAKE_EVIDENCE_MARKERS:
+            if clause == marker or clause.startswith(marker + "="):
+                return True
+        parts = clause.split()
+        for idx, part in enumerate(parts):
+            if idx > 0 and parts[idx - 1] == "no":
+                continue
+            for marker in _PARENT_WAKE_EVIDENCE_MARKERS:
+                if part == marker or part.startswith(marker + "="):
+                    return True
+    return False
+
+
 def _grok_thread_mailbox_without_parent_opt_in(row: dict[str, Any]) -> bool:
     """Grok ``scope_kind=thread`` mailbox rows match exact ``thread_scope`` only by default."""
     if str(row.get("surface") or "").strip().lower() != "grok":
         return False
     scope_kind = str(row.get("scope_kind") or "thread").strip().lower()
-    if scope_kind == "tree":
-        return False
     if scope_kind != "thread":
+        # Legacy: store CHECK allows only thread/agent (migration_023); unknown kinds keep parent walk.
         return False
-    evidence = str(row.get("evidence") or "").lower()
-    return not any(marker in evidence for marker in _PARENT_WAKE_EVIDENCE_MARKERS)
+    evidence = str(row.get("evidence") or "")
+    return not _evidence_has_parent_wake_opt_in(evidence)
 
 
 def _subscription_row_uses_parent_walk(row: dict[str, Any]) -> bool:

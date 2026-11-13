@@ -84,25 +84,6 @@ def test_grok_wildcard_still_matches_child() -> None:
     assert result[0] == "wildcard"
 
 
-def test_grok_scope_kind_tree_opt_in_parent_route() -> None:
-    parent = "23609"
-    child = "23622"
-    subs = [
-        {
-            "id": 80,
-            "state": "subscribed",
-            "thread_scope": parent,
-            "scope_kind": "tree",
-            "surface": "grok",
-        },
-    ]
-    store = _lane_stub_store(subs, {child: parent, parent: None})
-    result = store.subscription("s5-land-batcher", child)
-    assert result is not None
-    assert result[0] == "parent"
-    assert len(store._lane_gets) == 2  # type: ignore[attr-defined]
-
-
 def test_grok_parent_wake_evidence_opt_in_parent_route() -> None:
     parent = "23609"
     child = "23622"
@@ -120,6 +101,24 @@ def test_grok_parent_wake_evidence_opt_in_parent_route() -> None:
     result = store.subscription("s5-land-batcher", child)
     assert result is not None
     assert result[0] == "parent"
+
+
+def test_grok_parent_wake_evidence_substring_does_not_opt_in() -> None:
+    parent = "23609"
+    child = "23622"
+    subs = [
+        {
+            "id": 82,
+            "state": "subscribed",
+            "thread_scope": parent,
+            "scope_kind": "thread",
+            "surface": "grok",
+            "evidence": "no parent_wake",
+        },
+    ]
+    store = _lane_stub_store(subs, {child: parent, parent: None})
+    assert store.subscription("s5-land-batcher", child) is None
+    assert store._lane_gets == []  # type: ignore[attr-defined]
 
 
 def test_cursor_parent_route_unchanged_for_closeout_chain() -> None:
