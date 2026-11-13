@@ -134,6 +134,17 @@ def create_thread_with_turn(
         if gated_tags:
             set_thread_tags(conn, thread_id, gated_tags)
 
+        from .hop_precedence import apply_hop_precedence_on_turn_send
+
+        apply_hop_precedence_on_turn_send(
+            conn,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            subject=subject,
+            body=insert_body,
+            updated_at=ts,
+        )
+
     from ..events.turn_created import emit_turn_created
 
     emit_turn_created(
@@ -682,6 +693,17 @@ def claim_and_post_turn(
             raise RuntimeError("claim_and_post_turn: sqlite returned no row id")
         turn_id = cur.lastrowid
 
+        from .hop_precedence import apply_hop_precedence_on_turn_send
+
+        apply_hop_precedence_on_turn_send(
+            conn,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            subject=subject,
+            body=body,
+            updated_at=ts,
+        )
+
         # Transition admitted -> active (first delivery/pointer turn posted).
         _transition_lifecycle_state(conn, thread_id, "active", "claim_and_post")
 
@@ -823,6 +845,17 @@ def admit_and_post_turn(
                 raise RuntimeError("admit_and_post_turn: sqlite returned no row id")
             turn_id = int(cur.lastrowid)
             inserted_turn = True
+
+            from .hop_precedence import apply_hop_precedence_on_turn_send
+
+            apply_hop_precedence_on_turn_send(
+                conn,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                subject=subject,
+                body=body,
+                updated_at=ts,
+            )
 
             _insert_dispatch_link_row(
                 conn,

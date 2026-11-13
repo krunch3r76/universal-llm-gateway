@@ -21,6 +21,7 @@ COMPOSER_DEFER_REASONS = frozenset(
 COMPOSER_DEFER_ARMED = "composer_defer:armed"
 COMPOSER_DEFER_SWEEP = "composer_defer:sweep_eligible"
 COMPOSER_DEFER_ESCALATED = "composer_defer:escalated"
+COMPOSER_DEFER_ESCALATED_NOTICED = "composer_defer:escalated_noticed"
 LEGACY_NORMALIZE_AGENT_MISMATCH = "legacy_normalize:agent_id_mismatch"
 _ESCALATION_SUBJECT = "NOTICE|endpoint wake composer defer exhausted"
 _DEFER_PREFIX = "composer_defer:"
@@ -123,56 +124,101 @@ def finalize_composer_defer_pass() -> int:
         return int(cur.rowcount)
 
 
-def _maestro_escalation_body(row: dict[str, Any]) -> str:
+def _maestro_escalation_body(
+    representative: dict[str, Any], group: list[dict[str, Any]]
+) -> str:
+    parts = ", ".join(
+        f"agent={item.get('agent')} id={item.get('id')}" for item in group
+    )
     return (
-        f"thread={row.get('thread_id')} agent={row.get('agent')} "
-        f"turn_number={row.get('turn_number')} reason={row.get('reason')}"
+        f"thread={representative.get('thread_id')} "
+        f"turn_number={representative.get('turn_number')} "
+        f"count={len(group)} rows={parts} reason={representative.get('reason')}"
     )
 
 
 def escalate_composer_deferred_on_sweep(store: Any) -> int:
-    """Refuse sweep-eligible composer defers and post one maestro turn per row."""
-    escalated_items: list[dict[str, Any]] = []
+    """Refuse sweep-eligible composer defers; post at most one maestro NOTICE per (thread, turn).
+
+    Returns the number of ledger rows refused in this pass (not the number of bus posts).
+    """
     with write_connect() as conn:
         rows = conn.execute(
             "SELECT id, agent, thread_id, turn_number, reason, decided_by_rule "
             "FROM endpoint_wake_ledger "
             "WHERE state='pending' AND decided_by_rule=? "
-            "AND lower(trim(agent)) <> 'orion'",
+            "AND lower(trim(agent)) <> 'orion' "
+            "ORDER BY id",
             (COMPOSER_DEFER_SWEEP,),
         ).fetchall()
         if not rows:
             return 0
-        for row in rows:
-            item = dict(row)
+        items = [dict(row) for row in rows]
+
+        groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
+        for item in items:
+            key = (str(item["thread_id"]), int(item["turn_number"]))
+            groups.setdefault(key, []).append(item)
+
+        thread_ids = tuple({str(item["thread_id"]) for item in items})
+        in_threads = ",".join("?" * len(thread_ids))
+        noticed_rows = conn.execute(
+            "SELECT thread_id, turn_number FROM endpoint_wake_ledger "
+            f"WHERE state='refused' AND decided_by_rule=? "
+            f"AND thread_id IN ({in_threads})",
+            (COMPOSER_DEFER_ESCALATED_NOTICED, *thread_ids),
+        ).fetchall()
+        noticed_keys = {
+            (str(row["thread_id"]), int(row["turn_number"])) for row in noticed_rows
+        }
+
+        groups_to_notice: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+        for key, group in groups.items():
+            if key not in noticed_keys:
+                groups_to_notice.append((group[0], group))
+
+        for item in items:
             rid = int(item["id"])
             conn.execute(
                 "UPDATE endpoint_wake_ledger SET state='refused', "
                 "decided_by_rule=?, finished_at=datetime('now') WHERE id=?",
                 (COMPOSER_DEFER_ESCALATED, rid),
             )
-            escalated_items.append(item)
+        refused_count = len(items)
+
     stamp_fn = getattr(store, "create_turn", None)
-    count = 0
-    for item in escalated_items:
+    for representative, group in groups_to_notice:
         if stamp_fn is None:
-            count += 1
             continue
+        thread_id = representative.get("thread_id")
+        turn_number = representative.get("turn_number")
+        row_ids = [int(item["id"]) for item in group]
+        agents = [str(item.get("agent")) for item in group]
         try:
             stamp_fn(
-                thread=str(item["thread_id"]),
+                thread=str(thread_id),
                 from_agent="agent_bus",
                 to_agent="maestro",
                 subject=_ESCALATION_SUBJECT,
-                body=_maestro_escalation_body(item),
+                body=_maestro_escalation_body(representative, group),
             )
+            rep_id = int(representative["id"])
+            with write_connect() as conn:
+                conn.execute(
+                    "UPDATE endpoint_wake_ledger SET decided_by_rule=? "
+                    "WHERE id=? AND state='refused'",
+                    (COMPOSER_DEFER_ESCALATED_NOTICED, rep_id),
+                )
         except Exception:
             logger.exception(
-                "composer_defer escalation failed thread=%s",
-                item.get("thread_id"),
+                "composer_defer escalation failed thread=%s turn_number=%s "
+                "agents=%s row_ids=%s",
+                thread_id,
+                turn_number,
+                agents,
+                row_ids,
             )
-        count += 1
-    return count
+    return refused_count
 
 
 def notify_composer_empty_for_target(
@@ -201,9 +247,14 @@ def notify_composer_empty_for_target(
         )
         rearmed = conn.execute(
             "UPDATE endpoint_wake_ledger SET state='pending', decided_by_rule=NULL, "
-            f"finished_at=NULL WHERE state='refused' AND decided_by_rule=? "
+            f"finished_at=NULL WHERE state='refused' AND decided_by_rule IN (?,?) "
             f"AND thread_id=? AND reason IN {in_sql}",
-            (COMPOSER_DEFER_ESCALATED, scope, *reasons),
+            (
+                COMPOSER_DEFER_ESCALATED,
+                COMPOSER_DEFER_ESCALATED_NOTICED,
+                scope,
+                *reasons,
+            ),
         )
         return int(pending.rowcount) + int(rearmed.rowcount)
 
@@ -223,6 +274,7 @@ def defer_path_avoids_wall_clock() -> bool:
 __all__ = [
     "COMPOSER_DEFER_ARMED",
     "COMPOSER_DEFER_ESCALATED",
+    "COMPOSER_DEFER_ESCALATED_NOTICED",
     "COMPOSER_DEFER_REASONS",
     "COMPOSER_DEFER_SWEEP",
     "LEGACY_NORMALIZE_AGENT_MISMATCH",

@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from .db import init_db
 from .reconcile import reconcile_orphaned_dispatches
 from .routes.endpoint_wake import router as endpoint_wake_router
+from .routes.lifecycle import router as lifecycle_router
 from .routes.messages import router as messages_router
 from .routes.threads import router as threads_router
 from .routes.turns import router as turns_router
@@ -166,6 +167,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(threads_router)
     app.include_router(wait_router)
     app.include_router(endpoint_wake_router)
+    app.include_router(lifecycle_router)
     return app
 
 

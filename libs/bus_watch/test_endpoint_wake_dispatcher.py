@@ -5017,6 +5017,7 @@ def test_agent_id_mismatch_records_refused_not_pending(db: None) -> None:
 def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
     from bus_watch.endpoint_wake_composer_defer import (
         COMPOSER_DEFER_ESCALATED,
+        COMPOSER_DEFER_ESCALATED_NOTICED,
         COMPOSER_DEFER_SWEEP,
         escalate_composer_deferred_on_sweep,
         finalize_composer_defer_pass,
@@ -5086,7 +5087,10 @@ def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
             (thread,),
         ).fetchone()
     assert row["state"] == "refused"
-    assert row["decided_by_rule"] == COMPOSER_DEFER_ESCALATED
+    assert row["decided_by_rule"] in (
+        COMPOSER_DEFER_ESCALATED,
+        COMPOSER_DEFER_ESCALATED_NOTICED,
+    )
     assert escalate_composer_deferred_on_sweep(store) == 0
     assert len(_Store.posts) == 1
 
@@ -5150,6 +5154,7 @@ def test_legacy_agent_id_mismatch_pending_refused_after_normalize(db: None) -> N
 def test_legacy_composer_not_empty_two_pass_escalation(db: None) -> None:
     from bus_watch.endpoint_wake_composer_defer import (
         COMPOSER_DEFER_ESCALATED,
+        COMPOSER_DEFER_ESCALATED_NOTICED,
         COMPOSER_DEFER_SWEEP,
         run_dispatcher_pass_legacy_sweep,
     )
@@ -5190,7 +5195,10 @@ def test_legacy_composer_not_empty_two_pass_escalation(db: None) -> None:
             (thread,),
         ).fetchone()
     assert row["state"] == "refused"
-    assert row["decided_by_rule"] == COMPOSER_DEFER_ESCALATED
+    assert row["decided_by_rule"] in (
+        COMPOSER_DEFER_ESCALATED,
+        COMPOSER_DEFER_ESCALATED_NOTICED,
+    )
 
     pass3 = run_dispatcher_pass_legacy_sweep(store)
     assert pass3["escalated"] == 0
