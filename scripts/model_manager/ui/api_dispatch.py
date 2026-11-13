@@ -530,10 +530,10 @@ async def execute(
             return _whoami()
 
         case "fleet_sync_restart":
-            return await _fleet(ctl, build=False, scope=str(params.get("scope", "all")))
+            return await _fleet(ctl, build=False, params=params)
 
         case "fleet_rebuild_deploy":
-            return await _fleet(ctl, build=True, scope=str(params.get("scope", "all")))
+            return await _fleet(ctl, build=True, params=params)
 
         case _:
             raise ValueError(
@@ -1162,7 +1162,21 @@ def _list_restart_intents(
     return list_restart_intents(ctl.restart_intent_store, service=service)
 
 
-async def _fleet(ctl: ServiceController, *, build: bool, scope: str) -> dict[str, Any]:
+def _fleet_optional_identity(params: dict[str, Any]) -> str | None:
+    """Pass-through caller identity for fleet attribution (AC3); absent → None."""
+    dispatch_id = _optional_attr_str(params, "caller_dispatch_id")
+    if dispatch_id:
+        return dispatch_id
+    for key in ("caller_agent", "from_agent", "agent", "caller"):
+        val = _optional_attr_str(params, key)
+        if val:
+            return val
+    return None
+
+
+async def _fleet(
+    ctl: ServiceController, *, build: bool, params: dict[str, Any]
+) -> dict[str, Any]:
     """Drive a headless fleet operation; agents observe progress via fleet.* events.
 
     Uses a no-op progress sink: the per-node log stream is a TUI affordance, while
@@ -1170,9 +1184,37 @@ async def _fleet(ctl: ServiceController, *, build: bool, scope: str) -> dict[str
     outcome an agent needs. Phase 4 replaces the no-op sink with a streaming bridge.
     """
     from .controller.fleet import FleetOrchestrator, NullFleetSink
+    from .controller.fleet_single_flight import FleetOperationInProgressError
 
+    scope = str(params.get("scope", "all"))
     orch = FleetOrchestrator(ctl=ctl, root=ctl.root, sink=NullFleetSink())
-    result = await orch.sync_restart_all(build=build, scope=scope)
+    try:
+        result = await orch.sync_restart_all(
+            build=build,
+            scope=scope,
+            caller=_fleet_optional_identity(params),
+            reason=_optional_attr_str(params, "reason"),
+        )
+    except FleetOperationInProgressError as busy:
+        from .controller.fleet_decision_events import record_fleet_operation_rejected
+
+        requested = busy.requested_operation or (
+            "rebuild_deploy" if build else "sync_restart"
+        )
+        caller = _fleet_optional_identity(params)
+        reason = _optional_attr_str(params, "reason")
+        await record_fleet_operation_rejected(
+            operation=requested,
+            running_operation=busy.running_operation,
+            caller=caller,
+            reason=reason,
+        )
+        return {
+            "status": "busy",
+            "error": "fleet_operation_in_progress",
+            "running_operation": busy.running_operation,
+            "message": str(busy),
+        }
     return {
         "status": "ok" if result.success else "partial",
         "operation": result.operation,
