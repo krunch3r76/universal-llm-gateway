@@ -149,6 +149,7 @@ def escalate_composer_deferred_on_sweep(store: Any, *, stamp: str | None = None)
     """
     from agent_bus_store.db.endpoint_wake_attempts import (
         COMPOSER_DEFER_DROP_NOTICED,
+        DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS,
         composer_defer_over_cap,
         schedule_composer_defer_retry,
         terminal_drop_composer_defer_row,
@@ -168,13 +169,30 @@ def escalate_composer_deferred_on_sweep(store: Any, *, stamp: str | None = None)
             select_extra += ", created_at"
         if "subscription_id" in cols:
             select_extra += ", subscription_id"
+        if "wake_next_attempt_at" in cols:
+            select_extra += ", wake_next_attempt_at"
+        where_extra = ""
+        query_params: list[Any] = [COMPOSER_DEFER_SWEEP]
+        if "wake_next_attempt_at" in cols and "wake_attempt_count" in cols:
+            where_extra = (
+                " AND (COALESCE(wake_attempt_count, 0) >= ? "
+                "OR wake_next_attempt_at IS NULL "
+                "OR datetime(wake_next_attempt_at) <= datetime(?))"
+            )
+            query_params.extend([DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS, stamp])
+        elif "wake_next_attempt_at" in cols:
+            where_extra = (
+                " AND (wake_next_attempt_at IS NULL "
+                "OR datetime(wake_next_attempt_at) <= datetime(?))"
+            )
+            query_params.append(stamp)
         rows = conn.execute(
             "SELECT id, agent, thread_id, turn_number, reason, decided_by_rule"
             f"{select_extra} FROM endpoint_wake_ledger "
             "WHERE state='pending' AND decided_by_rule=? "
             "AND lower(trim(agent)) <> 'orion' "
-            "ORDER BY id",
-            (COMPOSER_DEFER_SWEEP,),
+            f"{where_extra} ORDER BY id",
+            tuple(query_params),
         ).fetchall()
         if not rows:
             return 0
@@ -191,12 +209,26 @@ def escalate_composer_deferred_on_sweep(store: Any, *, stamp: str | None = None)
                 drop_rows.extend(group)
             else:
                 retry_rows.append(live)
+        pending_notices: list[dict[str, Any]] = []
         for item in drop_rows:
             if str(item.get("decided_by_rule") or "") == COMPOSER_DEFER_DROP_NOTICED:
                 continue
-            terminal_drop_composer_defer_row(conn, item, stamp=stamp, store=store)
+            terminal_drop_composer_defer_row(
+                conn, item, stamp=stamp, pending_notices=pending_notices
+            )
         schedule_composer_defer_retry(conn, retry_rows, stamp=stamp)
-        return len(drop_rows)
+        dropped = len(drop_rows)
+    stamp_fn = getattr(store, "create_turn", None)
+    if stamp_fn is not None:
+        for notice in pending_notices:
+            try:
+                stamp_fn(**notice)
+            except Exception:
+                logger.exception(
+                    "composer_defer drop notice failed row=%s",
+                    notice.get("wake_row_id"),
+                )
+    return dropped
 
 
 def notify_composer_empty_for_target(
@@ -245,7 +277,9 @@ def defer_path_avoids_wall_clock() -> bool:
     source += inspect.getsource(notify_composer_empty_for_target)
     source += inspect.getsource(composer_defer_blocks_claim)
     return not re.search(r"\btime\.(?:time|monotonic|sleep)\b", source) and (
-        "datetime(" not in source or "datetime('now')" in source
+        "datetime(" not in source
+        or "datetime('now')" in source
+        or "datetime(wake_next_attempt_at)" in source
     )
 
 

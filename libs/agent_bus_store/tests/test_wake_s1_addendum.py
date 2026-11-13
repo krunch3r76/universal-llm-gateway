@@ -24,7 +24,6 @@ from agent_bus_store.db.endpoint_wake_ledger import (
 )
 from agent_bus_store.testing.wake_cursor_test_support import rewind_wake_cursor_for_test
 from bus_watch.endpoint_wake_composer_defer import (
-    COMPOSER_DEFER_ARMED,
     COMPOSER_DEFER_SWEEP,
     escalate_composer_deferred_on_sweep,
     finalize_composer_defer_pass,
@@ -204,7 +203,7 @@ def test_composer_defer_stays_pending_until_attempt_cap(db: None) -> None:
             (thread,),
         ).fetchone()
     assert row["state"] == "pending"
-    assert row["decided_by_rule"] == COMPOSER_DEFER_ARMED
+    assert row["decided_by_rule"] is None
     assert row["wake_next_attempt_at"]
 
 
