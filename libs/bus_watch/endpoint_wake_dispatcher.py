@@ -2055,6 +2055,23 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         _record_scan_drops_safe(drops)
 
 
+def _prepend_missed_for_subscription(sub: dict[str, Any], paste_text: str) -> str:
+    sid = sub.get("id")
+    if sid is None:
+        return paste_text
+    from agent_bus_store.db.connection import write_connect
+    from agent_bus_store.db.endpoint_wake_attempts import prepend_missed_to_paste
+    from agent_bus_store.db.endpoint_wake_ledger import _now
+
+    with write_connect() as conn:
+        return prepend_missed_to_paste(
+            conn,
+            subscription_id=int(sid),
+            paste_text=paste_text,
+            stamp=_now(None),
+        )
+
+
 def _display_post(
     row: dict[str, Any],
     sub: dict[str, Any],
@@ -3281,7 +3298,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         and str(primary["thread_id"]) == "19627"
         and str(sub.get("surface") or "") == "cursor"
     ):
-        paste_text = exchange_lines(rows)
+        paste_text = _prepend_missed_for_subscription(sub, exchange_lines(rows))
         state, reason = _display_post(primary, sub, turn_arg, text=paste_text)
     elif len(by_thread) > 1:
         state, reason = _display_post(

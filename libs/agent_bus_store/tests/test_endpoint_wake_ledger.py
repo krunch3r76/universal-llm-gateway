@@ -1987,6 +1987,12 @@ def test_escalate_composer_deferred_stamp_fn_outside_write_connect_no_deadlock(
             assert nested_ok["ok"]
             return {"ok": True}
 
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET wake_attempt_count=12, created_at=datetime('now'), "
+            "enqueued_at=datetime('now') WHERE thread_id=?",
+            (thread,),
+        )
     assert escalate_composer_deferred_on_sweep(_Store()) == 1
 
 

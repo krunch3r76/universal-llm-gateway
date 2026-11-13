@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
+from agent_bus_store.db.endpoint_wake_ledger import _now
 
 from bus_watch.endpoint_wake_composer_defer import (
     COMPOSER_DEFER_ESCALATED,
-    COMPOSER_DEFER_ESCALATED_NOTICED,
     COMPOSER_DEFER_SWEEP,
     escalate_composer_deferred_on_sweep,
     notify_composer_empty_for_target,
@@ -52,7 +52,7 @@ def _seed_sweep_eligible_row(
                 turn_id,
                 number,
                 reason,
-                "2020-01-01 00:00:00",
+                _now(None),
                 COMPOSER_DEFER_SWEEP,
             ),
         )
@@ -78,7 +78,7 @@ def _seed_sweep_eligible_same_turn_id(
                 turn_id,
                 turn_number,
                 reason,
-                "2020-01-01 00:00:00",
+                _now(None),
                 COMPOSER_DEFER_SWEEP,
             ),
         )
@@ -105,7 +105,7 @@ class _RecordingStore:
         return {"ok": True}
 
 
-def test_escalate_many_rows_one_turn_single_notice(db: None) -> None:
+def test_escalate_many_rows_one_turn_schedules_retry_not_refuse(db: None) -> None:
     detail = create_thread(thread_id=None, slug="b1-dedup-one-turn")
     assert detail is not None
     thread = str(detail["id"])
@@ -113,53 +113,83 @@ def test_escalate_many_rows_one_turn_single_notice(db: None) -> None:
     for _ in range(3):
         _seed_sweep_eligible_row(thread, turn_number=shared_turn)
     store = _RecordingStore()
-    refused = escalate_composer_deferred_on_sweep(store)
-    assert refused == 3
-    assert len(store.posts) == 1
-    assert store.posts[0]["to_agent"] == "maestro"
-    assert store.posts[0]["subject"] == _ESCALATION_SUBJECT
-    body = store.posts[0]["body"]
-    assert "count=3" in body
+    dropped = escalate_composer_deferred_on_sweep(store)
+    assert dropped == 0
+    assert len(store.posts) == 0
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, state, decided_by_rule FROM endpoint_wake_ledger "
+            "SELECT id, state, decided_by_rule, wake_next_attempt_at FROM endpoint_wake_ledger "
             "WHERE thread_id=? ORDER BY id",
             (thread,),
         ).fetchall()
     assert len(rows) == 3
-    assert all(r["state"] == "refused" for r in rows)
-    noticed = [
-        r for r in rows if r["decided_by_rule"] == COMPOSER_DEFER_ESCALATED_NOTICED
-    ]
-    escalated = [r for r in rows if r["decided_by_rule"] == COMPOSER_DEFER_ESCALATED]
-    assert len(noticed) == 1
-    assert len(escalated) == 2
-    assert int(noticed[0]["id"]) == int(rows[0]["id"])
+    assert all(r["state"] == "pending" for r in rows)
+    assert sum(1 for r in rows if r["wake_next_attempt_at"]) == 3
 
 
-def test_escalate_second_pass_no_notice(db: None) -> None:
+def test_escalate_drop_at_cap_one_notice_per_row(db: None) -> None:
+    from agent_bus_store.db.endpoint_wake_attempts import (
+        COMPOSER_DEFER_DROP_NOTICED,
+        DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS,
+    )
+
+    detail = create_thread(thread_id=None, slug="b1-drop-cap")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_sweep_eligible_row(thread, turn_number=88)
+    with connect() as conn:
+        row_id = int(
+            conn.execute(
+                "SELECT id FROM endpoint_wake_ledger WHERE thread_id=? LIMIT 1", (thread,)
+            ).fetchone()["id"]
+        )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET wake_attempt_count=? WHERE thread_id=?",
+            (DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS, thread),
+        )
+    store = _RecordingStore()
+    assert escalate_composer_deferred_on_sweep(store) == 1
+    assert len(store.posts) == 1
+    assert store.posts[0]["subject"] == _ESCALATION_SUBJECT
+    assert f"wake_row_id={row_id}" in store.posts[0]["body"]
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, drop_reason, decided_by_rule FROM endpoint_wake_ledger WHERE id=?",
+            (row_id,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["drop_reason"] == "dropped_cap"
+    assert row["decided_by_rule"] == COMPOSER_DEFER_DROP_NOTICED
+    assert escalate_composer_deferred_on_sweep(store) == 0
+    assert len(store.posts) == 1
+
+
+def test_escalate_second_pass_retries_without_notice(db: None) -> None:
     detail = create_thread(thread_id=None, slug="b1-second-pass")
     assert detail is not None
     thread = str(detail["id"])
     _seed_sweep_eligible_row(thread, turn_number=7)
     store = _RecordingStore()
-    assert escalate_composer_deferred_on_sweep(store) == 1
-    assert len(store.posts) == 1
     assert escalate_composer_deferred_on_sweep(store) == 0
-    assert len(store.posts) == 1
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET decided_by_rule=? WHERE thread_id=?",
+            (COMPOSER_DEFER_SWEEP, thread),
+        )
+    assert escalate_composer_deferred_on_sweep(store) == 0
+    assert len(store.posts) == 0
 
 
-def test_escalate_two_turns_two_notices(db: None) -> None:
+def test_escalate_two_turns_no_notice_until_drop(db: None) -> None:
     detail = create_thread(thread_id=None, slug="b1-two-turns")
     assert detail is not None
     thread = str(detail["id"])
     _seed_sweep_eligible_row(thread, turn_number=1)
     _seed_sweep_eligible_row(thread, turn_number=2)
     store = _RecordingStore()
-    assert escalate_composer_deferred_on_sweep(store) == 2
-    assert len(store.posts) == 2
-    subjects = {p["subject"] for p in store.posts}
-    assert subjects == {_ESCALATION_SUBJECT}
+    assert escalate_composer_deferred_on_sweep(store) == 0
+    assert len(store.posts) == 0
 
 
 def test_notify_empty_rearms_escalated(db: None) -> None:
@@ -168,7 +198,13 @@ def test_notify_empty_rearms_escalated(db: None) -> None:
     thread = str(detail["id"])
     _seed_sweep_eligible_row(thread, turn_number=9)
     store = _RecordingStore()
-    assert escalate_composer_deferred_on_sweep(store) == 1
+    assert escalate_composer_deferred_on_sweep(store) == 0
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET state='refused', decided_by_rule=? "
+            "WHERE thread_id=? AND turn_number=9",
+            (COMPOSER_DEFER_ESCALATED, thread),
+        )
     _seed_sweep_eligible_row(thread, turn_number=10)
     with write_connect() as conn:
         conn.execute(
@@ -189,29 +225,34 @@ def test_notify_empty_rearms_escalated(db: None) -> None:
     assert rearmed["finished_at"] is None
 
 
-def test_escalate_new_row_after_prior_marker_no_second_notice(db: None) -> None:
+def test_escalate_new_row_after_prior_retry_no_second_notice(db: None) -> None:
     detail = create_thread(thread_id=None, slug="b1-durable-marker")
     assert detail is not None
     thread = str(detail["id"])
     turn_num = 55
-    for _ in range(3):
-        _seed_sweep_eligible_row(thread, turn_number=turn_num)
-    store = _RecordingStore()
-    assert escalate_composer_deferred_on_sweep(store) == 3
-    assert len(store.posts) == 1
     _seed_sweep_eligible_row(thread, turn_number=turn_num)
+    store = _RecordingStore()
+    assert escalate_composer_deferred_on_sweep(store) == 0
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET decided_by_rule=?, wake_attempt_count=12 "
+            "WHERE thread_id=? AND turn_number=?",
+            (COMPOSER_DEFER_SWEEP, thread, turn_num),
+        )
     assert escalate_composer_deferred_on_sweep(store) == 1
     assert len(store.posts) == 1
-    with connect() as conn:
-        n_refused = conn.execute(
-            "SELECT COUNT(*) AS n FROM endpoint_wake_ledger "
-            "WHERE thread_id=? AND turn_number=? AND state='refused'",
-            (thread, turn_num),
-        ).fetchone()
-    assert int(n_refused["n"]) == 4
+    _seed_sweep_eligible_row(thread, turn_number=turn_num)
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET decided_by_rule=?, wake_attempt_count=12 "
+            "WHERE thread_id=? AND turn_number=? AND state='pending'",
+            (COMPOSER_DEFER_SWEEP, thread, turn_num),
+        )
+    assert escalate_composer_deferred_on_sweep(store) == 1
+    assert len(store.posts) == 2
 
 
-def test_escalate_two_agents_one_turn_id_one_notice(db: None) -> None:
+def test_escalate_two_agents_one_turn_id_retries_separately(db: None) -> None:
     detail = create_thread(thread_id=None, slug="b1-two-agents-one-turn")
     assert detail is not None
     thread = str(detail["id"])
@@ -222,63 +263,53 @@ def test_escalate_two_agents_one_turn_id_one_notice(db: None) -> None:
         subject="SWEEP|shared",
         body="shared",
     )
-    id_a = _seed_sweep_eligible_same_turn_id(
+    _seed_sweep_eligible_same_turn_id(
         thread, turn_id=turn_id, turn_number=number, agent="grok-bot-gc1"
     )
-    id_b = _seed_sweep_eligible_same_turn_id(
+    _seed_sweep_eligible_same_turn_id(
         thread, turn_id=turn_id, turn_number=number, agent="grok-bot-gc2"
     )
     store = _RecordingStore()
-    assert escalate_composer_deferred_on_sweep(store) == 2
-    assert len(store.posts) == 1
-    body = str(store.posts[0]["body"])
-    assert "grok-bot-gc1" in body
-    assert "grok-bot-gc2" in body
-    assert f"id={id_a}" in body
-    assert f"id={id_b}" in body
-    assert "count=2" in body
+    assert escalate_composer_deferred_on_sweep(store) == 0
+    assert len(store.posts) == 0
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, decided_by_rule FROM endpoint_wake_ledger WHERE thread_id=? "
+            "SELECT id, state, wake_next_attempt_at FROM endpoint_wake_ledger WHERE thread_id=? "
             "ORDER BY id",
             (thread,),
         ).fetchall()
     assert len(rows) == 2
-    rep_id = min(id_a, id_b)
-    by_id = {int(r["id"]): r["decided_by_rule"] for r in rows}
-    assert by_id[rep_id] == COMPOSER_DEFER_ESCALATED_NOTICED
-    other_id = id_a + id_b - rep_id
-    assert by_id[other_id] == COMPOSER_DEFER_ESCALATED
+    assert all(r["state"] == "pending" for r in rows)
+    assert all(r["wake_next_attempt_at"] for r in rows)
 
 
-def test_escalate_create_turn_raises_rows_still_refused(db: None) -> None:
+def test_escalate_create_turn_raises_row_still_dropped(db: None) -> None:
+    from agent_bus_store.db.endpoint_wake_attempts import (
+        COMPOSER_DEFER_DROP_NOTICED,
+        DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS,
+    )
+
     detail = create_thread(thread_id=None, slug="b1-stamp-fail")
     assert detail is not None
     thread = str(detail["id"])
     turn_num = 3
     _seed_sweep_eligible_row(thread, turn_number=turn_num)
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET wake_attempt_count=? WHERE thread_id=?",
+            (DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS, thread),
+        )
 
     class _BrokenStore:
         def create_turn(self, **kwargs: object) -> dict:
             raise RuntimeError("stamp failed")
 
-    refused = escalate_composer_deferred_on_sweep(_BrokenStore())
-    assert refused == 1
+    dropped = escalate_composer_deferred_on_sweep(_BrokenStore())
+    assert dropped == 1
     with connect() as conn:
         row = conn.execute(
             "SELECT state, decided_by_rule FROM endpoint_wake_ledger WHERE thread_id=?",
             (thread,),
         ).fetchone()
     assert row["state"] == "refused"
-    assert row["decided_by_rule"] == COMPOSER_DEFER_ESCALATED
-    _seed_sweep_eligible_row(thread, turn_number=turn_num)
-    store = _RecordingStore()
-    assert escalate_composer_deferred_on_sweep(store) == 1
-    assert len(store.posts) == 1
-    with connect() as conn:
-        noticed = conn.execute(
-            "SELECT COUNT(*) AS n FROM endpoint_wake_ledger "
-            "WHERE thread_id=? AND decided_by_rule=?",
-            (thread, COMPOSER_DEFER_ESCALATED_NOTICED),
-        ).fetchone()
-    assert int(noticed["n"]) == 1
+    assert row["decided_by_rule"] == COMPOSER_DEFER_DROP_NOTICED

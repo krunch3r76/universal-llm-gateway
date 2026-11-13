@@ -252,6 +252,12 @@ def advance_scan(
                         item.get("decided_by_rule"),
                     ),
                 )
+            if "enqueued_at" in ledger_cols and state == "pending":
+                conn.execute(
+                    "UPDATE endpoint_wake_ledger SET enqueued_at=COALESCE(enqueued_at, ?) "
+                    "WHERE agent=? AND thread_id=? AND turn_id=?",
+                    (stamp, item["agent"], item["thread_id"], item["turn_id"]),
+                )
         conn.execute(
             "UPDATE endpoint_wake_cursor SET high_water_turn_id=?, updated_at=? "
             "WHERE consumer=?",
@@ -608,7 +614,19 @@ def _skip_reason(conn: sqlite3.Connection, row: sqlite3.Row) -> str | None:
     agent = str(row["agent"])
     thread_id = str(row["thread_id"])
     turn_number = int(row["turn_number"])
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(endpoint_wake_ledger)")}
+    attempt_count = 0
+    if "wake_attempt_count" in cols:
+        try:
+            attempt_count = int(row["wake_attempt_count"] or 0)
+        except (TypeError, ValueError):
+            attempt_count = 0
+    last_fail = None
+    if "last_failure_reason" in cols:
+        last_fail = row["last_failure_reason"]
     if turn is not None and turn["read_at"]:
+        if attempt_count > 0 and last_fail:
+            return "read_after_failed_attempt"
         return "already_read"
     if _owed_wake_covers_turn(
         agent=agent, thread_id=thread_id, turn_number=turn_number
@@ -654,8 +672,7 @@ def _orion_composer_defer_claim_ready_sql(alias: str, *, in_sql: str) -> str:
     """Orion bounded-retry pending rows wait until ``wake_next_attempt_at`` (026+)."""
     ap = f"{alias}." if alias else ""
     return f"""(
-      lower(trim({ap}agent)) != 'orion'
-      OR {ap}reason NOT IN {in_sql}
+      {ap}reason NOT IN {in_sql}
       OR {ap}wake_next_attempt_at IS NULL
       OR datetime({ap}wake_next_attempt_at) <= datetime(?)
     )"""
@@ -2136,8 +2153,15 @@ def record_wake_result(
                     except (TypeError, ValueError):
                         pass
             ac_val = max(1, comp_prior + 1)
-            next_wall = _shift(stamp, orion_deferred_retry_delay_s(ac_val))
             orion_agent = normalize_bus_address(str(eligible[0]["agent"])) == "orion"
+            if orion_agent:
+                next_wall = _shift(stamp, orion_deferred_retry_delay_s(ac_val))
+            else:
+                from agent_bus_store.db.endpoint_wake_attempts import (
+                    display_composer_defer_retry_delay_s,
+                )
+
+                next_wall = _shift(stamp, display_composer_defer_retry_delay_s(ac_val))
             exhausted_orion = orion_agent and orion_bounded_defer_reason(
                 merge_reason
             ) and ac_val > ORION_COMPOSER_DEFER_MAX_ATTEMPTS
@@ -2192,19 +2216,40 @@ def record_wake_result(
                     f"WHERE id IN ({','.join('?' * len(ids))})",
                     (*release_params, *ids),
                 )
-        try:
-            from agent_bus_store.events.publisher import emit
+        from agent_bus_store.db.endpoint_wake_attempts import (
+            patch_ledger_timestamps,
+            record_attempt_rows,
+        )
 
-            emit(
-                "endpoint_wake.lifecycle",
-                {
-                    "wake_id": wake_id,
-                    "outcome": outcome_in,
-                    "reason": merge_reason,
-                    "subscription_id": sub_for_row,
-                    "attempt_count": attempt_count,
-                    "wake_next_attempt_at": next_attempt,
-                },
+        started = str(last_attempt or stamp)
+        record_attempt_rows(
+            conn,
+            row_ids=ids,
+            attempt_no=int(attempt_count or 1),
+            outcome=outcome_in,
+            reason_code=merge_reason or reason_s or None,
+            started_at=started,
+            finished_at=stamp,
+            wake_detail=merged_detail,
+        )
+        patch_ledger_timestamps(
+            conn,
+            row_ids=ids,
+            outcome=outcome_in,
+            reason=merge_reason or reason_s,
+            stamp=stamp,
+            cols=cols,
+        )
+        try:
+            from bus_watch.events import emit_endpoint_wake_lifecycle
+
+            emit_endpoint_wake_lifecycle(
+                wake_id=wake_id,
+                outcome=outcome_in,
+                reason=merge_reason,
+                subscription_id=sub_for_row,
+                attempt_count=attempt_count,
+                wake_next_attempt_at=next_attempt,
             )
         except Exception:
             pass

@@ -12,7 +12,6 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from ..events.lane_bound import emit_lane_bound
-from ..house_paste_lane_gate import paste_lane_for
 from ..lane_roles import parse_lane_role
 from ..thread_classification import liaison_tag_on_child_without_root
 from .connection import connect, write_connect
@@ -245,3 +244,6 @@ def lane_bind_incomplete_envelope(*, provided: list[str]) -> dict[str, object]:
         "source": "agent_bus_store.routes.threads",
         "data": {"provided": provided},
     }
+
+
+from agent_bus_store.house_paste_lane_gate import paste_lane_for  # noqa: E402

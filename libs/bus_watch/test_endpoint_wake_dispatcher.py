@@ -5078,6 +5078,14 @@ def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
             return {"ok": True}
 
     store = _Store()
+    from agent_bus_store.db.connection import write_connect
+
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET wake_attempt_count=12, created_at=datetime('now'), "
+            "enqueued_at=datetime('now') WHERE thread_id=?",
+            (thread,),
+        )
     assert escalate_composer_deferred_on_sweep(store) == 1
     assert len(_Store.posts) == 1
     assert _Store.posts[0]["to_agent"] == "maestro"
@@ -5087,10 +5095,9 @@ def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
             (thread,),
         ).fetchone()
     assert row["state"] == "refused"
-    assert row["decided_by_rule"] in (
-        COMPOSER_DEFER_ESCALATED,
-        COMPOSER_DEFER_ESCALATED_NOTICED,
-    )
+    from agent_bus_store.db.endpoint_wake_attempts import COMPOSER_DEFER_DROP_NOTICED
+
+    assert row["decided_by_rule"] == COMPOSER_DEFER_DROP_NOTICED
     assert escalate_composer_deferred_on_sweep(store) == 0
     assert len(_Store.posts) == 1
 
@@ -5184,25 +5191,29 @@ def test_legacy_composer_not_empty_two_pass_escalation(db: None) -> None:
     assert row["state"] == "pending"
     assert row["decided_by_rule"] == COMPOSER_DEFER_SWEEP
 
+    from agent_bus_store.db.connection import write_connect
+
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET created_at=datetime('now'), enqueued_at=datetime('now') "
+            "WHERE thread_id=?",
+            (thread,),
+        )
     pass2 = run_dispatcher_pass_legacy_sweep(store)
     assert pass2["composer_defer_armed"] == 0
-    assert pass2["escalated"] == 1
-    assert len(_Store.posts) == 1
-    assert _Store.posts[0]["to_agent"] == "maestro"
+    assert pass2["escalated"] == 0
+    assert len(_Store.posts) == 0
     with connect() as conn:
         row = conn.execute(
-            "SELECT state, decided_by_rule FROM endpoint_wake_ledger WHERE thread_id=?",
+            "SELECT state, decided_by_rule, wake_next_attempt_at FROM endpoint_wake_ledger WHERE thread_id=?",
             (thread,),
         ).fetchone()
-    assert row["state"] == "refused"
-    assert row["decided_by_rule"] in (
-        COMPOSER_DEFER_ESCALATED,
-        COMPOSER_DEFER_ESCALATED_NOTICED,
-    )
+    assert row["state"] == "pending"
+    assert row["wake_next_attempt_at"]
 
     pass3 = run_dispatcher_pass_legacy_sweep(store)
     assert pass3["escalated"] == 0
-    assert len(_Store.posts) == 1
+    assert len(_Store.posts) == 0
 
 
 def test_normalize_legacy_pending_wakes_idempotent(db: None) -> None:
