@@ -52,6 +52,18 @@ _VALID_ACTIONS = frozenset(
 
 _GIW_FORCE_REFUSED_REASON = "giw_force_refused"
 _GIW_LIFECYCLE_FORCE_ACTIONS = frozenset({"stop", "restart", "sync_restart"})
+_ATTRIBUTED_LIFECYCLE_ACTIONS = frozenset(
+    {
+        "start",
+        "stop",
+        "restart",
+        "sync_restart",
+        "rebuild",
+        "recycle_giw",
+        "fleet_sync_restart",
+        "fleet_rebuild_deploy",
+    }
+)
 
 
 def _conductor_descended_manage_refused(dispatch_id: str, action: str) -> bool:
@@ -737,6 +749,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
         force_reason_text = (force_reason or "").strip()
         if force_reason_text:
             params["force_reason"] = force_reason_text
+        reason_text = (reason or "").strip()
+        if reason_text:
+            params["reason"] = reason_text
         if service == "mcp" and action in {
             "stop",
             "restart",
@@ -752,9 +767,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
             params["wait_for_boundary"] = bool(wait_for_boundary)
             if float(intent_ttl_s or 0.0) > 0.0:
                 params["intent_ttl_s"] = float(intent_ttl_s)
-        if effective_caller and action in {"stop", "restart", "sync_restart"}:
+        if effective_caller and action in _ATTRIBUTED_LIFECYCLE_ACTIONS:
             params["caller_dispatch_id"] = effective_caller
-        if effective_thread and action in {"stop", "restart", "sync_restart"}:
+        if effective_thread and action in _ATTRIBUTED_LIFECYCLE_ACTIONS:
             params["caller_thread_id"] = effective_thread
         if action == "cancel_restart_intent":
             if intent_id:

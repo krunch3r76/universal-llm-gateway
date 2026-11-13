@@ -168,6 +168,32 @@ async def emit_fleet_cdp_ask_restart_decision(
     )
 
 
+async def emit_manage_lifecycle_requested(
+    *,
+    action: str,
+    service: str | None,
+    reason: str | None,
+    caller: str | None,
+    caller_thread_id: str | None,
+    force: bool | None,
+    peer_pid: int | None,
+    peer_uid: int | None,
+) -> None:
+    await _emit(
+        "manage.lifecycle.requested",
+        {
+            "action": action,
+            "service": service,
+            "reason": reason,
+            "caller": caller,
+            "caller_thread_id": caller_thread_id,
+            "force": force,
+            "peer_pid": peer_pid,
+            "peer_uid": peer_uid,
+        },
+    )
+
+
 async def emit_fleet_operation_completed(
     *,
     operation: str,

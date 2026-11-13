@@ -11,6 +11,7 @@ from scripts.model_manager.observation_event import (
     emit_manage_restart_window_cleared,
     emit_manage_restart_window_opened,
 )
+from scripts.model_manager.ui.manage_lifecycle_observability import manage_window_reason
 
 from .propagation_settle_hook import invoke_propagation_settle_for_service
 from .restart_window_store import (
@@ -129,7 +130,9 @@ async def lifecycle_with_restart_window(
     lifecycle: Any,
 ) -> str:
     """Open a window immediately before the first stop, clear after lifecycle."""
-    window = await open_service_window(store, service, reason=f"manage {action}")
+    window = await open_service_window(
+        store, service, reason=manage_window_reason(action)
+    )
     settle_boundary = time.monotonic()
     clear_reason = "lifecycle failed"
     try:

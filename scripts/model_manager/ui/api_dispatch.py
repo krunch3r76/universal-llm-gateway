@@ -109,8 +109,56 @@ async def execute(
     params: dict[str, Any],
     *,
     event_bus: EventBus | None = None,
+    peer_pid: int | None = None,
+    peer_uid: int | None = None,
 ) -> dict[str, Any]:
     """Dispatch a validated JSON-RPC method to ServiceController."""
+    from .manage_lifecycle_observability import (
+        LIFECYCLE_API_ACTIONS,
+        bind_manage_request_params,
+        manage_caller_identity,
+        manage_caller_reason,
+        record_manage_lifecycle_requested,
+        reset_manage_request_params,
+    )
+
+    ctx_token = bind_manage_request_params(params)
+    try:
+        if method in LIFECYCLE_API_ACTIONS:
+            svc_name = service.strip() if service else None
+            if method in ("fleet_sync_restart", "fleet_rebuild_deploy"):
+                svc_name = None
+            # AC2: observability must never change lifecycle outcomes.
+            await record_manage_lifecycle_requested(
+                action=method,
+                service=svc_name,
+                reason=manage_caller_reason(params),
+                caller=manage_caller_identity(params),
+                caller_thread_id=caller_thread_from_manage_request(params),
+                force=(
+                    bool(params["force"])
+                    if "force" in params and params.get("force") is not None
+                    else None
+                ),
+                peer_pid=peer_pid,
+                peer_uid=peer_uid,
+            )  # record_* suppresses emit failures
+        return await _execute_dispatch(
+            ctl, method, service, params, event_bus=event_bus
+        )
+    finally:
+        reset_manage_request_params(ctx_token)
+
+
+async def _execute_dispatch(
+    ctl: ServiceController,
+    method: str,
+    service: str,
+    params: dict[str, Any],
+    *,
+    event_bus: EventBus | None = None,
+) -> dict[str, Any]:
+    """Inner dispatch after lifecycle observability hooks."""
     svc = ctl.service_state
 
     match method:
@@ -1162,18 +1210,6 @@ def _list_restart_intents(
     return list_restart_intents(ctl.restart_intent_store, service=service)
 
 
-def _fleet_optional_identity(params: dict[str, Any]) -> str | None:
-    """Pass-through caller identity for fleet attribution (AC3); absent → None."""
-    dispatch_id = _optional_attr_str(params, "caller_dispatch_id")
-    if dispatch_id:
-        return dispatch_id
-    for key in ("caller_agent", "from_agent", "agent", "caller"):
-        val = _optional_attr_str(params, key)
-        if val:
-            return val
-    return None
-
-
 async def _fleet(
     ctl: ServiceController, *, build: bool, params: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1185,6 +1221,10 @@ async def _fleet(
     """
     from .controller.fleet import FleetOrchestrator, NullFleetSink
     from .controller.fleet_single_flight import FleetOperationInProgressError
+    from .manage_lifecycle_observability import (
+        manage_caller_identity,
+        manage_caller_reason,
+    )
 
     scope = str(params.get("scope", "all"))
     orch = FleetOrchestrator(ctl=ctl, root=ctl.root, sink=NullFleetSink())
@@ -1192,8 +1232,8 @@ async def _fleet(
         result = await orch.sync_restart_all(
             build=build,
             scope=scope,
-            caller=_fleet_optional_identity(params),
-            reason=_optional_attr_str(params, "reason"),
+            caller=manage_caller_identity(params),
+            reason=manage_caller_reason(params),
         )
     except FleetOperationInProgressError as busy:
         from .controller.fleet_decision_events import record_fleet_operation_rejected
@@ -1201,7 +1241,7 @@ async def _fleet(
         requested = busy.requested_operation or (
             "rebuild_deploy" if build else "sync_restart"
         )
-        caller = _fleet_optional_identity(params)
+        caller = manage_caller_identity(params)
         reason = _optional_attr_str(params, "reason")
         await record_fleet_operation_rejected(
             operation=requested,
