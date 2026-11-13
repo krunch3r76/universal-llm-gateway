@@ -1232,6 +1232,7 @@ def test_fire_due_wakes_composer_defer_delivers_once_after_backoff_and_clear(
     from unittest.mock import patch
 
     from agent_bus_store.db.connection import write_connect
+
     from bus_watch.endpoint_wake_composer_defer import (
         escalate_composer_deferred_on_sweep,
         finalize_composer_defer_pass,
