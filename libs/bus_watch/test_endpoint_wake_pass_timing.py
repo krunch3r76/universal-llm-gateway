@@ -205,7 +205,7 @@ def test_display_post_records_cumulative_duration() -> None:
     with patch.object(
         disp,
         "_display_post_body",
-        return_value=("delivered", "ok"),
+        return_value=("delivered", "ok", None),
     ):
         disp._display_post({}, {}, 1)
         disp._display_post({}, {}, 2)

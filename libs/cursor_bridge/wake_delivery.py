@@ -106,7 +106,12 @@ def normalize_target(display: object, app: object) -> dict[str, Any]:
     if name == "grok":
         port = cdp_port_for_display(disp)
         if port is None:
-            return {"ok": False, "reason": "unknown_target", "display": disp, "app": name}
+            return {
+                "ok": False,
+                "reason": "unknown_target",
+                "display": disp,
+                "app": name,
+            }
         origin = container_cdp_origin(f"http://127.0.0.1:{port}")
         return {"ok": True, "display": disp, "app": name, "origin": origin}
     origin = _CURSOR_TARGETS.get((name, disp))
@@ -147,7 +152,59 @@ def _turn(value: object) -> int | str | list[int] | None:
 
 
 def _refuse(reason: str, **extra: Any) -> dict[str, Any]:
-    return {"ok": False, "reason": reason, "pasted": False, "delivered": False, **extra}
+    wake_detail = extra.pop("wake_detail", None)
+    out: dict[str, Any] = {
+        "ok": False,
+        "reason": reason,
+        "pasted": False,
+        "delivered": False,
+        **extra,
+    }
+    if isinstance(wake_detail, dict):
+        out["wake_detail"] = dict(wake_detail)
+        out.update({k: v for k, v in wake_detail.items() if k not in out})
+    return out
+
+
+async def _grok_roster_gate_or_refuse(
+    *,
+    ws_url: str,
+    disp: str,
+    app: str,
+    aid_s: str,
+    surface: dict[str, Any],
+    selected: bool,
+    verdict: dict[str, Any],
+    re_check_only: bool = False,
+) -> dict[str, Any] | None:
+    if app != "grok" or not aid_s:
+        return None
+    from cursor_bridge.grok_roster_paste_gate import (
+        evaluate_grok_roster_gate,
+        probe_grok_roster_sample,
+    )
+
+    draft = str(surface.get("composer_draft") or "")
+    sample = await probe_grok_roster_sample(ws_url, aid_s, composer_draft=draft)
+    allowed, reason, detail = evaluate_grok_roster_gate(
+        display=disp,
+        agent_id=aid_s,
+        sample=sample,
+        now=None if not re_check_only else None,
+    )
+    if allowed:
+        return None
+    return _refuse(
+        str(reason or "grok_roster_unreadable"),
+        display=disp,
+        app=app,
+        selected=selected,
+        wake_detail=detail,
+        active_title=verdict.get("active_title"),
+        expected_title=verdict.get("expected_title"),
+        expected_agent_id=verdict.get("expected_agent_id"),
+        active_agent_id=verdict.get("active_agent_id"),
+    )
 
 
 def _pick_page(pages: list[dict[str, str]], app: str) -> dict[str, str] | None:
@@ -506,6 +563,17 @@ async def _deliver_locked(
                 active_title=verdict.get("active_title"),
                 expected_title=verdict.get("expected_title"),
             )
+        roster_refuse = await _grok_roster_gate_or_refuse(
+            ws_url=ws_url,
+            disp=disp,
+            app=app,
+            aid_s=aid_s,
+            surface=surface,
+            selected=selected,
+            verdict=verdict,
+        )
+        if roster_refuse is not None:
+            return roster_refuse
         composer = _COMPOSER_JS.get(app)
         if composer is None:
             return {
@@ -528,6 +596,18 @@ async def _deliver_locked(
                     ),
                 )
             else:
+                roster_refuse = await _grok_roster_gate_or_refuse(
+                    ws_url=ws_url,
+                    disp=disp,
+                    app=app,
+                    aid_s=aid_s,
+                    surface=surface,
+                    selected=selected,
+                    verdict=verdict,
+                    re_check_only=True,
+                )
+                if roster_refuse is not None:
+                    return roster_refuse
                 sel = composer_selector(
                     app=app,
                     agent_id=str(verdict.get("expected_agent_id") or aid_s or ""),

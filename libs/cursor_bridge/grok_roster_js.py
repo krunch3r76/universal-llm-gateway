@@ -32,6 +32,25 @@ def _client() -> str:
     return f"(() => {{ {FIND_CLIENT} }})()"
 
 
+def js_roster_row_gate(agent_id: str) -> str:
+    """Read one roster row's run/composing flags for paste gating."""
+    aid = json.dumps(agent_id)
+    return f"""(async () => {{
+  const client = {_client()};
+  if (!client) return {{ok: false, code: "grok_client_missing"}};
+  const rows = client.roster?.snapshots?.get
+    ? (client.roster.snapshots.get()?.agents?.rows || [])
+    : [];
+  const row = rows.find((r) => String(r.id || "") === {aid});
+  if (!row) return {{ok: false, code: "roster_row_missing"}};
+  const out = {{ok: true, agent_id: {aid}}};
+  if ("isRunning" in row) out.isRunning = Boolean(row.isRunning);
+  if ("isComposingMessage" in row) out.isComposingMessage = Boolean(row.isComposingMessage);
+  if ("isRunningTurn" in row) out.isRunningTurn = Boolean(row.isRunningTurn);
+  return out;
+}})()"""
+
+
 def js_list(*, include_hidden: bool, include_retired: bool) -> str:
     """Roster rows plus ``currentAgentId``. Defaults keep hidden and drop retired."""
     ih = "true" if include_hidden else "false"
@@ -218,6 +237,7 @@ def js_retire(agent_id: str) -> str:
 __all__ = [
     "FIND_CLIENT",
     "RETIRED_SUFFIX",
+    "js_roster_row_gate",
     "js_confirm_spawn_sidebar_active",
     "js_ensure_hidden",
     "js_list",
