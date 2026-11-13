@@ -70,7 +70,29 @@ _PROBE_JS = r"""
     return !!el.querySelector('[aria-current="page"], [aria-selected="true"], [data-active="true"]');
   };
   const items = [];
+  let selectionAgentId = '';
+  try {
+    const root = document.getElementById('root') || document.body.firstElementChild;
+    const fk = root ? Object.keys(root).find(k => k.startsWith('__reactContainer') || k.startsWith('__reactFiber')) : null;
+    if (fk) {
+      const stack = [root[fk]];
+      const seen = new Set();
+      while (stack.length) {
+        const node = stack.pop();
+        if (!node || seen.has(node)) continue;
+        seen.add(node);
+        if (node.memoizedProps?.value?.selection) {
+          const sel = node.memoizedProps.value.selection?.snapshots?.get?.();
+          selectionAgentId = (sel?.currentAgentId || '').trim();
+          break;
+        }
+        if (node.child) stack.push(node.child);
+        if (node.sibling) stack.push(node.sibling);
+      }
+    }
+  } catch (_) {}
   const glassRows = Array.from(document.querySelectorAll('[data-perf-id="glass-sidebar-agent-row"]'));
+  const sandButtons = Array.from(document.querySelectorAll('button.sand-agent-item[data-agent-id]'));
   if (glassRows.length > 0) {
     for (const el of glassRows) {
       const trig = el.querySelector('.ui-sidebar-menu-button-trigger[role="button"]');
@@ -87,6 +109,17 @@ _PROBE_JS = r"""
         el.getAttribute('data-active') === 'true'
         || !!(trig && trig.getAttribute('aria-current') === 'page')
         || rowSelected(el);
+      items.push({text: line, selected: sel, agent_id: aid});
+      if (items.length >= 40) break;
+    }
+  } else if (sandButtons.length > 0) {
+    for (const btn of sandButtons) {
+      const aid = (btn.getAttribute('data-agent-id') || '').trim();
+      const line = (btn.getAttribute('aria-label') || '').split(',')[0].trim();
+      if (!line || line.length > 120) continue;
+      const sel =
+        btn.getAttribute('aria-current') === 'page'
+        || btn.getAttribute('data-active') === 'true';
       items.push({text: line, selected: sel, agent_id: aid});
       if (items.length >= 40) break;
     }
@@ -153,6 +186,7 @@ _PROBE_JS = r"""
     recent_messages: prose,
     message_turns,
     has_active_chat,
+    selection_agent_id: selectionAgentId,
   };
 })()
 """
@@ -233,6 +267,7 @@ def classify_surface(
     message_turns: list[dict[str, Any]] | None = None,
     has_active_chat: bool | None = None,
     ui_banner: dict[str, Any] | None = None,
+    selection_agent_id: str = "",
     surface_name: str = "cursor_electron",
     emit_events: bool = False,
     display: str | None = None,
@@ -264,12 +299,31 @@ def classify_surface(
         if item.get("selected") and active is None:
             active = text
             active_agent_id = aid
+    sel_store = str(selection_agent_id or "").strip()
+    if (
+        not active_agent_id
+        and sel_store
+        and has_active_chat
+        and any(
+            str(it.get("agent_id") or "").strip() == sel_store and it.get("selected")
+            for it in items
+        )
+    ):
+        active_agent_id = sel_store
+        for it in items:
+            if str(it.get("agent_id") or "").strip() == sel_store:
+                active = str(it.get("text") or "").strip() or active
+                break
+    elif not active_agent_id and sel_store and has_active_chat and not items:
+        active_agent_id = sel_store
     signed_out = any(label.strip().lower() in {"sign in", "log in"} for label in labels)
     if signed_out and not titles:
         state = "signed_out"
         active = None
         active_agent_id = ""
     elif titles:
+        state = "chat_list"
+    elif has_active_chat and (items or selection_agent_id):
         state = "chat_list"
     else:
         state = "unknown"
@@ -291,6 +345,7 @@ def classify_surface(
         "state": state,
         "active_title": active,
         "active_agent_id": active_agent_id,
+        "selection_agent_id": sel_store,
         "titles": titles,
         "title_counts": title_counts,
         "agent_ids": agent_ids,
@@ -365,6 +420,9 @@ def wake_decision(
             "titles": titles,
         }
     active_aid = str(surface.get("active_agent_id") or "").strip()
+    selection_aid = str(surface.get("selection_agent_id") or "").strip()
+    if aid and selection_aid == aid and active_aid != aid:
+        active_aid = selection_aid
     active_title = str(surface.get("active_title") or "").strip()
     if aid:
         if (
@@ -477,8 +535,12 @@ async def _read_surface(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
         message_turns=message_turns,
         has_active_chat=has_active_chat,
         ui_banner=ui_banner,
+        selection_agent_id=str(value.get("selection_agent_id") or ""),
         emit_events=False,
     )
+    sel_id = str(value.get("selection_agent_id") or "").strip()
+    if sel_id:
+        result["selection_agent_id"] = sel_id
     try:
         maybe_emit_browser_supervision(result["supervision"])
     except Exception:

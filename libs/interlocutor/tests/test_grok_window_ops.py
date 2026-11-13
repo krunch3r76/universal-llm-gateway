@@ -22,6 +22,12 @@ def test_resolve_display_10_grok_suffix() -> None:
     assert resolved.display == "10"  # type: ignore[union-attr]
 
 
+def test_resolve_display_14_bare() -> None:
+    resolved = resolve_grok_window_target("display:14")
+    assert resolved.kind == "display_grok_window"  # type: ignore[union-attr]
+    assert resolved.display == "14"  # type: ignore[union-attr]
+
+
 def test_read_steer_still_require_agent_id_on_9() -> None:
     out = resolve_target("display:9")
     assert out.code == "agent_id_required"  # type: ignore[union-attr]

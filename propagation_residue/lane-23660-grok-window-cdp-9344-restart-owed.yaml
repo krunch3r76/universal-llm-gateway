@@ -1,0 +1,7 @@
+# propagation_residue — lane-23660 packet:grok-window-cdp-allowlist-9344
+# Operator/conductor: restart after hub master land (LEAF seat recorded only).
+restart_owed:
+  - service: grok-window-edge
+reason: >-
+  CDP_PORT_ALLOWLIST now derives from grok-windows.json including display :14
+  port 9344; running edge process must reload config module.

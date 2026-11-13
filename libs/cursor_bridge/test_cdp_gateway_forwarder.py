@@ -115,10 +115,14 @@ def test_off_bridge_probe_does_not_open_cdp_ports(
     assert container_cdp_origin("http://127.0.0.1:9340", addresses=host) == (
         "http://127.0.0.1:9340"
     )
+    assert container_cdp_origin("http://127.0.0.1:9344", addresses=host) == (
+        "http://127.0.0.1:9344"
+    )
     assert bind_targets(host) == (
         ("172.18.0.1", 9338),
         ("172.18.0.1", 9339),
         ("172.18.0.1", 9340),
+        ("172.18.0.1", 9344),
         ("172.18.0.1", 19338),
     )
     assert bind_targets(frozenset({"172.18.0.5", "10.0.0.67"})) == ()
@@ -156,6 +160,19 @@ def test_bridge_client_rewrites_grok_display_ten_cdp(
     assert normalize_target("10", "grok")["origin"] == "http://172.18.0.1:9340"
 
 
+def test_bridge_client_rewrites_grok_display_fourteen_cdp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cursor_bridge.cdp_gateway_forwarder.local_ipv4_addresses",
+        lambda: frozenset({"172.18.0.5"}),
+    )
+    assert container_cdp_origin("http://127.0.0.1:9344") == "http://172.18.0.1:9344"
+    out = normalize_target("14", "grok")
+    assert out["ok"] is True
+    assert out["origin"] == "http://172.18.0.1:9344"
+
+
 def test_open_listeners_skips_when_gateway_is_absent() -> None:
     created: list[_FakeSocket] = []
 
@@ -183,6 +200,7 @@ def test_open_listeners_binds_gateway_only() -> None:
         ("172.18.0.1", 9338),
         ("172.18.0.1", 9339),
         ("172.18.0.1", 9340),
+        ("172.18.0.1", 9344),
         ("172.18.0.1", 19338),
     ]
     assert all(sock.listening == 16 for sock in listeners)
@@ -200,20 +218,23 @@ def test_bind_failure_on_one_port_keeps_other_listeners() -> None:
         return sock
 
     listeners = open_listeners(frozenset({"172.18.0.1"}), socket_factory=factory)
-    assert len(created) == 4
+    assert len(created) == 5
     assert created[1].bound is None
     assert created[1].closed is True
     assert created[0].closed is False
     assert created[2].closed is False
     assert created[3].closed is False
+    assert created[4].closed is False
     assert [sock.bound for sock in listeners] == [
         ("172.18.0.1", 9338),
         ("172.18.0.1", 9340),
+        ("172.18.0.1", 9344),
         ("172.18.0.1", 19338),
     ]
     assert listeners[0] is created[0]
     assert listeners[1] is created[2]
     assert listeners[2] is created[3]
+    assert listeners[3] is created[4]
 
 
 def test_main_gateway_absent_parks_without_exit(
@@ -248,7 +269,12 @@ def test_main_gateway_local_all_binds_fail_exits_nonzero(
             )
     assert exc.value.code == 1
     assert "all binds failed" in caplog.text
-    assert "9338" in caplog.text and "9339" in caplog.text and "19338" in caplog.text
+    assert (
+        "9338" in caplog.text
+        and "9339" in caplog.text
+        and "9344" in caplog.text
+        and "19338" in caplog.text
+    )
     assert "is not local" not in caplog.text
 
 

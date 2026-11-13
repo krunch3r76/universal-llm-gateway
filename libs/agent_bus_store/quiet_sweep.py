@@ -42,9 +42,16 @@ _QUIET_THRESHOLD_S: float = float(
     os.getenv("AGENT_BUS_QUIET_WITH_WIP_THRESHOLD_S", "600")
 )
 
+LaneLoad = tuple[str, list[DispatchLinkView], list[LaneTurnView]]
+LaneCache = dict[str, LaneLoad]
+
 
 def _licensed_park(
-    thread_id: str, links: list[DispatchLinkView], turns: list[LaneTurnView]
+    thread_id: str,
+    links: list[DispatchLinkView],
+    turns: list[LaneTurnView],
+    *,
+    lane_cache: LaneCache | None = None,
 ) -> bool:
     """True when wake debt is open, the seat's latest TYPE line is PARKED, or the parent lane is."""
     try:
@@ -68,12 +75,14 @@ def _licensed_park(
                 return True
         if seat_park_licence(turns, seat):
             return True
-    if _parent_park_licensed(thread_id):
+    if _parent_park_licensed(thread_id, lane_cache=lane_cache):
         return True
     return False
 
 
-def _parent_park_licensed(thread_id: str) -> bool:
+def _parent_park_licensed(
+    thread_id: str, *, lane_cache: LaneCache | None = None
+) -> bool:
     """True when this lane's parent has a live ``TYPE: PARKED`` licence.
 
     Child-lane jobs (``parent_thread`` = the parking lane) must not trip
@@ -94,7 +103,7 @@ def _parent_park_licensed(thread_id: str) -> bool:
     parent = str(row["parent_thread_id"] or "").strip()
     if not parent or parent == thread_id:
         return False
-    loaded = _load_lane(parent)
+    loaded = _load_lane(parent, lane_cache=lane_cache)
     if loaded is None:
         return False
     _lifecycle, _links, turns = loaded
@@ -116,7 +125,11 @@ def _alarm_open(thread_id: str) -> bool:
 
 def _load_lane(
     thread_id: str,
-) -> tuple[str, list[DispatchLinkView], list[LaneTurnView]] | None:
+    *,
+    lane_cache: LaneCache | None = None,
+) -> LaneLoad | None:
+    if lane_cache is not None and thread_id in lane_cache:
+        return lane_cache[thread_id]
     with connect() as conn:
         trow = conn.execute(
             "SELECT bus_lifecycle_state FROM threads WHERE id = ?",
@@ -156,7 +169,10 @@ def _load_lane(
         )
         for r in turn_rows
     ]
-    return lifecycle, links, turns
+    loaded: LaneLoad = lifecycle, links, turns
+    if lane_cache is not None:
+        lane_cache[thread_id] = loaded
+    return loaded
 
 
 def _candidate_thread_ids() -> list[str]:
@@ -239,8 +255,9 @@ def sweep_quiet_with_wip(*, threshold_s: float | None = None) -> int:
     thresh = float(threshold_s if threshold_s is not None else _QUIET_THRESHOLD_S)
     fired = 0
     now_dt = datetime.now(UTC)
+    lane_cache: LaneCache = {}
     for thread_id in _candidate_thread_ids():
-        loaded = _load_lane(thread_id)
+        loaded = _load_lane(thread_id, lane_cache=lane_cache)
         if loaded is None:
             continue
         lifecycle, links, turns = loaded
@@ -271,7 +288,9 @@ def sweep_quiet_with_wip(*, threshold_s: float | None = None) -> int:
             lifecycle=lifecycle,
             links=tuple(witnessed),
             turns=tuple(turns),
-            licensed_park=_licensed_park(thread_id, links, turns),
+            licensed_park=_licensed_park(
+                thread_id, links, turns, lane_cache=lane_cache
+            ),
             alarm_open=False,
         )
         verdict = evaluate_quiet_with_wip(snap)

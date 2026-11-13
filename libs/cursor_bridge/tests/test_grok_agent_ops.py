@@ -75,6 +75,8 @@ async def test_spawn_idempotency_duplicate() -> None:
             return {"ok": True, "created": True, "agent_id": "spawned-1"}
         if "setAgentHiddenFromSidebar" in expr:
             return {"ok": True, "hidden": True, "code": "hidden"}
+        if "rowMarksActive" in expr:
+            return {"ok": True, "row_agent_id": "spawned-1", "currentAgentId": "spawned-1"}
         return {"ok": True, "currentAgentId": "spawned-1"}
 
     with (
@@ -84,7 +86,7 @@ async def test_spawn_idempotency_duplicate() -> None:
             new_callable=AsyncMock,
         ) as steer,
     ):
-        steer.return_value = {"ok": True, "delivered": True}
+        steer.return_value = {"ok": True, "delivered": True, "pasted": True}
         first = await spawn_grok_agent_async(
             "9", "bot-a", idempotency_key="idem-1", text="hello"
         )
@@ -93,7 +95,8 @@ async def test_spawn_idempotency_duplicate() -> None:
         )
     assert first["ok"] is True
     assert second.get("duplicate") is True
-    assert calls["n"] == 4  # pre-create list, create, hide readback, select
+    # pre-create list, create, prior list, select, sidebar confirm, hide-after-steer
+    assert calls["n"] == 6
 
 
 @pytest.mark.asyncio
@@ -227,7 +230,8 @@ async def test_spawn_key_conflict_and_operator_relay_before_create() -> None:
         )
     assert clash["code"] == "idempotency_conflict"
     assert refused["code"] == "watermark_missing_authorization"
-    assert ev.await_count == 3  # pre-create list, createAgent, hide readback
+    # pre-create list, createAgent, prior list, hide (no text) — select uses same mock round
+    assert ev.await_count == 4
 
 
 def test_list_defaults_include_hidden_not_retired() -> None:

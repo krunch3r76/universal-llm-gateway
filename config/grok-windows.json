@@ -11,6 +11,11 @@
       "slot": "gc2",
       "cdp_port": 9340,
       "user_data_dir": "~/.gateway/grok-io-gc2"
+    },
+    "14": {
+      "slot": "gw3",
+      "cdp_port": 9344,
+      "user_data_dir": "~/.gateway/grok-io-gw3"
     }
   },
   "fixed_roles": {},
