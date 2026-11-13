@@ -42,9 +42,9 @@ pytestmark = [
 _BASE_HARNESS = r"""
 const captured = {};
 let rows = [
-  {id: "vis", name: "Visible", isHiddenFromSidebar: false},
-  {id: "hid", name: "Hidden", isHiddenFromSidebar: true},
-  {id: "ret", name: "Old (retired)", isHiddenFromSidebar: false},
+  {id: "vis", name: "Visible", isHiddenFromSidebar: false, isActive: true},
+  {id: "hid", name: "Hidden", isHiddenFromSidebar: true, isActive: true},
+  {id: "ret", name: "Old (retired)", isHiddenFromSidebar: false, isActive: false},
 ];
 const selection = {
   current: "vis",
@@ -153,6 +153,7 @@ def test_node_executes_roster_filters_create_and_retire() -> None:
     )
     names = [row["name"] for row in out["listed"]["agents"]]
     assert names == ["Visible"]
+    assert out["listed"]["agents"][0]["isActive"] is True
     assert out["captured"]["payload"] == {
         "clientNonce": "nonce-1",
         "name": "Bot",

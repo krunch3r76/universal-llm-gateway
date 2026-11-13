@@ -99,7 +99,12 @@ async def list_grok_agents_async(
     include_hidden: bool = True,
     include_retired: bool = False,
 ) -> dict[str, Any]:
-    """List roster rows. Hidden included and retired excluded unless overridden."""
+    """List roster rows from CDP.
+
+    Hidden agents are included by default. Rows whose name ends with the retire
+    suffix are omitted unless ``include_retired`` is set. Each row includes
+    ``isActive`` from the renderer snapshot (not used as the retire gate).
+    """
     if _port(display) is None:
         return _unknown(display)
     try:
@@ -216,7 +221,7 @@ async def spawn_grok_agent_async(
     authorization_source: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
-    """Create, hide, select, optionally subscribe, then steer.
+    """Delegate spawn to :func:`grok_spawn_steps.run_spawn` (visible-first deliver).
 
     The slot is process-local. Unknown create and unconfirmed steer retries
     do not mutate.

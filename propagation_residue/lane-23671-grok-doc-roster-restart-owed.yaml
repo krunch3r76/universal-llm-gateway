@@ -1,0 +1,8 @@
+# propagation_residue — lane-23671 grok roster filter + doc sweep
+restart_owed:
+  - service: mcp
+    reason: interlocutor MCP descriptor + grok_roster_js list filter (isActive retire gate)
+  - service: stargate
+    reason: display-chat-wake delivery path; doc sweep cites stargate restart on wake fixes
+  - service: grok_cdp_forwarder
+    reason: only if FORWARDED_PORTS changed (not this slice)

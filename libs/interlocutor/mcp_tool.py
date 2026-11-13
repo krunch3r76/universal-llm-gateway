@@ -50,11 +50,21 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
         include_hidden: bool = True,
         include_retired: bool = False,
     ) -> dict[str, Any]:
-        """Read, deliver (steer), select, or roster ops on an interlocutor target.
+        """Read, deliver, select, spawn, list, or retire on an interlocutor target.
+
+        Use ``steer`` for paste delivery (and mid-stream wake once streaming
+        detection exists). Normal mailbox delivery uses Stargate
+        ``display-chat-wake``; restart stargate when that path changes.
 
         ``select`` sets grok ``currentAgentId`` only (no paste, no restore).
-        ``list`` / ``spawn`` accept bare ``display:<n>`` for each row in grok-windows.json.
-        ``retire`` requires ``display:<n>/<agent_id>`` on those grok window displays.
+        ``spawn`` order: visible create → deliver → confirm → hide → restore
+        selection on every exit path (see ``grok_spawn_steps``).
+
+        ``list`` / ``spawn`` / ``select`` accept bare ``display:<n>`` for each
+        key in ``config/grok-windows.json`` (``:9``/9339, ``:10``/9340,
+        ``:14``/9344). ``retire`` requires ``display:<n>/<agent_id>``.
+        Default ``list`` includes hidden agents; omits names ending with the
+        retire suffix unless ``include_retired=true``.
         """
         if op == "select":
             result = execute_select(target=target)

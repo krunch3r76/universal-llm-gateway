@@ -2,7 +2,8 @@
 
 Uses the shared ``cursor_bridge`` Electron window and sidebar agent selection
 interface (`list_pages`, `probe_surface`, `select_sidebar_target`) to:
-1. Select the bound agent row in a target Electron window (`:8`, `:9`, `:10`)
+1. Select the bound agent row on Cursor Glass ``:8`` (9338) or Grok Bot window
+   displays from ``config/grok-windows.json`` (``:9``/9339, ``:10``/9340, ``:14``/9344)
    when the currently active composer is empty.
 2. Read the latest settled turn from `.sand-message-prose` once `generating` is
    `False`.
@@ -872,17 +873,29 @@ async def paste_endpoint_message(
             restore_agent_id = str(res.get("restore_agent_id") or "")
             did_switch = bool(res.get("did_switch"))
             if not res.get("ok"):
-                out = {**res, "pasted": False, "delivered": False}
+                out = {
+                    **res,
+                    "pasted": False,
+                    "delivered": False,
+                    "did_switch": did_switch,
+                }
                 return out
             ws_url, surface, verdict = res["ws_url"], res["surface"], res["verdict"]
             disp, app, selected = res["display"], res["app"], res["selected"]
-            base = _paste_outcome_base(
-                verdict=verdict,
-                endpoint=endpoint,
-                disp=disp,
-                app=app,
-                selected=selected,
-            )
+            base = {
+                **_paste_outcome_base(
+                    verdict=verdict,
+                    endpoint=endpoint,
+                    disp=disp,
+                    app=app,
+                    selected=selected,
+                ),
+                **_grok_restore_fields(
+                    restore_agent_id=restore_agent_id,
+                    did_switch=did_switch,
+                    target_agent_id=target_agent,
+                ),
+            }
             expected = str(
                 endpoint.agent_id or verdict.get("expected_agent_id") or ""
             ).strip()
