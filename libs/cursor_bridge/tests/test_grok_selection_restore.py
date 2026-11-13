@@ -152,6 +152,113 @@ async def test_paste_commission_restores_prior_after_failed_readback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resolve_captures_prior_from_selection_when_surface_empty() -> None:
+    from cursor_bridge.electron_chat_relay import _resolve_and_select_endpoint
+
+    ep = ElectronEndpoint(
+        label="gw3",
+        app="grok",
+        display="14",
+        agent_id="hidden-target",
+    )
+    empty_surface = {
+        "state": "chat_list",
+        "active_agent_id": "",
+        "composer_draft": "",
+        "generating": False,
+        "recent_messages": ["supervisor prose"],
+    }
+
+    with (
+        patch(
+            "cursor_bridge.electron_chat_relay.list_pages",
+            return_value=[
+                {
+                    "title": "Grok Bot",
+                    "web_socket_debugger_url": "ws://fake",
+                }
+            ],
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.normalize_target",
+            return_value={
+                "ok": True,
+                "display": "14",
+                "app": "grok",
+                "origin": "http://127.0.0.1:9344",
+            },
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.probe_surface",
+            new_callable=AsyncMock,
+            return_value=empty_surface,
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.wake_decision",
+            return_value={"ok": False, "state": "chat_list", "active_agent_id": ""},
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay.grok_selection_current_agent_id_async",
+            new_callable=AsyncMock,
+            return_value="supervisor",
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay._grok_select_and_confirm",
+            new_callable=AsyncMock,
+            return_value={
+                "ok": False,
+                "code": "conversation_unconfirmed",
+                "stale_dom": True,
+                "did_switch": False,
+            },
+        ),
+    ):
+        res = await _resolve_and_select_endpoint(ep, select=True)
+
+    assert res["restore_agent_id"] == "supervisor"
+    assert res["did_switch"] is True
+
+
+@pytest.mark.asyncio
+async def test_paste_restores_supervisor_after_failed_confirm() -> None:
+    ep = ElectronEndpoint(
+        label="gw3",
+        app="grok",
+        display="14",
+        agent_id="hidden-target",
+    )
+    restored: list[str] = []
+
+    async def _restore(_d: str, prior: str, _t: str, _r: Any) -> None:
+        restored.append(prior)
+
+    with (
+        patch(
+            "cursor_bridge.electron_chat_relay._resolve_and_select_endpoint",
+            new_callable=AsyncMock,
+            return_value={
+                "ok": False,
+                "code": "conversation_unconfirmed",
+                "stale_dom": True,
+                "restore_agent_id": "supervisor",
+                "did_switch": True,
+                "display": "14",
+                "app": "grok",
+            },
+        ),
+        patch(
+            "cursor_bridge.electron_chat_relay._restore_grok_prior_selection",
+            side_effect=_restore,
+        ),
+        patch("cursor_bridge.electron_chat_relay.agent_paste_lock", _noop_lock),
+    ):
+        out = await paste_endpoint_message(ep, "hi", select=True)
+
+    assert out["code"] == "conversation_unconfirmed"
+    assert restored == ["supervisor"]
+
+
+@pytest.mark.asyncio
 async def test_grok_switch_bypasses_busy_prior_agent() -> None:
     from cursor_bridge.electron_chat_relay import _resolve_and_select_endpoint
 
