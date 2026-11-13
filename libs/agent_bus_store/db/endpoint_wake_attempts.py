@@ -175,7 +175,8 @@ def terminal_drop_composer_defer_row(
     row: dict[str, Any],
     *,
     stamp: str,
-    store: Any,
+    store: Any | None = None,
+    pending_notices: list[dict[str, Any]] | None = None,
 ) -> None:
     rid = int(row["id"])
     if str(row.get("decided_by_rule") or "") == COMPOSER_DEFER_DROP_NOTICED:
@@ -207,18 +208,23 @@ def terminal_drop_composer_defer_row(
         f"UPDATE endpoint_wake_ledger SET {', '.join(sets)} WHERE id=?",
         (*params, rid),
     )
-    stamp_fn = getattr(store, "create_turn", None)
-    if stamp_fn is not None:
-        try:
-            stamp_fn(
-                thread=str(row.get("thread_id")),
-                from_agent="agent_bus",
-                to_agent="maestro",
-                subject=_ESCALATION_SUBJECT,
-                body=drop_notice_body(row),
-            )
-        except Exception:
-            logger.exception("composer_defer drop notice failed row=%s", rid)
+    notice = {
+        "thread": str(row.get("thread_id")),
+        "from_agent": "agent_bus",
+        "to_agent": "maestro",
+        "subject": _ESCALATION_SUBJECT,
+        "body": drop_notice_body(row),
+        "wake_row_id": rid,
+    }
+    if pending_notices is not None:
+        pending_notices.append(notice)
+    else:
+        stamp_fn = getattr(store, "create_turn", None) if store is not None else None
+        if stamp_fn is not None:
+            try:
+                stamp_fn(**{k: v for k, v in notice.items() if k != "wake_row_id"})
+            except Exception:
+                logger.exception("composer_defer drop notice failed row=%s", rid)
     try:
         from bus_watch.events import emit_endpoint_wake_dropped
 
@@ -239,8 +245,6 @@ def schedule_composer_defer_retry(
     *,
     stamp: str,
 ) -> int:
-    from bus_watch.endpoint_wake_composer_defer import COMPOSER_DEFER_ARMED
-
     cols = ledger_cols(conn)
     updated = 0
     for row in rows:
@@ -255,7 +259,7 @@ def schedule_composer_defer_retry(
             "claimed_at=NULL",
             "finished_at=NULL",
         ]
-        params: list[Any] = [COMPOSER_DEFER_ARMED]
+        params: list[Any] = [None]
         if "wake_attempt_count" in cols:
             sets.append("wake_attempt_count=?")
             params.append(next_attempt)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
 from agent_bus_store.db import create_thread, init_db, insert_turn
 from agent_bus_store.db.connection import connect, write_connect
@@ -12,6 +14,7 @@ from bus_watch.endpoint_wake_composer_defer import (
     COMPOSER_DEFER_SWEEP,
     escalate_composer_deferred_on_sweep,
     notify_composer_empty_for_target,
+    run_dispatcher_pass_legacy_sweep,
 )
 
 _ESCALATION_SUBJECT = "NOTICE|endpoint wake composer defer exhausted"
@@ -314,3 +317,118 @@ def test_escalate_create_turn_raises_row_still_dropped(db: None) -> None:
         ).fetchone()
     assert row["state"] == "refused"
     assert row["decided_by_rule"] == COMPOSER_DEFER_DROP_NOTICED
+
+
+def test_falsifier_twelve_sweeps_fixed_clock_never_drops_before_cap(db: None) -> None:
+    from agent_bus_store.db.endpoint_wake_attempts import (
+        COMPOSER_DEFER_DROP_NOTICED,
+        DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS,
+    )
+
+    detail = create_thread(thread_id=None, slug="b1-twelve-sweeps")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_sweep_eligible_row(thread, turn_number=77)
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET wake_attempt_count=0 WHERE thread_id=?",
+            (thread,),
+        )
+    store = _RecordingStore()
+    for _ in range(DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS):
+        run_dispatcher_pass_legacy_sweep(store)
+    assert len(store.posts) == 0
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, wake_attempt_count, decided_by_rule "
+            "FROM endpoint_wake_ledger WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "pending"
+    assert int(row["wake_attempt_count"]) == 1
+    assert row["decided_by_rule"] != COMPOSER_DEFER_DROP_NOTICED
+
+
+def test_backoff_steps_allow_one_retry_each_then_cap_drop(db: None) -> None:
+    from agent_bus_store.db.endpoint_wake_attempts import (
+        COMPOSER_DEFER_DROP_NOTICED,
+        DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS,
+        display_composer_defer_retry_delay_s,
+    )
+
+    detail = create_thread(thread_id=None, slug="b1-backoff-steps")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_sweep_eligible_row(thread, turn_number=5)
+    store = _RecordingStore()
+    stamp = "2030-04-01 00:00:00"
+    for attempt in range(1, DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS + 1):
+        with write_connect() as conn:
+            conn.execute(
+                "UPDATE endpoint_wake_ledger SET decided_by_rule=?, "
+                "wake_attempt_count=?, created_at=?, enqueued_at=?, "
+                "wake_next_attempt_at=NULL WHERE thread_id=?",
+                (COMPOSER_DEFER_SWEEP, attempt - 1, stamp, stamp, thread),
+            )
+        advance = display_composer_defer_retry_delay_s(attempt)
+        stamp = (
+            datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S")
+            + timedelta(seconds=advance + 1)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        assert escalate_composer_deferred_on_sweep(store, stamp=stamp) == 0
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT wake_attempt_count FROM endpoint_wake_ledger WHERE thread_id=?",
+                (thread,),
+            ).fetchone()
+        assert int(row["wake_attempt_count"]) == attempt
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET decided_by_rule=?, wake_attempt_count=?, "
+            "created_at=?, enqueued_at=?, wake_next_attempt_at=NULL WHERE thread_id=?",
+            (
+                COMPOSER_DEFER_SWEEP,
+                DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS,
+                stamp,
+                stamp,
+                thread,
+            ),
+        )
+    assert escalate_composer_deferred_on_sweep(store, stamp=stamp) == 1
+    assert len(store.posts) == 1
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, decided_by_rule FROM endpoint_wake_ledger WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "refused"
+    assert row["decided_by_rule"] == COMPOSER_DEFER_DROP_NOTICED
+
+
+def test_drop_notice_posts_after_write_ticket_release(db: None) -> None:
+    from agent_bus_store.db import write_ticket as wt
+    from agent_bus_store.db.endpoint_wake_attempts import (
+        DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS,
+    )
+
+    detail = create_thread(thread_id=None, slug="b1-notice-after-ticket")
+    assert detail is not None
+    thread = str(detail["id"])
+    _seed_sweep_eligible_row(thread, turn_number=11)
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET wake_attempt_count=? WHERE thread_id=?",
+            (DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS, thread),
+        )
+
+    class _TicketStore:
+        posts: list[dict] = []
+
+        def create_turn(self, **kwargs: object) -> dict:
+            assert wt.outer_depth() == 0, "create_turn during held write ticket"
+            _TicketStore.posts.append(dict(kwargs))
+            return {"ok": True}
+
+    dropped = escalate_composer_deferred_on_sweep(_TicketStore())
+    assert dropped == 1
+    assert len(_TicketStore.posts) == 1
