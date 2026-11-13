@@ -873,17 +873,29 @@ async def paste_endpoint_message(
             restore_agent_id = str(res.get("restore_agent_id") or "")
             did_switch = bool(res.get("did_switch"))
             if not res.get("ok"):
-                out = {**res, "pasted": False, "delivered": False}
+                out = {
+                    **res,
+                    "pasted": False,
+                    "delivered": False,
+                    "did_switch": did_switch,
+                }
                 return out
             ws_url, surface, verdict = res["ws_url"], res["surface"], res["verdict"]
             disp, app, selected = res["display"], res["app"], res["selected"]
-            base = _paste_outcome_base(
-                verdict=verdict,
-                endpoint=endpoint,
-                disp=disp,
-                app=app,
-                selected=selected,
-            )
+            base = {
+                **_paste_outcome_base(
+                    verdict=verdict,
+                    endpoint=endpoint,
+                    disp=disp,
+                    app=app,
+                    selected=selected,
+                ),
+                **_grok_restore_fields(
+                    restore_agent_id=restore_agent_id,
+                    did_switch=did_switch,
+                    target_agent_id=target_agent,
+                ),
+            }
             expected = str(
                 endpoint.agent_id or verdict.get("expected_agent_id") or ""
             ).strip()

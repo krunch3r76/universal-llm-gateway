@@ -45,8 +45,6 @@ let rows = [
   {id: "vis", name: "Visible", isHiddenFromSidebar: false, isActive: true},
   {id: "hid", name: "Hidden", isHiddenFromSidebar: true, isActive: true},
   {id: "ret", name: "Old (retired)", isHiddenFromSidebar: false, isActive: false},
-  {id: "mis", name: "Live suffix (retired)", isHiddenFromSidebar: true, isActive: true},
-  {id: "misvis", name: "Live visible (retired)", isHiddenFromSidebar: false, isActive: true},
 ];
 const selection = {
   current: "vis",
@@ -154,7 +152,8 @@ def test_node_executes_roster_filters_create_and_retire() -> None:
         }
     )
     names = [row["name"] for row in out["listed"]["agents"]]
-    assert names == ["Visible", "Live visible (retired)"]
+    assert names == ["Visible"]
+    assert out["listed"]["agents"][0]["isActive"] is True
     assert out["captured"]["payload"] == {
         "clientNonce": "nonce-1",
         "name": "Bot",

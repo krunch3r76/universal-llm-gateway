@@ -63,8 +63,8 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
         ``list`` / ``spawn`` / ``select`` accept bare ``display:<n>`` for each
         key in ``config/grok-windows.json`` (``:9``/9339, ``:10``/9340,
         ``:14``/9344). ``retire`` requires ``display:<n>/<agent_id>``.
-        Default ``list`` includes hidden agents; omits retired rows
-        (name suffix `` (retired)`` and ``isActive`` not true).
+        Default ``list`` includes hidden agents; omits names ending with the
+        retire suffix unless ``include_retired=true``.
         """
         if op == "select":
             result = execute_select(target=target)

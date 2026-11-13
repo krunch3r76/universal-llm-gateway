@@ -101,8 +101,9 @@ async def list_grok_agents_async(
 ) -> dict[str, Any]:
     """List roster rows from CDP.
 
-    Hidden agents are included by default. Retired rows use the retire suffix
-    and ``isActive !== true`` unless ``include_retired`` is set.
+    Hidden agents are included by default. Rows whose name ends with the retire
+    suffix are omitted unless ``include_retired`` is set. Each row includes
+    ``isActive`` from the renderer snapshot (not used as the retire gate).
     """
     if _port(display) is None:
         return _unknown(display)
