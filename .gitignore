@@ -45,6 +45,8 @@ config/env/*.local
 !.env.example
 !.env.*.example
 tmp/
+# Repo-root lane probes (Grok/CDP census JSON). Dispatch closeouts use tmp/reviews/.
+/reviews/
 # Personal / life corpus on disk — use cortex:// or CORTEX_FILES_ROOT, not repo root
 /documents/
 docs/engram/
