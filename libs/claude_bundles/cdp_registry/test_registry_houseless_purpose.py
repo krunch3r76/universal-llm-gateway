@@ -174,7 +174,7 @@ def test_houseless_bind_claims_bus_mailbox_lane_thread(
     db_path = tmp_path / "bus.db"
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
     init_db()
-    detail = create_thread(thread_id=None, slug="hl-prov-mailbox")
+    detail = create_thread(thread_id=None, slug="hl-prov-mailbox", tags=["mailbox"])
     assert detail is not None
     mailbox = str(detail["id"])
     host = reg.register_lane(holder="mailbox", purpose="ask", launch=False)

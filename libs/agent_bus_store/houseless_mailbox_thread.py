@@ -1,8 +1,10 @@
 """Detect agent-bus threads that are houseless mailboxes (first-seat birth lanes).
 
-Predicate (structural, not purpose-tagged):
+Predicate (mailbox tag + structural):
+- ``mailbox`` tag present on the bus thread
 - folded ``parent_thread`` is empty
 - ``role:root`` is absent (not an orchestration house spine)
+- generate ``mission_kind`` is not ``hop`` (enforced by caller)
 
 Does not require a ``houseless`` registry purpose tag; auto-tagging is a separate
 ruling.
@@ -28,4 +30,6 @@ def is_houseless_mailbox_thread(thread_id: str) -> bool:
     if str(detail.get("parent_thread") or "").strip():
         return False
     tags = detail.get("tags") or []
-    return ROLE_ROOT_TAG not in tags
+    if ROLE_ROOT_TAG in tags:
+        return False
+    return "mailbox" in tags

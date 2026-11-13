@@ -16,9 +16,20 @@ def test_houseless_mailbox_is_parentless_work_thread(
     db_path = tmp_path / "bus.db"
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
     init_db()
-    detail = create_thread(thread_id=None, slug="mailbox-only")
+    detail = create_thread(thread_id=None, slug="mailbox-only", tags=["mailbox"])
     assert detail is not None
     assert is_houseless_mailbox_thread(str(detail["id"]))
+
+
+def test_parentless_without_mailbox_tag_is_not_houseless(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="work-not-mailbox")
+    assert detail is not None
+    assert not is_houseless_mailbox_thread(str(detail["id"]))
 
 
 def test_root_house_is_not_houseless_mailbox(

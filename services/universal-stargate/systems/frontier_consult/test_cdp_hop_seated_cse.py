@@ -78,7 +78,7 @@ def test_houseless_first_seat_associates_and_stamps(
     db_path = tmp_path / "bus.db"
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
     init_db()
-    detail = create_thread(thread_id=None, slug="houseless-mailbox")
+    detail = create_thread(thread_id=None, slug="houseless-mailbox", tags=["mailbox"])
     assert detail is not None
     thread_id = str(detail["id"])
     exec_id = "f1f2f3f4-1111-4222-8333-444455556666"
@@ -109,6 +109,62 @@ def test_houseless_first_seat_associates_and_stamps(
     assert f"successor_birth_id: {birth_hex}" in body
     assert f"registration_id: {_REG}" in body
     assert f"parent_thread: {thread_id}" in body
+
+
+def test_parentless_thread_without_mailbox_tag_does_not_associate(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_bus_store.db import create_thread
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="not-tagged-mailbox")
+    assert detail is not None
+    thread_id = str(detail["id"])
+    with patch("agent_bus_store.db.cse_associations.associate_cse") as associate:
+        associate_hop_seated_cse(
+            mission_kind=None,
+            thread_id=thread_id,
+            parent_thread=None,
+            chat_url=_SUCCESSOR,
+            registration_id=_REG,
+            execution_id="f1f2f3f4-1111-4222-8333-444455556666",
+        )
+    associate.assert_not_called()
+
+
+def test_houseless_seated_callback_is_idempotent(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Second seated callback for the same triple must not double-stamp."""
+    from agent_bus_store.db import create_thread, get_turns
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="idempotent-mailbox", tags=["mailbox"])
+    assert detail is not None
+    thread_id = str(detail["id"])
+    exec_id = "a1a2a3a4-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    cdp_hop_cse_bind._STAMP_POSTED.clear()
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        for _ in range(2):
+            associate_hop_seated_cse(
+                mission_kind=None,
+                thread_id=thread_id,
+                parent_thread=None,
+                chat_url=_SUCCESSOR,
+                registration_id=_REG,
+                execution_id=exec_id,
+            )
+    turns = get_turns(thread=thread_id, last=10)
+    stamp_turns = [
+        t
+        for t in turns
+        if str(t.get("body") or "").startswith("TYPE: SEAT_REGISTRATION")
+    ]
+    assert len(stamp_turns) == 1
 
 
 def test_empty_chat_url_does_not_associate() -> None:
