@@ -32,6 +32,7 @@ from .fleet_remote import (
 from .operation_log import tee_with_summary
 from .service_config import (
     is_agent_bus_configured,
+    is_cdp_ask_manage_enabled,
     is_cloud_proxy_configured,
     is_cortex_configured,
     is_email_bridge_configured,
@@ -239,10 +240,8 @@ async def stop_local_services(
     if is_email_bridge_configured():
         stop_ops.append(("email_bridge", ctl.stop_email_bridge))
     # GIW is drain-gated — never parallel with peers (see fleet_local_drain).
-    from .fleet_cdp_ask_phase import include_cdp_ask_in_local_fleet_phase
-
-    # AC1: omit remote cdp-ask when rsync fallback owns the remote phase.
-    if await include_cdp_ask_in_local_fleet_phase(ctl.root):
+    # start/stop_cdp_ask already SSH when PROJECT_ASK_URL is remote (F-1).
+    if is_cdp_ask_manage_enabled():
         stop_ops.append(("cdp_ask", ctl.stop_cdp_ask))
 
     peer_results = await run_ops_parallel(stop_ops)
@@ -272,7 +271,7 @@ async def _emit_stop_results(
         )
 
 
-async def _build_start_ops(
+def _build_start_ops(
     ctl: ServiceController, ws_root: Path, *, rebuild_supporting_services: bool
 ) -> list[tuple[str, Callable[[], Awaitable[str]]]]:
     """Assemble the conditional per-service start operation list."""
@@ -342,9 +341,7 @@ async def _build_start_ops(
             return str(result.get("message", ""))
 
         start_ops.append(("rag", _start_rag_with_settle))
-    from .fleet_cdp_ask_phase import include_cdp_ask_in_local_fleet_phase
-
-    if await include_cdp_ask_in_local_fleet_phase(ws_root):
+    if is_cdp_ask_manage_enabled():
         start_ops.append(("cdp_ask", ctl.start_cdp_ask))
     return start_ops
 
@@ -397,7 +394,7 @@ async def restart_local_services(
     # only intentional sequential blocker per topology policy; gateway/agent_bus/
     # stargate/cloud_proxy/mcp/cortex_api/rag now run concurrently. RAG
     # activation retries until nodes have registered models/telemetry.
-    start_ops = await _build_start_ops(
+    start_ops = _build_start_ops(
         ctl, root, rebuild_supporting_services=rebuild_supporting_services
     )
 

@@ -21,7 +21,6 @@ from ..controller.service_config import (
     read_rag_socket_path,
     read_rag_tcp_config,
 )
-from .container_status import container_is_ready
 
 logger = logging.getLogger(__name__)
 
@@ -831,7 +830,7 @@ class ServiceState:
                     parts = line.split("\t", 1)
                     if len(parts) == 2 and parts[0] == name:
                         cname, cstatus = parts
-                        running = container_is_ready(cstatus)
+                        running = cstatus.startswith("Up")
                         built = self._container_image_built_at(name)
                         detail = f"{cstatus}, built {built}" if built else cstatus
                         return ServiceInfo(
@@ -867,7 +866,7 @@ class ServiceState:
                 parts = line.split("\t", 1)
                 if len(parts) == 2:
                     cname, cstatus = parts
-                    running = container_is_ready(cstatus)
+                    running = "Up" in cstatus
                     built = self._container_image_built_at(cname)
                     detail = f"{cstatus}, built {built}" if built else cstatus
                     return ServiceInfo(

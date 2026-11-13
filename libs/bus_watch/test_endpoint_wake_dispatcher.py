@@ -1225,6 +1225,306 @@ def test_composer_defer_blocks_wall_clock_reclaim_until_empty_event(db: None) ->
     assert again["wake_id"]
 
 
+def test_fire_due_wakes_composer_defer_delivers_once_after_backoff_and_clear(
+    db: None,
+) -> None:
+    """Break: composer defer must release, backoff, then deliver exactly one paste."""
+    from unittest.mock import patch
+
+    from agent_bus_store.db.connection import write_connect
+
+    from bus_watch.endpoint_wake_composer_defer import (
+        escalate_composer_deferred_on_sweep,
+        finalize_composer_defer_pass,
+        notify_composer_empty_for_target,
+    )
+
+    sub_id = 3103
+    tab = "agent-grok-defer-once"
+    detail = create_thread(thread_id=None, slug="defer-deliver-once")
+    assert detail is not None
+    thread = str(detail["id"])
+    turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|defer-once",
+        body="wake",
+    )
+    get_cursor()
+    with connect() as conn:
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
+    advance_scan(
+        CONSUMER,
+        0,
+        turn_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": turn_id,
+                "turn_number": number,
+                "subscription_id": sub_id,
+                "delivery_agent_id": tab,
+            }
+        ],
+        now="2030-01-01 00:00:00",
+    )
+    post_attempts = 0
+
+    def _display_post_side_effect(*_args: object, **_kwargs: object) -> tuple[str, str]:
+        nonlocal post_attempts
+        post_attempts += 1
+        if post_attempts == 1:
+            return ("pending", "composer_not_empty")
+        return ("delivered", "delivered")
+
+    class _SweepStore:
+        posts: list[dict] = []
+
+        def create_turn(self, **kwargs: object) -> dict:
+            _SweepStore.posts.append(dict(kwargs))
+            return {"ok": True}
+
+    def _make_store(claimed: dict[str, Any]) -> object:
+        class Store:
+            def claim(self) -> dict:
+                return claimed
+
+            def subscription(self, agent: str, thread_id: str):
+                if agent == "grok-bot-gc1" and thread_id == thread:
+                    return (
+                        "exact",
+                        {
+                            "id": sub_id,
+                            "surface": "grok",
+                            "display": "9",
+                            "title": "gc1",
+                            "agent_id": tab,
+                        },
+                    )
+                return None
+
+            def result(self, **payload: object) -> int:
+                return record_wake_result(
+                    str(payload["wake_id"]),
+                    str(payload["outcome"]),
+                    str(payload["reason"]) if payload["reason"] is not None else None,
+                    str(payload["route"]) if payload["route"] is not None else None,
+                    payload["subscription_id"],  # type: ignore[arg-type]
+                    payload["cse_registration_id"],  # type: ignore[arg-type]
+                    decided_by_rule=payload.get("decided_by_rule"),  # type: ignore[arg-type]
+                    wake_detail=payload.get("wake_detail"),  # type: ignore[arg-type]
+                )
+
+        return Store()
+
+    claimed1 = claim_due_wakes(now="2030-01-01 00:00:10")
+    assert claimed1["wake_id"]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_display_post_side_effect,
+    ):
+        fire_due_wakes(_make_store(claimed1))  # type: ignore[arg-type]
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason, wake_next_attempt_at, decided_by_rule "
+            "FROM endpoint_wake_ledger WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row["state"] == "pending"
+    assert row["reason"] == "composer_not_empty"
+    assert row["wake_next_attempt_at"]
+    assert post_attempts == 1
+    finalize_composer_defer_pass()
+    escalate_composer_deferred_on_sweep(_SweepStore(), stamp="2030-01-01 00:00:20")
+    notify_composer_empty_for_target(
+        display="9",
+        surface="grok",
+        agent_id=tab,
+        thread_scope=thread,
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET wake_next_attempt_at=? WHERE thread_id=?",
+            ("2030-01-01 00:00:25", thread),
+        )
+    claimed2 = claim_due_wakes(now="2030-01-01 00:00:30")
+    assert claimed2["wake_id"]
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_display_post_side_effect,
+    ):
+        fire_due_wakes(_make_store(claimed2))  # type: ignore[arg-type]
+    assert post_attempts == 2
+    with connect() as conn:
+        row2 = conn.execute(
+            "SELECT state FROM endpoint_wake_ledger WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row2["state"] == "delivered"
+    assert claim_due_wakes(now="2030-01-01 00:01:00")["wake_id"] is None
+
+
+def test_fire_due_wakes_paste_prefixes_missed_once_then_stamps_surfaced(
+    db: None,
+) -> None:
+    """Break: missed prefix only on first delivered paste; surfaced_at stamped then."""
+    from unittest.mock import patch
+
+    from agent_bus_store.db.connection import write_connect
+
+    sub_id = 4412
+    tab = "paste-missed-tab"
+    detail = create_thread(thread_id=None, slug="paste-missed-sub")
+    assert detail is not None
+    thread = str(detail["id"])
+    drop_turn_id, _tsd, drop_num, _cd = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="DROP|missed",
+        body="dropped",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, subscription_id, "
+            "drop_reason, dropped_at, wake_attempt_count) "
+            "VALUES ('grok-bot-gc1', ?, ?, ?, 'refused', ?, 'dropped_cap', "
+            "datetime('now'), 12)",
+            (thread, drop_turn_id, drop_num, sub_id),
+        )
+    wake_turn_id, _ts, number, _c = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|wake-missed",
+        body="w",
+    )
+    get_cursor()
+    with connect() as conn:
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
+    advance_scan(
+        CONSUMER,
+        0,
+        wake_turn_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": wake_turn_id,
+                "turn_number": number,
+                "subscription_id": sub_id,
+                "delivery_agent_id": tab,
+            }
+        ],
+        now="2031-06-01 00:00:00",
+    )
+    claimed1 = claim_due_wakes(now="2031-06-01 00:00:10")
+    assert claimed1["wake_id"]
+    pasted: list[str] = []
+
+    def _capture_paste(
+        _row: dict,
+        _sub: dict,
+        _turn: int | str,
+        *,
+        text: str = "",
+        wake_groups: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, str]:
+        del wake_groups
+        pasted.append(text)
+        return ("delivered", "ok")
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed1
+
+        def subscription(self, agent: str, thread_id: str):
+            if agent == "grok-bot-gc1":
+                return (
+                    "exact",
+                    {
+                        "id": sub_id,
+                        "surface": "grok",
+                        "display": "9",
+                        "title": "gc1",
+                        "agent_id": tab,
+                    },
+                )
+            return None
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                str(payload["route"]) if payload["route"] is not None else None,
+                payload["subscription_id"],  # type: ignore[arg-type]
+                payload["cse_registration_id"],  # type: ignore[arg-type]
+            )
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_capture_paste,
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert len(pasted) == 1
+    assert "missed:" in pasted[0]
+    with connect() as conn:
+        surfaced = conn.execute(
+            "SELECT surfaced_at FROM endpoint_wake_ledger WHERE turn_id=?",
+            (drop_turn_id,),
+        ).fetchone()
+    assert surfaced["surfaced_at"] is not None
+
+    turn2_id, _ts2, num2, _c2 = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="grok-bot-gc1",
+        subject="FACT|wake-missed-2",
+        body="w2",
+    )
+    advance_scan(
+        CONSUMER,
+        wake_turn_id,
+        turn2_id,
+        [
+            {
+                "agent": "grok-bot-gc1",
+                "thread_id": thread,
+                "turn_id": turn2_id,
+                "turn_number": num2,
+                "subscription_id": sub_id,
+                "delivery_agent_id": tab,
+            }
+        ],
+        now="2031-06-01 00:20:00",
+    )
+    claimed2 = claim_due_wakes(now="2031-06-01 00:20:10")
+    assert claimed2["wake_id"]
+    pasted.clear()
+
+    class Store2:
+        def claim(self) -> dict:
+            return claimed2
+
+        def subscription(self, agent: str, thread_id: str):
+            return Store().subscription(agent, thread_id)
+
+        def result(self, **payload: object) -> int:
+            return Store().result(**payload)
+
+    with patch(
+        "bus_watch.endpoint_wake_dispatcher._display_post",
+        side_effect=_capture_paste,
+    ):
+        fire_due_wakes(Store2())  # type: ignore[arg-type]
+    assert len(pasted) == 1
+    assert "missed:" not in pasted[0]
+
+
 def test_debounce_cleared_after_target_reply(db: None) -> None:
     from agent_bus_store.db.connection import write_connect
 
@@ -5016,8 +5316,6 @@ def test_agent_id_mismatch_records_refused_not_pending(db: None) -> None:
 
 def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
     from bus_watch.endpoint_wake_composer_defer import (
-        COMPOSER_DEFER_ESCALATED,
-        COMPOSER_DEFER_ESCALATED_NOTICED,
         COMPOSER_DEFER_SWEEP,
         escalate_composer_deferred_on_sweep,
         finalize_composer_defer_pass,
@@ -5078,6 +5376,14 @@ def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
             return {"ok": True}
 
     store = _Store()
+    from agent_bus_store.db.connection import write_connect
+
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET wake_attempt_count=12, created_at=datetime('now'), "
+            "enqueued_at=datetime('now') WHERE thread_id=?",
+            (thread,),
+        )
     assert escalate_composer_deferred_on_sweep(store) == 1
     assert len(_Store.posts) == 1
     assert _Store.posts[0]["to_agent"] == "maestro"
@@ -5087,10 +5393,9 @@ def test_composer_defer_sweep_escalates_once_to_maestro(db: None) -> None:
             (thread,),
         ).fetchone()
     assert row["state"] == "refused"
-    assert row["decided_by_rule"] in (
-        COMPOSER_DEFER_ESCALATED,
-        COMPOSER_DEFER_ESCALATED_NOTICED,
-    )
+    from agent_bus_store.db.endpoint_wake_attempts import COMPOSER_DEFER_DROP_NOTICED
+
+    assert row["decided_by_rule"] == COMPOSER_DEFER_DROP_NOTICED
     assert escalate_composer_deferred_on_sweep(store) == 0
     assert len(_Store.posts) == 1
 
@@ -5153,8 +5458,6 @@ def test_legacy_agent_id_mismatch_pending_refused_after_normalize(db: None) -> N
 
 def test_legacy_composer_not_empty_two_pass_escalation(db: None) -> None:
     from bus_watch.endpoint_wake_composer_defer import (
-        COMPOSER_DEFER_ESCALATED,
-        COMPOSER_DEFER_ESCALATED_NOTICED,
         COMPOSER_DEFER_SWEEP,
         run_dispatcher_pass_legacy_sweep,
     )
@@ -5184,25 +5487,29 @@ def test_legacy_composer_not_empty_two_pass_escalation(db: None) -> None:
     assert row["state"] == "pending"
     assert row["decided_by_rule"] == COMPOSER_DEFER_SWEEP
 
+    from agent_bus_store.db.connection import write_connect
+
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE endpoint_wake_ledger SET created_at=datetime('now'), enqueued_at=datetime('now') "
+            "WHERE thread_id=?",
+            (thread,),
+        )
     pass2 = run_dispatcher_pass_legacy_sweep(store)
     assert pass2["composer_defer_armed"] == 0
-    assert pass2["escalated"] == 1
-    assert len(_Store.posts) == 1
-    assert _Store.posts[0]["to_agent"] == "maestro"
+    assert pass2["escalated"] == 0
+    assert len(_Store.posts) == 0
     with connect() as conn:
         row = conn.execute(
-            "SELECT state, decided_by_rule FROM endpoint_wake_ledger WHERE thread_id=?",
+            "SELECT state, decided_by_rule, wake_next_attempt_at FROM endpoint_wake_ledger WHERE thread_id=?",
             (thread,),
         ).fetchone()
-    assert row["state"] == "refused"
-    assert row["decided_by_rule"] in (
-        COMPOSER_DEFER_ESCALATED,
-        COMPOSER_DEFER_ESCALATED_NOTICED,
-    )
+    assert row["state"] == "pending"
+    assert row["wake_next_attempt_at"]
 
     pass3 = run_dispatcher_pass_legacy_sweep(store)
     assert pass3["escalated"] == 0
-    assert len(_Store.posts) == 1
+    assert len(_Store.posts) == 0
 
 
 def test_normalize_legacy_pending_wakes_idempotent(db: None) -> None:

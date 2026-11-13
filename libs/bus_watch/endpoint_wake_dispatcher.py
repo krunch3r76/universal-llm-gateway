@@ -2055,6 +2055,72 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         _record_scan_drops_safe(drops)
 
 
+def _preview_missed_paste(
+    sub: dict[str, Any], paste_text: str
+) -> tuple[str, list[int]]:
+    sid = sub.get("id")
+    if sid is None:
+        return paste_text, []
+    from agent_bus_store.db.connection import connect
+    from agent_bus_store.db.endpoint_wake_attempts import (
+        merge_missed_into_paste,
+        preview_missed_prefix,
+    )
+    from agent_bus_store.db.endpoint_wake_ledger import _now
+
+    stamp = _now(None)
+    with connect() as conn:
+        prefix, ids = preview_missed_prefix(conn, subscription_id=int(sid), stamp=stamp)
+    return merge_missed_into_paste(paste_text, prefix), ids
+
+
+def _stamp_missed_after_deliver(sub: dict[str, Any], missed_ids: list[int]) -> None:
+    if not missed_ids:
+        return
+    sid = sub.get("id")
+    if sid is None:
+        return
+    from agent_bus_store.db.connection import write_connect
+    from agent_bus_store.db.endpoint_wake_attempts import stamp_missed_surfaced
+    from agent_bus_store.db.endpoint_wake_ledger import _now
+
+    with write_connect() as conn:
+        stamp_missed_surfaced(
+            conn,
+            subscription_id=int(sid),
+            row_ids=missed_ids,
+            stamp=_now(None),
+        )
+
+
+def _display_post_maybe_missed(
+    primary: dict[str, Any],
+    sub: dict[str, Any],
+    turn_arg: int | str,
+    *,
+    paste_text: str = "",
+    wake_groups: list[dict[str, Any]] | None = None,
+) -> tuple[str, str]:
+    text, missed_ids = _preview_missed_paste(sub, paste_text)
+    has_text = bool((text or "").strip())
+    if wake_groups is not None:
+        if has_text:
+            state, reason = _display_post(
+                primary, sub, turn_arg, text=text, wake_groups=wake_groups
+            )
+        else:
+            state, reason = _display_post(
+                primary, sub, turn_arg, wake_groups=wake_groups
+            )
+    elif has_text:
+        state, reason = _display_post(primary, sub, turn_arg, text=text)
+    else:
+        state, reason = _display_post(primary, sub, turn_arg)
+    if state == "delivered":
+        _stamp_missed_after_deliver(sub, missed_ids)
+    return state, reason
+
+
 def _display_post(
     row: dict[str, Any],
     sub: dict[str, Any],
@@ -3017,6 +3083,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         route: str | None,
         subscription_id: int | None,
         cse_registration_id: str | None,
+        wake_detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         record(
             store,
@@ -3027,6 +3094,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             subscription_id=subscription_id,
             cse_registration_id=cse_registration_id,
             decided_by_rule=decided_by_rule,
+            wake_detail=wake_detail,
         )
         return claimed
 
@@ -3276,19 +3344,29 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         if len(primary_nums) == 1
         else ",".join(str(n) for n in primary_nums)
     )
-    if (
+    if len(by_thread) > 1:
+        state, reason = _display_post_maybe_missed(
+            primary, sub, turn_arg, paste_text="", wake_groups=wake_groups
+        )
+    elif (
         len(by_thread) == 1
         and str(primary["thread_id"]) == "19627"
         and str(sub.get("surface") or "") == "cursor"
     ):
         paste_text = exchange_lines(rows)
-        state, reason = _display_post(primary, sub, turn_arg, text=paste_text)
-    elif len(by_thread) > 1:
-        state, reason = _display_post(
-            primary, sub, turn_arg, text="", wake_groups=wake_groups
+        state, reason = _display_post_maybe_missed(
+            primary, sub, turn_arg, paste_text=paste_text
         )
     else:
-        state, reason = _display_post(primary, sub, turn_arg)
+        state, reason = _display_post_maybe_missed(primary, sub, turn_arg)
+    from bus_watch.endpoint_wake_composer_defer import is_composer_defer_reason
+
+    wake_detail: dict[str, Any] | None = None
+    if state == "pending" and is_composer_defer_reason(reason):
+        wake_detail = {
+            "release_claim_for_retry": True,
+            "composer_defer_reason": reason,
+        }
     display_reachable_age = _note_display_post_reason(reason)
     if _update_no_composer_streak_and_gate_unsubscribe(
         sub, thread, reason, display_reachable_age=display_reachable_age
@@ -3314,6 +3392,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         route=route,
         subscription_id=sub.get("id"),
         cse_registration_id=None,
+        wake_detail=wake_detail,
     )
 
 

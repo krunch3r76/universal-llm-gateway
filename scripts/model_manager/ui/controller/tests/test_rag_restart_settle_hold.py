@@ -691,14 +691,11 @@ def test_fleet_rag_start_respects_settle_hold(monkeypatch: pytest.MonkeyPatch) -
         "is_cloud_proxy_configured",
         "is_cortex_configured",
         "is_email_bridge_configured",
+        "is_cdp_ask_manage_enabled",
     ):
         monkeypatch.setattr(fleet_local, name, lambda: False)
     monkeypatch.setattr(fleet_local, "is_mcp_configured", lambda _root: False)
     monkeypatch.setattr(fleet_local, "FLEET_SKIP_GIT_WORKER", True)
-    monkeypatch.setattr(
-        "scripts.model_manager.ui.controller.fleet_cdp_ask_phase.include_cdp_ask_in_local_fleet_phase",
-        AsyncMock(return_value=False),
-    )
 
     ctl = _ctl_with_gate()
     calls = {"start": 0}
@@ -708,13 +705,13 @@ def test_fleet_rag_start_respects_settle_hold(monkeypatch: pytest.MonkeyPatch) -
         return RAG_MSG
 
     ctl.start_rag = _start_rag
-    async def _rag_op_from_start_ops():
-        start_ops = await fleet_local._build_start_ops(
+    rag_op = next(
+        op
+        for name, op in fleet_local._build_start_ops(
             ctl, Path("."), rebuild_supporting_services=False
         )
-        return next(op for name, op in start_ops if name == "rag")
-
-    rag_op = _run(_rag_op_from_start_ops())
+        if name == "rag"
+    )
     hold_entered = asyncio.Event()
     release_hold = asyncio.Event()
 

@@ -142,9 +142,6 @@ def grok_systemd_unit_body(
     requires_s = " ".join(requires)
     udd = profile.user_data_dir
     maximize = home / ".config/io-agent-maximize.py"
-    # The user manager imports WAYLAND_DISPLAY once the COSMIC session is up. A unit
-    # that (re)starts after that paints on the host compositor instead of this Xvfb, so
-    # the window vanishes from VNC and io-agent-maximize.py finds nothing to resize.
     return f"""[Unit]
 Description=Grok Bot {profile.slot} agent profile on display {profile.display} (CDP {profile.cdp_port})
 After={after_s}
@@ -152,8 +149,7 @@ Requires={requires_s}
 
 [Service]
 {env_block}
-UnsetEnvironment=WAYLAND_DISPLAY
-ExecStart="/opt/Grok Bot/grok-bot" --user-data-dir={udd} --remote-debugging-port={profile.cdp_port} --window-size=1920,1200 --window-position=0,0 --ozone-platform=x11
+ExecStart="/opt/Grok Bot/grok-bot" --user-data-dir={udd} --remote-debugging-port={profile.cdp_port} --window-size=1920,1200 --window-position=0,0
 ExecStartPost={home}/.venvs/universal/bin/python {maximize} {profile.display}
 Restart=always
 RestartSec=3

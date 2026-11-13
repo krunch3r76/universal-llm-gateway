@@ -48,7 +48,6 @@ Environment=DISPLAY={profile.display}
 Environment=XDG_RUNTIME_DIR=/run/user/{uid}
 Environment=XDG_CURRENT_DESKTOP=gnome
 Environment=XDG_CONFIG_HOME={portal_config}
-UnsetEnvironment=WAYLAND_DISPLAY
 ExecStart={portal_config}/run.sh
 Restart=on-failure
 RestartSec=2
