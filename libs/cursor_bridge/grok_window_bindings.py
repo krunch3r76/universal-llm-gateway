@@ -1,6 +1,6 @@
 """Grok window slots (tracked config) and live routing (state file).
 
-Config: ``config/grok-windows.json`` names the two displays, CDP ports,
+Config: ``config/grok-windows.json`` names grok window displays and CDP ports
 fixed roles, and the initial default/insyncerator pair.
 
 State: ``~/.gateway/grok-window-routing.json`` is rewritten atomically.
@@ -94,6 +94,11 @@ def configured_grok_window_displays() -> frozenset[str]:
     except (OSError, ValueError, json.JSONDecodeError):
         return frozenset()
     return frozenset(_window_ids(config))
+
+
+def configured_grok_cdp_ports() -> frozenset[int]:
+    """CDP ports for every window row in ``grok-windows.json`` (explicit set)."""
+    return frozenset(_window_ids(load_config()).values())
 
 
 def cdp_port_for_display(display: str) -> int | None:

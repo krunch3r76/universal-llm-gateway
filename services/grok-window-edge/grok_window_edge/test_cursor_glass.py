@@ -11,7 +11,7 @@ from grok_window_edge.cursor_glass import cursor_glass
 
 pytestmark = pytest.mark.offline
 
-_ALLOWLIST_WITH_CURSOR = frozenset({9338, 9339, 9340})
+_ALLOWLIST_WITH_CURSOR = frozenset({9338, 9339, 9340, 9344})
 
 
 @pytest.mark.asyncio

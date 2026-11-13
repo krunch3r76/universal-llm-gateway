@@ -1,6 +1,6 @@
 """Grok Bot roster list, select, spawn, and retire over CDP.
 
-Ports come from ``config/grok-windows.json`` (:9 → 9339, :10 → 9340).
+Ports come from ``config/grok-windows.json`` (:9 → 9339, :10 → 9340, :14 → 9344).
 The spawn slot is process-local: a restart or a second process does not
 resume it, and this module does not claim exactly-once delivery.
 

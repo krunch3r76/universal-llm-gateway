@@ -14,7 +14,15 @@ from typing import Any
 from urllib.error import URLError
 
 _ROW_KEYS = ("agent_id", "name", "lastMessageId", "is_running", "updated_at_ms")
-DEFAULT_CDP_PORTS: tuple[int, ...] = (9340, 9339)
+
+
+def _default_cdp_probe_ports() -> tuple[int, ...]:
+    from cursor_bridge.grok_window_bindings import configured_grok_cdp_ports
+
+    return tuple(sorted(configured_grok_cdp_ports(), reverse=True))
+
+
+DEFAULT_CDP_PORTS: tuple[int, ...] = _default_cdp_probe_ports()
 HOP_THREAD = "15851"
 HOP_TO_AGENT = "grok-bot-gc1"
 HOP_FROM_AGENT = "manage"
