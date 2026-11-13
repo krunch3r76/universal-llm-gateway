@@ -34,7 +34,7 @@ class DisplayEightTarget:
 
 @dataclass(frozen=True, slots=True)
 class DisplayGrokWindowTarget:
-    """Grok window slot (:9 / :10) for roster list/spawn without a fixed agent id."""
+    """Grok window slot for roster list/spawn without a fixed agent id."""
 
     kind: Literal["display_grok_window"] = "display_grok_window"
     display: str = "9"
