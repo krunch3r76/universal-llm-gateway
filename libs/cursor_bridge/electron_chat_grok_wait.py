@@ -55,16 +55,13 @@ def grok_conversation_attributed(
     expected = (expected_agent_id or "").strip()
     active = str(surface.get("active_agent_id") or "").strip()
     sel = (selection_agent_id or "").strip()
-    fp = messages_fingerprint(surface)
-    if sel == expected:
-        if not fp:
-            return True
-        if active != expected:
-            return False
-    if not expected or active != expected:
-        if sel == expected and not active and not fp:
-            return True
+    if sel == expected and active != expected:
         return False
+    if not expected or active != expected:
+        if sel == expected and not active:
+            return False
+        return False
+    fp = messages_fingerprint(surface)
     if not fp:
         return True
     if prior_message_fp and fp == prior_message_fp:
@@ -145,7 +142,6 @@ async def probe_grok_after_select(
             slug=str(meta["slug"] or ""),
             title=meta["title"],
             agent_id=expected_agent_id,
-            selection_agent_id=selection_agent_id,
         )
         attributed = grok_conversation_attributed(
             surface,

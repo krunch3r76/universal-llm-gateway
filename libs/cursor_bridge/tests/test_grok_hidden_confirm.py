@@ -1,4 +1,4 @@
-"""Hidden grok seats: selection-state confirm, wake gate, select op."""
+"""Restore/select for hidden grok work; composer agent-id is the pane signal."""
 
 from __future__ import annotations
 
@@ -8,15 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from cursor_bridge.chat_surface import wake_decision
-from cursor_bridge.electron_chat_grok_wait import (
-    grok_conversation_attributed,
-    probe_grok_after_select,
-)
-from cursor_bridge.electron_chat_relay import (
-    ElectronEndpoint,
-    paste_endpoint_message,
-    read_endpoint_turn,
-)
+from cursor_bridge.electron_chat_relay import ElectronEndpoint, read_endpoint_turn
 
 pytestmark = pytest.mark.offline
 
@@ -31,10 +23,11 @@ def _noop_lock(*_a: Any, **_k: Any) -> Any:
     return _inner()
 
 
-def test_wake_decision_hidden_when_selection_matches_empty_title() -> None:
+def test_wake_decision_matches_when_composer_agent_id_attribute_present() -> None:
+    """Positive signal: prompt ``data-sidebar-file-drop-editor-agent-id`` → active_agent_id."""
     surface = {
         "state": "chat_list",
-        "active_agent_id": "",
+        "active_agent_id": "hidden-target",
         "active_title": "",
         "titles": [],
         "agent_ids": {},
@@ -45,170 +38,27 @@ def test_wake_decision_hidden_when_selection_matches_empty_title() -> None:
         thread="23658",
         slug="spawn-check-14",
         agent_id="hidden-target",
-        selection_agent_id="hidden-target",
     )
     assert verdict["ok"] is True
     assert verdict["reason"] == "match"
 
 
-def test_hidden_empty_pane_attributed_when_selection_on_target() -> None:
+def test_wake_decision_refuses_empty_composer_and_title_for_hidden_target() -> None:
     surface = {
-        "active_agent_id": "",
-        "recent_messages": [],
-        "generating": False,
-    }
-    assert (
-        grok_conversation_attributed(
-            surface,
-            expected_agent_id="hidden-target",
-            prior_message_fp="supervisor-fp",
-            prior_generating=True,
-            selection_agent_id="hidden-target",
-        )
-        is True
-    )
-
-
-@pytest.mark.asyncio
-async def test_probe_hidden_empty_pane_not_stale_dom_when_selection_matches() -> None:
-    lag = {
-        "state": "chat_list",
-        "active_agent_id": "",
-        "active_title": "",
-        "recent_messages": ["supervisor line"],
-        "generating": True,
-        "has_active_chat": True,
-    }
-    bound = {
-        **lag,
-        "active_agent_id": "hidden-target",
-        "recent_messages": [],
-        "generating": False,
-    }
-    probes = [dict(lag), dict(bound)]
-
-    async def _fake_probe(_ws: str) -> dict[str, Any]:
-        return probes.pop(0) if probes else dict(bound)
-
-    async def _sel(_d: object) -> str:
-        return "hidden-target"
-
-    with (
-        patch(
-            "cursor_bridge.electron_chat_grok_wait.probe_surface",
-            side_effect=_fake_probe,
-        ),
-        patch(
-            "cursor_bridge.electron_chat_grok_wait._selection_agent_id",
-            side_effect=_sel,
-        ),
-        patch("cursor_bridge.electron_chat_grok_wait.asyncio.sleep", new_callable=AsyncMock),
-    ):
-        out = await probe_grok_after_select(
-            "ws://fake",
-            endpoint=ElectronEndpoint(
-                label="t",
-                app="grok",
-                display="14",
-                agent_id="hidden-target",
-            ),
-            expected_agent_id="hidden-target",
-            baseline_agent_id="supervisor",
-            prior_message_fp="supervisor-fp",
-            prior_generating=True,
-            display="14",
-        )
-    assert out.get("stale_dom") is not True
-    assert out.get("ok") is True
-
-
-@pytest.mark.asyncio
-async def test_wake_delivery_hidden_subscription_not_no_active_chat() -> None:
-    from cursor_bridge.wake_delivery import _deliver_locked
-
-    empty_surface = {
         "state": "chat_list",
         "active_agent_id": "",
         "active_title": "",
         "titles": [],
         "agent_ids": {},
-        "composer_draft": "",
-        "generating": False,
-        "recent_messages": [],
     }
-    with (
-        patch(
-            "cursor_bridge.wake_delivery.normalize_target",
-            return_value={
-                "ok": True,
-                "display": "14",
-                "app": "grok",
-                "origin": "http://127.0.0.1:9344",
-            },
-        ),
-        patch(
-            "cursor_bridge.wake_delivery.list_pages",
-            return_value=[
-                {
-                    "title": "Grok Bot",
-                    "web_socket_debugger_url": "ws://fake",
-                }
-            ],
-        ),
-        patch(
-            "cursor_bridge.wake_delivery.probe_surface",
-            new_callable=AsyncMock,
-            return_value=empty_surface,
-        ),
-        patch(
-            "cursor_bridge.grok_agent_ops.grok_selection_current_agent_id_async",
-            new_callable=AsyncMock,
-            return_value="hidden-target",
-        ),
-        patch(
-            "cursor_bridge.wake_delivery.select_grok_agent_async",
-            new_callable=AsyncMock,
-            return_value={"ok": True, "currentAgentId": "hidden-target"},
-        ),
-        patch(
-            "cursor_bridge.electron_chat_grok_wait.probe_grok_after_select",
-            new_callable=AsyncMock,
-            return_value={
-                "ok": True,
-                "stale_dom": False,
-                "surface": empty_surface,
-                "verdict": {
-                    "ok": True,
-                    "reason": "match",
-                    "active_agent_id": "",
-                },
-                "attributed": True,
-            },
-        ),
-        patch(
-            "cursor_bridge.wake_delivery.dom_insert_and_send",
-            new_callable=AsyncMock,
-            return_value={"ok": True, "pasted": True},
-        ),
-        patch("cursor_bridge.wake_delivery.agent_paste_lock", _noop_lock),
-        patch("cursor_bridge.wake_delivery.display_switch_lock", _noop_lock),
-    ):
-        out = await _deliver_locked(
-            target={
-                "ok": True,
-                "display": "14",
-                "app": "grok",
-                "origin": "http://127.0.0.1:9344",
-            },
-            thread_s="23658",
-            slug_s="spawn-check-14",
-            title_s="",
-            aid_s="hidden-target",
-            select=True,
-            line="BRIDGE_WAKE thread=23658 turn=1",
-        )
-    assert out.get("reason") != "no_active_chat"
-    assert out.get("delivered") is True or out.get("pasted") is True
+    verdict = wake_decision(
+        surface,
+        thread="23658",
+        slug="spawn-check-14",
+        agent_id="hidden-target",
+    )
+    assert verdict["ok"] is False
+    assert verdict["reason"] == "no_active_chat"
 
 
 @pytest.mark.asyncio

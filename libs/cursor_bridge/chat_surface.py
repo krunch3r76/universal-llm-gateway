@@ -315,7 +315,6 @@ def wake_decision(
     slug: str = "",
     title: str | None = None,
     agent_id: str | None = None,
-    selection_agent_id: str | None = None,
 ) -> dict[str, Any]:
     """Refuse a wake unless ``surface`` shows the exact liaison target.
 
@@ -367,12 +366,8 @@ def wake_decision(
         }
     active_aid = str(surface.get("active_agent_id") or "").strip()
     active_title = str(surface.get("active_title") or "").strip()
-    sel_aid = str(selection_agent_id or "").strip()
     if aid:
-        if sel_aid == aid:
-            ok = True
-            reason = "match"
-        elif (
+        if (
             active_aid != aid
             and expected
             and aid not in agent_ids
