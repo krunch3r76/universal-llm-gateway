@@ -168,9 +168,14 @@ async def execute(
 
         case "status":
             infos = await asyncio.to_thread(svc.check_all)
+            # check_all() keeps its core-tuple shape for the TUI/topology callers;
+            # mcp is a fleet service (manage health/restart accept it), so status
+            # adds it here rather than leaving it invisible.
+            mcp_info = await asyncio.to_thread(_check_one, svc, "mcp")
             return {
                 "services": {
-                    i.name.lower().replace(" ", "_"): i.status.value for i in infos
+                    i.name.lower().replace(" ", "_"): i.status.value
+                    for i in (*infos, mcp_info)
                 },
                 "build": await asyncio.to_thread(_gateway_build_status, ctl),
             }
