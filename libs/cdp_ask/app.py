@@ -75,7 +75,11 @@ from cdp_ask.runner import (
     run_execution,
     verify_harvest_root,
 )
-from cdp_ask.standing_pins import peek_health_projections, refresh_health_projections
+from cdp_ask.standing_pins import (
+    peek_health_projections,
+    refresh_health_projections,
+    resolve_cdp_ask_browser_cdp_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +136,8 @@ class HealthResponse(BaseModel):
     tree_state: str
     displays: dict[str, str] = {}
     standing_pins: dict[str, StandingPinHealthModel] = {}
+    browser_cdp_url: str = ""
+    browser_cdp_via: str = ""
 
 
 def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
@@ -653,6 +659,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         harvest = peek_harvest_root_health()
         hygiene_status = "running" if registry_hygiene.running else "stopped"
         displays, standing_pins = peek_health_projections()
+        browser_cdp_url, browser_cdp_via = resolve_cdp_ask_browser_cdp_url()
         status = "ok"
         return HealthResponse(
             status=status,
@@ -662,6 +669,8 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             code_version=_health_code_version,
             pid=os.getpid(),
             tree_state=peek_tree_state(),
+            browser_cdp_url=browser_cdp_url,
+            browser_cdp_via=browser_cdp_via,
             displays=displays,
             standing_pins={
                 name: StandingPinHealthModel(

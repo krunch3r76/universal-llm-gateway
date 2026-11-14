@@ -294,6 +294,15 @@ async def _poll_for_chip_or_attest(
                 "after": last_fp,
                 "polled_ms": elapsed,
             }
+        if mode == "chat" and (last_fp.get("compose_readiness") or {}).get("ready"):
+            return {
+                "ok": True,
+                "step": "already_chat",
+                "before": before,
+                "after": last_fp,
+                "polled_ms": elapsed,
+                "compose_readiness": last_fp.get("compose_readiness"),
+            }
         clicked_via, last_probe = await try_click_compose_chip(page, label)
         if clicked_via:
             return {
@@ -325,6 +334,20 @@ async def select_compose_mode(page, mode: ComposeMode) -> dict[str, Any]:
             "click_probe": rg,
             "surface_radiogroup_count": rg["surface_radiogroup_count"],
             "radiogroup_names": rg["radiogroup_names"],
+            "gate_rejects": [],
+        }
+    if mode == "chat" and (before.get("compose_readiness") or {}).get("ready"):
+        attest = await await_compose_attest(page, mode, timeout_s=8.0, require_auto=False)
+        after = attest.get("fingerprint") or before
+        return {
+            "ok": bool(attest.get("ok")),
+            "step": "selected_chat" if attest.get("ok") else "select_chat_no_attest",
+            "before": before,
+            "after": after,
+            "via": "compose_readiness",
+            "attest": attest,
+            "compose_readiness": before.get("compose_readiness"),
+            "click_probe": await collect_radiogroup_evidence(page),
             "gate_rejects": [],
         }
 

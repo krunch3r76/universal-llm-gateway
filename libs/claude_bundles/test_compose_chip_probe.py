@@ -11,6 +11,7 @@ from claude_bundles.compose_chip_probe import (
     _size_reject,
     collect_effort_candidates,
     collect_radiogroup_evidence,
+    compose_readiness_attestation,
     try_click_compose_chip,
 )
 from claude_bundles.events_compose_attest import (
@@ -238,6 +239,67 @@ _DRIFT_SIDEBAR_MODE_ONLY_HTML = """
 </div>
 </body></html>
 """
+
+_NEW_SESSION_CLAUDE_MODE_HTML = """
+<!doctype html><html><head><title>New session - Claude</title></head><body>
+<div role="radiogroup" aria-label="Mode">
+  <div role="radio" aria-checked="true" aria-label="Claude">Claude</div>
+  <div role="radio" aria-checked="false" aria-label="Code">Code</div>
+</div>
+<button aria-label="Manually approve">Manual</button>
+<button aria-label="Start task">New task</button>
+<div data-testid="chat-input" contenteditable="true" style="min-height:80px;width:400px"></div>
+</body></html>
+"""
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_compose_readiness_new_session_claude_mode_specimen() -> None:
+    pytest.importorskip("playwright")
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_NEW_SESSION_CLAUDE_MODE_HTML)
+            readiness = await compose_readiness_attestation(page)
+            assert readiness.get("ready") is True
+            assert readiness.get("step") == "compose_readiness"
+            census = readiness.get("ui_census") or {}
+            group_labels = [g.get("aria_label") for g in census.get("radiogroups") or []]
+            assert group_labels == ["Mode"]
+            mode_group = census["radiogroups"][0]
+            radio_labels = {r["label"] for r in mode_group["radios"]}
+            assert radio_labels == {"Claude", "Code"}
+            checked = [r for r in mode_group["radios"] if r.get("aria_checked") == "true"]
+            assert len(checked) == 1
+            assert checked[0]["label"] == "Claude"
+            assert census.get("document_title") == "New session - Claude"
+        finally:
+            await browser.close()
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_select_compose_mode_new_session_claude_mode_readiness_selects_chat() -> None:
+    pytest.importorskip("playwright")
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_NEW_SESSION_CLAUDE_MODE_HTML)
+            result = await select_compose_mode(page, "chat")
+            assert result["ok"] is True
+            assert result["step"] in {"already_chat", "selected_chat"}
+            if result["step"] == "selected_chat":
+                assert result["via"] == "compose_readiness"
+            assert result["step"] != "ui_drift"
+        finally:
+            await browser.close()
 
 
 @pytest.mark.offline

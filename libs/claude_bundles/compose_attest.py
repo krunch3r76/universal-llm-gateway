@@ -21,6 +21,7 @@ import re
 from typing import Any, Literal
 
 from claude_bundles.chat_session_hygiene import in_active_chat
+from claude_bundles.compose_chip_probe import compose_readiness_attestation
 from claude_bundles.composer_locate import (
     COLLECT_COMPOSER_SUBMIT_JS as _COLLECT_COMPOSER_SUBMIT_JS,
 )
@@ -109,6 +110,11 @@ async def compose_mode_fingerprint(page) -> dict[str, Any]:
     out: dict[str, Any] = {"title": title, "mode": mode, "approval": approval, "url": page.url}
     if title_fp is not None:
         out["title_fingerprint"] = title_fp
+    readiness = await compose_readiness_attestation(page)
+    if readiness.get("ready"):
+        out["compose_readiness"] = readiness
+        if out.get("title_fingerprint") == "new_session" and out.get("mode") is None:
+            out["mode"] = "chat"
     return out
 
 
@@ -231,7 +237,12 @@ def _compose_attested(
         if require_auto:
             return fp.get("mode") == "cowork" and _approval_is_skip(fp)
         return fp.get("mode") == "cowork" or bool(fp.get("approval"))
-    return fp.get("mode") == "chat" and not fp.get("approval")
+    if fp.get("mode") == "chat" and not fp.get("approval"):
+        return True
+    readiness = fp.get("compose_readiness")
+    if isinstance(readiness, dict) and readiness.get("ready"):
+        return True
+    return False
 
 
 async def await_compose_attest(

@@ -70,6 +70,57 @@ async def collect_chip_candidates(page, label: str) -> list[dict[str, Any]]:
     return list(raw or [])
 
 
+def compose_readiness_from_evidence(
+    rg: dict[str, Any], *, chat_input_present: bool
+) -> dict[str, Any]:
+    """True when sole Mode radiogroup has Claude checked and chat-input exists."""
+    if not chat_input_present:
+        return {"ready": False, "reason": "no_chat_input"}
+    if int(rg.get("radiogroup_count") or 0) != 1:
+        return {
+            "ready": False,
+            "reason": "radiogroup_count",
+            "radiogroup_count": int(rg.get("radiogroup_count") or 0),
+        }
+    names = [str(n).strip() for n in (rg.get("radiogroup_names") or []) if n]
+    if len(names) != 1 or names[0] != "Mode":
+        return {"ready": False, "reason": "mode_radiogroup", "radiogroup_names": names}
+    groups = list(rg.get("radiogroups") or [])
+    if not groups:
+        return {"ready": False, "reason": "mode_radiogroup_empty"}
+    radios = list(groups[0].get("radios") or [])
+    claude = next(
+        (r for r in radios if re.search(r"^claude$", str(r.get("label") or ""), re.I)),
+        None,
+    )
+    if claude is None:
+        return {"ready": False, "reason": "claude_radio_missing", "radios": radios}
+    if str(claude.get("aria_checked") or "").lower() != "true":
+        return {
+            "ready": False,
+            "reason": "claude_not_checked",
+            "aria_checked": claude.get("aria_checked"),
+        }
+    return {
+        "ready": True,
+        "step": "compose_readiness",
+        "document_title": str(rg.get("document_title") or ""),
+        "radiogroup_names": names,
+    }
+
+
+async def compose_readiness_attestation(page) -> dict[str, Any]:
+    """DOM census for new-session Claude-mode compose readiness (sidebar Mode)."""
+    rg = await collect_radiogroup_evidence(page)
+    has_input = await page.evaluate(
+        """() => !!document.querySelector('[data-testid="chat-input"]')"""
+    )
+    out = compose_readiness_from_evidence(rg, chat_input_present=bool(has_input))
+    if out.get("ready"):
+        out["ui_census"] = ui_census_from_radiogroup_evidence(rg)
+    return out
+
+
 def compose_ui_drift_detected(rg: dict[str, Any]) -> bool:
     """True when sidebar Mode radiogroup exists but Surface/Cowork compose chrome does not.
 

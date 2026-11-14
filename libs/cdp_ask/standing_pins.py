@@ -51,6 +51,29 @@ def _load_pins() -> dict[str, dict]:
         return tomllib.load(f).get("lanes", {})
 
 
+def resolve_cdp_ask_browser_cdp_url(
+    *,
+    lanes: dict[str, dict] | None = None,
+) -> tuple[str, str]:
+    """CDP browser endpoint for cdp_ask when the dedicated ask lane may be retired.
+
+    Returns ``(cdp_url, via)`` where ``via`` is ``ask`` or ``fleet``. When
+    ``pins.toml`` has no ``ask`` lane, route to standing fleet (:9222).
+    """
+    rows = lanes
+    if rows is None:
+        try:
+            rows = _load_pins()
+        except Exception:
+            rows = {"fleet": {"port": 9222}}
+    if "ask" in rows:
+        port = int(rows["ask"]["port"])
+        return f"http://127.0.0.1:{port}", "ask"
+    fleet = rows.get("fleet") or {}
+    port = int(fleet.get("port") or 9222)
+    return f"http://127.0.0.1:{port}", "fleet"
+
+
 def _iso_now() -> str:
     return datetime.now(tz=UTC).isoformat()
 
