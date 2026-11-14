@@ -487,6 +487,119 @@ def emit_endpoint_wake_pass_duration(**kwargs: Any) -> None:
 
 
 @event_factory
+def EndpointWakeLifecycle(  # noqa: N802
+    *,
+    wake_id: str,
+    outcome: str,
+    reason: str | None = None,
+    subscription_id: int | None = None,
+    attempt_count: int | None = None,
+    wake_next_attempt_at: str | None = None,
+) -> Event:
+    """Observation: endpoint wake delivery result persisted on the ledger."""
+    payload: dict[str, Any] = {
+        "wake_id": wake_id,
+        "outcome": outcome,
+    }
+    if reason is not None:
+        payload["reason"] = reason
+    if subscription_id is not None:
+        payload["subscription_id"] = subscription_id
+    if attempt_count is not None:
+        payload["attempt_count"] = attempt_count
+    if wake_next_attempt_at is not None:
+        payload["wake_next_attempt_at"] = wake_next_attempt_at
+    return Event(
+        signal="endpoint_wake.lifecycle",
+        role="observation",
+        payload=payload,
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_lifecycle(**kwargs: Any) -> None:
+    _emit(EndpointWakeLifecycle(**kwargs))
+
+
+@event_factory
+def EndpointWakeRetryScheduled(  # noqa: N802
+    *,
+    wake_row_id: int,
+    thread_id: str,
+    turn_number: int,
+    wake_next_attempt_at: str,
+    attempt_count: int,
+) -> Event:
+    """Observation: composer-defer row scheduled for coalesced backoff retry."""
+    return Event(
+        signal="endpoint_wake.retry_scheduled",
+        role="observation",
+        payload={
+            "wake_row_id": wake_row_id,
+            "thread_id": thread_id,
+            "turn_number": turn_number,
+            "wake_next_attempt_at": wake_next_attempt_at,
+            "attempt_count": attempt_count,
+        },
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_retry_scheduled(**kwargs: Any) -> None:
+    _emit(EndpointWakeRetryScheduled(**kwargs))
+
+
+@event_factory
+def EndpointWakeDropped(  # noqa: N802
+    *,
+    wake_row_id: int,
+    thread_id: str,
+    turn_number: int,
+    drop_reason: str,
+    attempt_count: int,
+) -> Event:
+    """Observation: composer-defer row terminal drop at retry cap."""
+    return Event(
+        signal="endpoint_wake.dropped",
+        role="observation",
+        payload={
+            "wake_row_id": wake_row_id,
+            "thread_id": thread_id,
+            "turn_number": turn_number,
+            "drop_reason": drop_reason,
+            "attempt_count": attempt_count,
+        },
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_dropped(**kwargs: Any) -> None:
+    _emit(EndpointWakeDropped(**kwargs))
+
+
+@event_factory
+def EndpointWakeOverdueSurfaced(  # noqa: N802
+    *,
+    subscription_id: int,
+    surfaced_count: int,
+) -> Event:
+    """Observation: missed-line stamp for dropped/overdue wakes on deliver."""
+    return Event(
+        signal="endpoint_wake.overdue_surfaced",
+        role="observation",
+        payload={
+            "subscription_id": subscription_id,
+            "surfaced_count": surfaced_count,
+        },
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_overdue_surfaced(**kwargs: Any) -> None:
+    _emit(EndpointWakeOverdueSurfaced(**kwargs))
+
+
+@event_factory
 def IdeContextHopMonitorTick(  # noqa: N802
     *,
     outcome: str,

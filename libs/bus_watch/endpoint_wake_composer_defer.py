@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from agent_bus_store.db.connection import write_connect
+from agent_bus_store.db.endpoint_wake_ledger import _now
 
 logger = logging.getLogger(__name__)
 
@@ -137,88 +138,99 @@ def _maestro_escalation_body(
     )
 
 
-def escalate_composer_deferred_on_sweep(store: Any) -> int:
-    """Refuse sweep-eligible composer defers; post at most one maestro NOTICE per (thread, turn).
+def escalate_composer_deferred_on_sweep(store: Any, *, stamp: str | None = None) -> int:
+    """Backoff retry or terminal drop for sweep-eligible non-orion composer defers.
 
-    Returns the number of ledger rows refused in this pass (not the number of bus posts).
+    Returns the number of rows dropped at cap in this pass.
     """
+    from agent_bus_store.db.endpoint_wake_attempts import (
+        COMPOSER_DEFER_DROP_NOTICED,
+        DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS,
+        composer_defer_over_cap,
+        schedule_composer_defer_retry,
+        terminal_drop_composer_defer_row,
+    )
+
+    stamp = stamp or _now(None)
     with write_connect() as conn:
+        cols = {
+            str(r[1]) for r in conn.execute("PRAGMA table_info(endpoint_wake_ledger)")
+        }
+        select_extra = ""
+        if "wake_attempt_count" in cols:
+            select_extra += ", wake_attempt_count"
+        if "enqueued_at" in cols:
+            select_extra += ", enqueued_at"
+        if "created_at" in cols:
+            select_extra += ", created_at"
+        if "subscription_id" in cols:
+            select_extra += ", subscription_id"
+        if "wake_next_attempt_at" in cols:
+            select_extra += ", wake_next_attempt_at"
+        where_extra = ""
+        query_params: list[Any] = [COMPOSER_DEFER_SWEEP]
+        if "wake_next_attempt_at" in cols and "wake_attempt_count" in cols:
+            where_extra = (
+                " AND (COALESCE(wake_attempt_count, 0) >= ? "
+                "OR wake_next_attempt_at IS NULL "
+                "OR datetime(wake_next_attempt_at) <= datetime(?))"
+            )
+            query_params.extend([DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS, stamp])
+        elif "wake_next_attempt_at" in cols:
+            where_extra = (
+                " AND (wake_next_attempt_at IS NULL "
+                "OR datetime(wake_next_attempt_at) <= datetime(?))"
+            )
+            query_params.append(stamp)
         rows = conn.execute(
-            "SELECT id, agent, thread_id, turn_number, reason, decided_by_rule "
-            "FROM endpoint_wake_ledger "
+            "SELECT id, agent, thread_id, turn_number, reason, decided_by_rule"
+            f"{select_extra} FROM endpoint_wake_ledger "
             "WHERE state='pending' AND decided_by_rule=? "
             "AND lower(trim(agent)) <> 'orion' "
-            "ORDER BY id",
-            (COMPOSER_DEFER_SWEEP,),
+            f"{where_extra} ORDER BY id",
+            tuple(query_params),
         ).fetchall()
         if not rows:
             return 0
         items = [dict(row) for row in rows]
-
-        groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
+        drop_rows: list[dict[str, Any]] = []
+        retry_rows: list[dict[str, Any]] = []
+        by_sub: dict[str, list[dict[str, Any]]] = {}
         for item in items:
-            key = (str(item["thread_id"]), int(item["turn_number"]))
-            groups.setdefault(key, []).append(item)
-
-        thread_ids = tuple({str(item["thread_id"]) for item in items})
-        in_threads = ",".join("?" * len(thread_ids))
-        noticed_rows = conn.execute(
-            "SELECT thread_id, turn_number FROM endpoint_wake_ledger "
-            f"WHERE state='refused' AND decided_by_rule=? "
-            f"AND thread_id IN ({in_threads})",
-            (COMPOSER_DEFER_ESCALATED_NOTICED, *thread_ids),
-        ).fetchall()
-        noticed_keys = {
-            (str(row["thread_id"]), int(row["turn_number"])) for row in noticed_rows
-        }
-
-        groups_to_notice: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
-        for key, group in groups.items():
-            if key not in noticed_keys:
-                groups_to_notice.append((group[0], group))
-
-        for item in items:
-            rid = int(item["id"])
-            conn.execute(
-                "UPDATE endpoint_wake_ledger SET state='refused', "
-                "decided_by_rule=?, finished_at=datetime('now') WHERE id=?",
-                (COMPOSER_DEFER_ESCALATED, rid),
+            sub_key = str(item.get("subscription_id") or item["id"])
+            by_sub.setdefault(sub_key, []).append(item)
+        for group in by_sub.values():
+            live = min(group, key=lambda r: int(r["id"]))
+            if composer_defer_over_cap(live, stamp=stamp):
+                drop_rows.extend(group)
+            else:
+                retry_rows.append(live)
+        pending_notices: list[dict[str, Any]] = []
+        for item in drop_rows:
+            if str(item.get("decided_by_rule") or "") == COMPOSER_DEFER_DROP_NOTICED:
+                continue
+            terminal_drop_composer_defer_row(
+                conn, item, stamp=stamp, pending_notices=pending_notices
             )
-        refused_count = len(items)
-
+        schedule_composer_defer_retry(conn, retry_rows, stamp=stamp)
+        dropped = len(drop_rows)
     stamp_fn = getattr(store, "create_turn", None)
-    for representative, group in groups_to_notice:
-        if stamp_fn is None:
-            continue
-        thread_id = representative.get("thread_id")
-        turn_number = representative.get("turn_number")
-        row_ids = [int(item["id"]) for item in group]
-        agents = [str(item.get("agent")) for item in group]
-        try:
-            stamp_fn(
-                thread=str(thread_id),
-                from_agent="agent_bus",
-                to_agent="maestro",
-                subject=_ESCALATION_SUBJECT,
-                body=_maestro_escalation_body(representative, group),
-            )
-            rep_id = int(representative["id"])
-            with write_connect() as conn:
-                conn.execute(
-                    "UPDATE endpoint_wake_ledger SET decided_by_rule=? "
-                    "WHERE id=? AND state='refused'",
-                    (COMPOSER_DEFER_ESCALATED_NOTICED, rep_id),
+    if stamp_fn is not None:
+        for notice in pending_notices:
+            wake_row_id = notice.get("wake_row_id")
+            payload = {
+                key: value
+                for key, value in notice.items()
+                if key in {"thread", "from_agent", "to_agent", "subject", "body"}
+            }
+            try:
+                stamp_fn(**payload)
+            except Exception:
+                logger.exception(
+                    "composer_defer drop notice failed row=%s",
+                    wake_row_id,
                 )
-        except Exception:
-            logger.exception(
-                "composer_defer escalation failed thread=%s turn_number=%s "
-                "agents=%s row_ids=%s",
-                thread_id,
-                turn_number,
-                agents,
-                row_ids,
-            )
-    return refused_count
+    return dropped
 
 
 def notify_composer_empty_for_target(
@@ -240,14 +252,14 @@ def notify_composer_empty_for_target(
     in_sql = composer_defer_reason_in_sql()
     with write_connect() as conn:
         pending = conn.execute(
-            "UPDATE endpoint_wake_ledger SET decided_by_rule=NULL "
+            "UPDATE endpoint_wake_ledger SET decided_by_rule=NULL, wake_next_attempt_at=NULL "
             f"WHERE state='pending' AND thread_id=? AND reason IN {in_sql} "
             "AND decided_by_rule LIKE ?",
             (scope, *reasons, f"{_DEFER_PREFIX}%"),
         )
         rearmed = conn.execute(
             "UPDATE endpoint_wake_ledger SET state='pending', decided_by_rule=NULL, "
-            f"finished_at=NULL WHERE state='refused' AND decided_by_rule IN (?,?) "
+            f"finished_at=NULL, wake_next_attempt_at=NULL WHERE state='refused' AND decided_by_rule IN (?,?) "
             f"AND thread_id=? AND reason IN {in_sql}",
             (
                 COMPOSER_DEFER_ESCALATED,
@@ -267,7 +279,9 @@ def defer_path_avoids_wall_clock() -> bool:
     source += inspect.getsource(notify_composer_empty_for_target)
     source += inspect.getsource(composer_defer_blocks_claim)
     return not re.search(r"\btime\.(?:time|monotonic|sleep)\b", source) and (
-        "datetime(" not in source or "datetime('now')" in source
+        "datetime(" not in source
+        or "datetime('now')" in source
+        or "datetime(wake_next_attempt_at)" in source
     )
 
 
