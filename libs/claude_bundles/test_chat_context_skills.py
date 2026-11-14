@@ -8,6 +8,7 @@ from claude_bundles.chat_context_disclosure import disclosure_is_expanded
 from claude_bundles.chat_context_skills import (
     _ASSISTANT_TURN_BADGE_JS,
     _SKILL_INDUCTION_SNAPSHOT_JS,
+    _context_grid_read,
     ChatContextSkillsError,
     LoadedSkillsReport,
     SkillInductionSnapshot,
@@ -1248,6 +1249,160 @@ async def test_collapsed_rail_snapshot_grid_unread_stale_grid_refuses(
     assert await scrape_chat_turn_loaded_skills(page, snapshot=snap) == ()
     report = await scrape_loaded_skills(page, snapshot=snap)
     assert report.skills == ()
+
+
+class _ContextHeaderLabelMismatchPage(_EvaluatedDomPage):
+    """Cowork Context header: ``innerText`` matches ``Context``, ``textContent`` does not."""
+
+    def __init__(self, tree: dict[str, object]) -> None:
+        super().__init__(tree)
+        self._context_expanded = False
+
+    async def evaluate(
+        self, js: str, spec: dict | None = None
+    ) -> dict[str, object]:
+        if spec is not None:
+            label = str(spec.get("label") or "")
+            if label != "Context":
+                return {
+                    "found": False,
+                    "aria_expanded": None,
+                    "list_visible": False,
+                    "clicked": False,
+                }
+            if spec.get("click"):
+                self._context_expanded = True
+                return {
+                    "found": True,
+                    "clicked": True,
+                    "aria_expanded": None,
+                    "list_visible": False,
+                }
+            return {
+                "found": True,
+                "aria_expanded": "true" if self._context_expanded else "false",
+                "list_visible": self._context_expanded,
+                "clicked": False,
+            }
+        if "const ctxSpan" in js:
+            skills = ["reasoning-posture"] if self._context_expanded else []
+            return {
+                "context_found": True,
+                "skills_heading_found": bool(skills),
+                "skills": skills,
+                "raw_section_text": "Skills\nreasoning-posture"
+                if skills
+                else "",
+                "model_label": None,
+            }
+        return await super().evaluate(js, spec)
+
+
+@pytest.mark.asyncio
+async def test_context_header_textcontent_mismatch_unifies_grid_unread_stale_grid_refuses(
+    monkeypatch,
+) -> None:
+    """Snapshot JS ``textContent === 'Context'`` diverges; Python uses disclosure predicate."""
+
+    async def _snapshot_no_expand(_page) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills._expand_context_for_snapshot",
+        _snapshot_no_expand,
+    )
+    page = _ContextHeaderLabelMismatchPage(
+        {
+            "tag": "body",
+            "children": [
+                {
+                    "tag": "div",
+                    "attrs": {
+                        "data-section-header": "",
+                        "role": "button",
+                        "aria-expanded": "false",
+                    },
+                    "children": [
+                        {"tag": "span", "children": ["Context"]},
+                        {"tag": "span", "children": ["2"]},
+                    ],
+                },
+                {
+                    "tag": "div",
+                    "children": [
+                        {"tag": "span", "children": ["Skills"]},
+                        {"tag": "span", "children": ["reasoning-posture"]},
+                    ],
+                },
+            ],
+        }
+    )
+    raw_snap = await page.evaluate(_SKILL_INDUCTION_SNAPSHOT_JS)
+    assert raw_snap.get("context_header_found") is not True
+    assert raw_snap.get("context_grid_read") is not True
+
+    snap = await snapshot_skill_induction_before_submit(page)
+    found, readable = await _context_grid_read(page)
+    assert found is True
+    assert readable is False
+    assert snap.grid_unread is True
+    assert snap.panel_slugs == frozenset()
+    assert not snap.caption_node_ids
+
+    from claude_bundles.chat_context_disclosure import expand_context_frame
+
+    await expand_context_frame(page)
+    _found_after, readable_after = await _context_grid_read(page)
+    assert _found_after is True
+    assert readable_after is True
+    assert snap.grid_unread is True
+
+    assert await scrape_chat_turn_loaded_skills(page, snapshot=snap) == ()
+    report = await scrape_loaded_skills(page, snapshot=snap)
+    assert report.skills == ()
+    assert report.missing(["reasoning-posture"]) == ("reasoning-posture",)
+
+    unscoped = await scrape_loaded_skills(page)
+    assert unscoped.skills == ("reasoning-posture",)
+
+
+@pytest.mark.asyncio
+async def test_first_turn_grid_unread_empty_snapshot_fresh_caption_passes(
+    monkeypatch,
+) -> None:
+    """First turn: unread grid snapshot, no prior TurnStatus; fresh caption after submit."""
+
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    snap = SkillInductionSnapshot(
+        panel_slugs=frozenset(),
+        caption_node_ids=frozenset(),
+        grid_unread=True,
+    )
+    dom_page = _EvaluatedDomPage({"tag": "body", "children": []})
+    dom_page.append_turn(
+        {
+            "tag": "div",
+            "attrs": {"data-cds": "TurnStatus", "data-item-key": "turn-1"},
+            "children": [
+                {
+                    "tag": "span",
+                    "attrs": {
+                        "data-morph-key": "done|Loaded the consult-posture skill"
+                    },
+                    "children": ["Loaded the consult-posture skill."],
+                }
+            ],
+        }
+    )
+    report = await scrape_loaded_skills(dom_page, snapshot=snap)
+    assert report.skills == ("consult-posture",)
 
 
 @pytest.mark.asyncio
