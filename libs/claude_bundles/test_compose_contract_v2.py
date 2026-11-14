@@ -393,38 +393,57 @@ async def test_compose_model_chip_failure_census_testid_probe() -> None:
             await browser.close()
 
 
+# Census cortex://notes/tmp/dom-samples/.../permission-menu-closed-and-open.md b25894d3
 _PERM_V2_DOM_MANUAL_HTML = """
 <!doctype html><html><head><title>New session - Claude</title></head><body>
 <div data-testid="chat-input" contenteditable="true"></div>
 <button id="perm" type="button" data-cds="Button" aria-haspopup="menu"
-  aria-expanded="false" style="width:68px;height:28px">Manual</button>
+  aria-expanded="false" tabindex="0"
+  style="width:68.125px;height:28px">Manual</button>
 <div id="menu" role="menu" style="display:none">
-  <div role="group" aria-labelledby="perm-group">
-    <div id="perm-group" aria-hidden="true">Permission mode</div>
-    <div role="menuitemradio" aria-checked="true">Manual</div>
-    <div role="menuitemradio" aria-checked="false">Auto</div>
+  <div role="group" aria-labelledby="perm-group-label">
+    <div id="perm-group-label" aria-hidden="true">Permission mode</div>
+    <div role="menuitemradio" id="row-manual" aria-checked="true" tabindex="-1">
+      <span class="flex min-w-0 flex-1 flex-col">
+        <span class="truncate"><span>Manual</span></span>
+        <span class="text-footnote text-muted">Claude asks before using new tools or opening new sites.</span>
+      </span>
+    </div>
+    <div role="menuitemradio" id="row-auto" aria-checked="false" tabindex="-1">
+      <span class="flex min-w-0 flex-1 flex-col">
+        <span class="truncate"><span>Auto</span></span>
+        <span class="text-footnote text-muted">Claude runs on its own and pauses to ask if anything looks unsafe.</span>
+      </span>
+    </div>
   </div>
 </div>
 <script>
 document.getElementById('perm').addEventListener('click', () => {
   document.getElementById('menu').style.display = 'block';
+  document.getElementById('perm').setAttribute('aria-expanded', 'true');
 });
-document.getElementById('menu').children[0].children[2].addEventListener('click', () => {
+function setAuto() {
   document.getElementById('perm').innerText = 'Auto';
+  document.getElementById('row-manual').setAttribute('aria-checked', 'false');
+  document.getElementById('row-auto').setAttribute('aria-checked', 'true');
   document.getElementById('menu').style.display = 'none';
-});
+  document.getElementById('perm').setAttribute('aria-expanded', 'false');
+}
+document.getElementById('row-auto').addEventListener('click', setAuto);
 </script>
 </body></html>
 """
 
 _PERM_V2_DOM_AUTO_HTML = _PERM_V2_DOM_MANUAL_HTML.replace(
-    'style="width:68px;height:28px">Manual</button>',
-    'style="width:68px;height:28px">Auto</button>',
+    'style="width:68.125px;height:28px">Manual</button>',
+    'style="width:68.125px;height:28px">Auto</button>',
+).replace('aria-checked="true">Manual', 'aria-checked="false">Manual', 1).replace(
+    'aria-checked="false">Auto', 'aria-checked="true">Auto', 1
 )
 
 _PERM_V2_DOM_SET_FAIL_HTML = _PERM_V2_DOM_MANUAL_HTML.replace(
-    "document.getElementById('menu').children[0].children[2].addEventListener('click', () => {",
-    "document.getElementById('menu').children[0].children[2].addEventListener('click', () => { return;",
+    "document.getElementById('row-auto').addEventListener('click', setAuto);",
+    "document.getElementById('row-auto').addEventListener('click', () => {});",
 )
 
 

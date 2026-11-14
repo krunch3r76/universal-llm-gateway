@@ -441,17 +441,27 @@ def test_code_manual_refusal_message_names_surface_and_chip() -> None:
     assert "code accepts skip, auto" in reason
 
 
+# Census cortex://notes/tmp/dom-samples/.../permission-menu-closed-and-open.md b25894d3
 _PERM_V2_MANUAL_HTML = """
 <!doctype html><html><head><title>New session - Claude</title></head><body>
 <div data-testid="chat-input" contenteditable="true"></div>
-<button id="perm" type="button" aria-haspopup="menu" aria-expanded="false"
-  style="width:68px;height:28px">Manual</button>
+<button id="perm" type="button" data-cds="Button" aria-haspopup="menu" aria-expanded="false"
+  tabindex="0" style="width:68.125px;height:28px">Manual</button>
 <div id="menu" role="menu" style="display:none">
-  <div role="group" aria-label="Permission mode">
-    <div role="menuitemradio" id="row-manual" aria-checked="true">Manual
-      <span>asks before new tools or sites</span></div>
-    <div role="menuitemradio" id="row-auto" aria-checked="false">Auto
-      <span>runs on its own, pauses if unsafe</span></div>
+  <div role="group" aria-labelledby="perm-group-label">
+    <div id="perm-group-label" aria-hidden="true">Permission mode</div>
+    <div role="menuitemradio" id="row-manual" aria-checked="true" tabindex="-1">
+      <span class="flex min-w-0 flex-1 flex-col">
+        <span class="truncate"><span>Manual</span></span>
+        <span class="text-footnote text-muted">Claude asks before using new tools or opening new sites.</span>
+      </span>
+    </div>
+    <div role="menuitemradio" id="row-auto" aria-checked="false" tabindex="-1">
+      <span class="flex min-w-0 flex-1 flex-col">
+        <span class="truncate"><span>Auto</span></span>
+        <span class="text-footnote text-muted">Claude runs on its own and pauses to ask if anything looks unsafe.</span>
+      </span>
+    </div>
   </div>
 </div>
 <script>
@@ -464,6 +474,7 @@ function setAuto() {
   document.getElementById('row-manual').setAttribute('aria-checked', 'false');
   document.getElementById('row-auto').setAttribute('aria-checked', 'true');
   document.getElementById('menu').style.display = 'none';
+  document.getElementById('perm').setAttribute('aria-expanded', 'false');
 }
 document.getElementById('row-auto').addEventListener('click', setAuto);
 </script>
@@ -471,30 +482,16 @@ document.getElementById('row-auto').addEventListener('click', setAuto);
 """
 
 _PERM_V2_AUTO_HTML = _PERM_V2_MANUAL_HTML.replace(
-    'style="width:68px;height:28px">Manual</button>',
-    'style="width:68px;height:28px">Auto</button>',
-).replace('aria-checked="true">Manual', 'aria-checked="false">Manual').replace(
+    'style="width:68.125px;height:28px">Manual</button>',
+    'style="width:68.125px;height:28px">Auto</button>',
+).replace('aria-checked="true">Manual', 'aria-checked="false">Manual', 1).replace(
     'aria-checked="false">Auto', 'aria-checked="true">Auto', 1
 )
 
-_PERM_V2_SET_FAIL_HTML = """
-<!doctype html><html><head><title>New session - Claude</title></head><body>
-<div data-testid="chat-input" contenteditable="true"></div>
-<button id="perm" type="button" aria-haspopup="menu" style="width:68px;height:28px">Manual</button>
-<div id="menu" role="menu" style="display:none">
-  <div role="menuitemradio" id="row-manual" aria-checked="true">Manual</div>
-  <div role="menuitemradio" id="row-auto" aria-checked="false">Auto</div>
-</div>
-<script>
-document.getElementById('perm').addEventListener('click', () => {
-  document.getElementById('menu').style.display = 'block';
-});
-document.getElementById('row-auto').addEventListener('click', () => {
-  document.getElementById('menu').style.display = 'none';
-});
-</script>
-</body></html>
-"""
+_PERM_V2_SET_FAIL_HTML = _PERM_V2_MANUAL_HTML.replace(
+    "document.getElementById('row-auto').addEventListener('click', setAuto);",
+    "document.getElementById('row-auto').addEventListener('click', () => {});",
+)
 
 
 @pytest.mark.asyncio

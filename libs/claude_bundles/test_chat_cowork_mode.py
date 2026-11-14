@@ -118,12 +118,12 @@ def test_compose_attested_cowork_manual_must_fail() -> None:
     assert _compose_attested(fp, "cowork", require_auto=False) is True
     reason = cowork_auto_refuse_reason(fp)
     assert reason is not None
-    assert "Manually approve" in reason
-    assert "Skip all approvals" in reason
+    assert "Manual" in reason
+    assert "Permission mode Auto" in reason
 
 
-def test_cowork_auto_refuse_reason_skip_passes_auto_refuses() -> None:
-    """Ship gate: Skip all approvals passes; Automatically approve refuses."""
+def test_cowork_auto_refuse_reason_skip_and_auto_pass_ship_gate() -> None:
+    """v2 ship gate: legacy Skip-all and Permission Auto pass; Manual refuses."""
     skip_fp = {
         "title": "New task - Claude",
         "mode": "cowork",
@@ -139,13 +139,10 @@ def test_cowork_auto_refuse_reason_skip_passes_auto_refuses() -> None:
         "approval": {"aria": "Automatically approve", "text": "Auto"},
         "url": "https://claude.ai/new",
     }
-    assert _compose_attested(auto_fp, "cowork") is False
+    assert _compose_attested(auto_fp, "cowork") is True
     assert _approval_is_auto(auto_fp) is True
     assert _approval_is_auto(skip_fp) is False
-    reason = cowork_auto_refuse_reason(auto_fp)
-    assert reason is not None
-    assert "Automatically approve" in reason
-    assert "Skip all approvals" in reason
+    assert cowork_auto_refuse_reason(auto_fp) is None
 
 
 def test_compose_attested_project_shell_without_chips_skips() -> None:
