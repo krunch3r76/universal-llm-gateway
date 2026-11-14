@@ -189,6 +189,25 @@ def approval_mode_chip(fp: dict[str, Any]) -> ApprovalMode:
     return "unknown"
 
 
+_COMPOSE_SURFACE_TITLE_FPS = frozenset({"new_session", "new_chat", "new_task"})
+
+
+def _is_compose_surface_fingerprint(fp: dict[str, Any]) -> bool:
+    """True when *fp* is on a compose surface (``new_*`` title or ``/new`` URL).
+
+    Keys missing-chip refusal on compose surface identity rather than ``mode`` so
+    v2 ``/new`` tabs with ``title_fingerprint=='new_session'`` and ``mode=None``
+    (before ``compose_readiness.ready`` promotes ``mode`` to ``'chat'``) still
+    fail closed when the approval chip is absent, while true project-shell URLs
+    with ``mode=None`` and no ``new_*`` title fingerprint remain exempt.
+    """
+    if fp.get("title_fingerprint") in _COMPOSE_SURFACE_TITLE_FPS:
+        return True
+    url = str(fp.get("url") or "").strip()
+    path = url.split("?", 1)[0].split("#", 1)[0].rstrip("/").lower()
+    return path.endswith("/new")
+
+
 def dispatch_approval_refuse_reason(
     fp: dict[str, Any],
     *,
@@ -196,9 +215,11 @@ def dispatch_approval_refuse_reason(
 ) -> str | None:
     """Surface-aware approval gate before Start task / Send.
 
-    ``surface=None`` preserves legacy Cowork/Chat behavior via
+    ``surface=None`` preserves Cowork/Chat behavior via
     ``cowork_auto_refuse_reason``. ``surface='code'`` accepts Skip or Auto;
-    Manual is refused. Callers on ``/code`` must not flip the chip to Skip.
+    Manual is refused, and missing chips on compose surfaces (``new_*`` title
+    or ``/new`` URL) also refuse. Callers on ``/code`` must not flip the chip
+    to Skip.
     """
     surf = (surface or "").strip().lower() or None
     if surf != "code":
@@ -206,12 +227,12 @@ def dispatch_approval_refuse_reason(
 
     aria = _approval_aria(fp)
     mode = fp.get("mode")
-    if mode in ("chat", "cowork") and not fp.get("approval"):
-        return (
-            "cowork dispatch refused: Permission mode Skip or Auto not attested "
-            f"(mode={mode!r} approval={fp.get('approval')!r})"
-        )
-    if not aria and mode not in ("chat", "cowork"):
+    if not aria:
+        if _is_compose_surface_fingerprint(fp):
+            return (
+                "code dispatch refused: Permission mode Skip or Auto not attested "
+                f"(mode={mode!r} approval={fp.get('approval')!r})"
+            )
         return None
     chip = approval_mode_chip(fp)
     if chip in ("skip", "auto"):
@@ -226,21 +247,22 @@ def dispatch_approval_refuse_reason(
 
 
 def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:
-    """Fail-closed refuse text when a Cowork dispatch must not Start task.
+    """Fail-closed refuse text when a Cowork/Chat dispatch must not Start task / Send.
 
-    Callers (``send_prompt``) raise this string so Manual cannot ship.
-    None iff the chip reads Auto (v2 Permission mode) or legacy Skip-all.
-    Chat/Cowork without an approval chip refuse. Project-shell rows without
-    chips return None — named skip, not a silent waiver on ``/new``.
+    Callers (``send_prompt``) raise this string so Manual or missing chips
+    cannot ship on compose surfaces (``title_fingerprint`` in
+    ``{new_session, new_chat, new_task}`` or URL ``/new``). None iff the chip
+    reads Auto (v2 Permission mode) or legacy Skip-all, or on project-shell
+    rows without chips (named skip, not a silent waiver on ``/new``).
     """
     aria = _approval_aria(fp)
     mode = fp.get("mode")
-    if mode in ("chat", "cowork") and not fp.get("approval"):
-        return (
-            "cowork dispatch refused: Permission mode Skip or Auto not attested "
-            f"(mode={mode!r} approval={fp.get('approval')!r})"
-        )
-    if not aria and mode not in ("chat", "cowork"):
+    if not aria:
+        if _is_compose_surface_fingerprint(fp):
+            return (
+                "cowork dispatch refused: Permission mode Skip or Auto not attested "
+                f"(mode={mode!r} approval={fp.get('approval')!r})"
+            )
         return None
     seen = str(fp.get("approval", {}).get("text") or aria).strip() or aria
     if _AUTO_ARIA_RE.search(aria):

@@ -600,7 +600,9 @@ def test_v2_manual_labelledby_classified_as_manual_not_unknown() -> None:
         cowork_reason
         == "cowork dispatch refused: approval 'Manual' (need Permission mode Skip or Auto)"
     )
-    code_reason = dispatch_approval_refuse_reason(_V2_MANUAL_LABELLEDBY_FP, surface="code")
+    code_reason = dispatch_approval_refuse_reason(
+        _V2_MANUAL_LABELLEDBY_FP, surface="code"
+    )
     assert (
         code_reason
         == "code dispatch refused: surface=code approval 'Manual' (code accepts skip, auto)"
@@ -655,9 +657,7 @@ def test_compose_attested_chat_with_manual_chip_and_readiness_refuses() -> None:
         ),
     ],
 )
-def test_compose_attested_ship_gate_with_readiness(
-    fp: dict, expect: bool
-) -> None:
+def test_compose_attested_ship_gate_with_readiness(fp: dict, expect: bool) -> None:
     assert _compose_attested(fp, "cowork", require_auto=True) is expect
 
 
@@ -859,3 +859,134 @@ async def test_compose_receipt_approval_mode_only_on_pass_not_refusal(
             compose_receipt=receipt,
         )
     assert receipt == {"model_ran": "Sonnet"}
+
+
+def _new_session_pre_readiness_fp(
+    *,
+    chip_text: str | None = None,
+    url: str = "https://claude.ai/new",
+    include_title_fp: bool = True,
+) -> dict:
+    approval = (
+        None if chip_text is None else {"aria": "", "text": chip_text, "via": "text"}
+    )
+    fp: dict = {
+        "title": "New session - Claude" if include_title_fp else "Claude",
+        "mode": None,
+        "approval": approval,
+        "url": url,
+    }
+    if include_title_fp:
+        fp["title_fingerprint"] = "new_session"
+    return fp
+
+
+@pytest.mark.parametrize("surface", ["cowork", "code"])
+@pytest.mark.parametrize(
+    ("url", "include_title_fp"),
+    [
+        ("https://claude.ai/new", True),
+        ("about:blank", True),
+        ("https://claude.ai/new", False),
+    ],
+)
+def test_new_session_pre_readiness_no_chip_refuses_cowork_and_code(
+    surface: str,
+    url: str,
+    include_title_fp: bool,
+) -> None:
+    """a:43854-g r3 — pre-readiness /new or new_session with mode=None and no chip refuses."""
+    fp = _new_session_pre_readiness_fp(
+        chip_text=None, url=url, include_title_fp=include_title_fp
+    )
+    reason = dispatch_approval_refuse_reason(fp, surface=surface)
+    assert reason is not None
+    assert "Permission mode Skip or Auto not attested" in reason
+    assert cowork_auto_refuse_reason(fp) is not None
+    assert _compose_attested(fp, "cowork", require_auto=True) is False
+    assert _compose_attested(fp, "chat", require_auto=True) is False
+
+
+@pytest.mark.parametrize("surface", ["cowork", "code"])
+@pytest.mark.asyncio
+async def test_submit_composer_draft_new_session_pre_readiness_no_chip_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+) -> None:
+    """Pre-readiness new_session without chip must not leak through live_discover."""
+    fp = _new_session_pre_readiness_fp(chip_text=None)
+    submit = AsyncMock()
+    monkeypatch.setattr(
+        "claude_bundles.composer_submit.submit_composer_content",
+        submit,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.ensure_approval_auto",
+        AsyncMock(return_value={"ok": False, "after": fp}),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.project_ask.compose_mode_fingerprint",
+        AsyncMock(return_value=fp),
+    )
+    from claude_bundles.project_ask import _submit_composer_draft
+
+    page = AsyncMock()
+    page.url = "https://claude.ai/new"
+    with pytest.raises(RuntimeError, match="Permission mode Skip or Auto not attested"):
+        await _submit_composer_draft(
+            page,
+            composer=AsyncMock(),
+            draft_text="hi",
+            claude_surface=surface,
+        )
+    submit.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "project_url",
+    [
+        "https://claude.ai/project/abc",
+        "https://claude.ai/cowork/project/019f6917-2ab2-772c-a1ec-f88434b08e32",
+    ],
+)
+def test_project_shell_no_chip_still_returns_none(project_url: str) -> None:
+    """True project-shell URLs (mode=None, no new_* fingerprint) keep returning None."""
+    fp = {
+        "title": "Project - Claude",
+        "mode": None,
+        "approval": None,
+        "url": project_url,
+    }
+    assert cowork_auto_refuse_reason(fp) is None
+    assert dispatch_approval_refuse_reason(fp, surface="cowork") is None
+    assert dispatch_approval_refuse_reason(fp, surface="code") is None
+
+
+@pytest.mark.parametrize(
+    ("chip_text", "expect_refuse"),
+    [
+        ("Skip", False),
+        ("Auto", False),
+        ("Manual", True),
+    ],
+)
+@pytest.mark.parametrize("surface", ["cowork", "code"])
+def test_new_session_pre_readiness_skip_auto_pass_and_manual_refuses(
+    chip_text: str,
+    expect_refuse: bool,
+    surface: str,
+) -> None:
+    """On pre-readiness new_session (mode=None), Skip/Auto pass and Manual refuses."""
+    fp = _new_session_pre_readiness_fp(chip_text=chip_text)
+    reason = dispatch_approval_refuse_reason(fp, surface=surface)
+    cowork_reason = cowork_auto_refuse_reason(fp)
+    if expect_refuse:
+        assert reason is not None
+        assert cowork_reason is not None
+        assert _compose_attested(fp, "cowork", require_auto=True) is False
+        assert _compose_attested(fp, "chat", require_auto=True) is False
+    else:
+        assert reason is None
+        assert cowork_reason is None
+        assert _compose_attested(fp, "cowork", require_auto=True) is True
+        assert _compose_attested(fp, "chat", require_auto=True) is True
