@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import pytest
 
-from claude_bundles.chat_context_disclosure import disclosure_is_expanded
+from claude_bundles.chat_context_disclosure import (
+    _CONTEXT_HEADER_MATCH_JS,
+    _DISCLOSURE_JS,
+    disclosure_is_expanded,
+)
 from claude_bundles.chat_context_skills import (
     _ASSISTANT_TURN_BADGE_JS,
     _SKILL_INDUCTION_SNAPSHOT_JS,
-    _context_grid_read,
     ChatContextSkillsError,
     LoadedSkillsReport,
     SkillInductionSnapshot,
+    _context_grid_read,
     parse_loaded_skills_from_turn_badges,
     parse_session_activity_skills,
     parse_skills_from_context_section,
@@ -522,9 +526,7 @@ class _EvaluatedDomPage:
     def set_panel_label(self, aria_label: str) -> None:
         self._steps.append({"set_panel_label": aria_label})
 
-    async def evaluate(
-        self, js: str, spec: dict | None = None
-    ) -> dict[str, object]:
+    async def evaluate(self, js: str, spec: dict | None = None) -> dict[str, object]:
         if spec is not None:
             return {
                 "found": False,
@@ -596,7 +598,11 @@ async def test_scrape_chat_turn_loaded_skills_does_not_trust_user_skills_line() 
 
 def test_assistant_turn_badge_js_never_reads_innertext_or_step_subjects() -> None:
     assert "innerText" not in _ASSISTANT_TURN_BADGE_JS
-    assert "innerText" not in _SKILL_INDUCTION_SNAPSHOT_JS
+    assert _CONTEXT_HEADER_MATCH_JS in _SKILL_INDUCTION_SNAPSHOT_JS
+    assert _CONTEXT_HEADER_MATCH_JS in _DISCLOSURE_JS
+    assert "innerText" not in _SKILL_INDUCTION_SNAPSHOT_JS.replace(
+        _CONTEXT_HEADER_MATCH_JS, ""
+    )
     assert "cds_subjects" not in _ASSISTANT_TURN_BADGE_JS
     assert "data-cds-row-subject" not in _ASSISTANT_TURN_BADGE_JS
     assert "data-cds-row-title" not in _ASSISTANT_TURN_BADGE_JS
@@ -1199,9 +1205,7 @@ async def test_collapsed_rail_snapshot_grid_unread_stale_grid_refuses(
                             "text": "Loaded the reasoning-posture skill.",
                         }
                     ],
-                    "context_skills": ["reasoning-posture"]
-                    if expanded
-                    else [],
+                    "context_skills": ["reasoning-posture"] if expanded else [],
                     "context_grid_read": expanded,
                     "context_header_found": True,
                 }
@@ -1254,13 +1258,13 @@ async def test_collapsed_rail_snapshot_grid_unread_stale_grid_refuses(
 class _ContextHeaderLabelMismatchPage(_EvaluatedDomPage):
     """Cowork Context header: ``innerText`` matches ``Context``, ``textContent`` does not."""
 
-    def __init__(self, tree: dict[str, object]) -> None:
+    def __init__(
+        self, tree: dict[str, object], *, context_expanded: bool = False
+    ) -> None:
         super().__init__(tree)
-        self._context_expanded = False
+        self._context_expanded = context_expanded
 
-    async def evaluate(
-        self, js: str, spec: dict | None = None
-    ) -> dict[str, object]:
+    async def evaluate(self, js: str, spec: dict | None = None) -> dict[str, object]:
         if spec is not None:
             label = str(spec.get("label") or "")
             if label != "Context":
@@ -1290,9 +1294,7 @@ class _ContextHeaderLabelMismatchPage(_EvaluatedDomPage):
                 "context_found": True,
                 "skills_heading_found": bool(skills),
                 "skills": skills,
-                "raw_section_text": "Skills\nreasoning-posture"
-                if skills
-                else "",
+                "raw_section_text": "Skills\nreasoning-posture" if skills else "",
                 "model_label": None,
             }
         return await super().evaluate(js, spec)
@@ -1302,7 +1304,7 @@ class _ContextHeaderLabelMismatchPage(_EvaluatedDomPage):
 async def test_context_header_textcontent_mismatch_unifies_grid_unread_stale_grid_refuses(
     monkeypatch,
 ) -> None:
-    """Snapshot JS ``textContent === 'Context'`` diverges; Python uses disclosure predicate."""
+    """Shared Context header predicate finds mismatched header; collapsed rail stays unread."""
 
     async def _snapshot_no_expand(_page) -> None:
         return None
@@ -1338,7 +1340,7 @@ async def test_context_header_textcontent_mismatch_unifies_grid_unread_stale_gri
         }
     )
     raw_snap = await page.evaluate(_SKILL_INDUCTION_SNAPSHOT_JS)
-    assert raw_snap.get("context_header_found") is not True
+    assert raw_snap.get("context_header_found") is True
     assert raw_snap.get("context_grid_read") is not True
 
     snap = await snapshot_skill_induction_before_submit(page)
@@ -1364,6 +1366,75 @@ async def test_context_header_textcontent_mismatch_unifies_grid_unread_stale_gri
 
     unscoped = await scrape_loaded_skills(page)
     assert unscoped.skills == ("reasoning-posture",)
+
+
+@pytest.mark.asyncio
+async def test_context_header_mismatch_already_expanded_real_expand_stale_grid_refuses() -> (
+    None
+):
+    """Warm turn with mismatched Context header already open pins grid or marks unread."""
+    page = _ContextHeaderLabelMismatchPage(
+        {
+            "tag": "body",
+            "children": [
+                {
+                    "tag": "div",
+                    "attrs": {
+                        "data-section-header": "",
+                        "role": "button",
+                        "aria-expanded": "true",
+                    },
+                    "children": [
+                        {"tag": "span", "children": ["Context"]},
+                        {"tag": "span", "children": ["2"]},
+                    ],
+                },
+                {
+                    "tag": "div",
+                    "children": [
+                        {"tag": "span", "children": ["Skills"]},
+                        {"tag": "span", "children": ["reasoning-posture"]},
+                    ],
+                },
+            ],
+        },
+        context_expanded=True,
+    )
+    snap = await snapshot_skill_induction_before_submit(page)
+    assert snap.grid_unread is True or "reasoning-posture" in snap.panel_slugs
+    assert (await scrape_loaded_skills(page, snapshot=snap)).skills == ()
+
+    disagree_page = _ContextHeaderLabelMismatchPage(
+        {
+            "tag": "body",
+            "children": [
+                {
+                    "tag": "div",
+                    "attrs": {
+                        "data-section-header": "",
+                        "role": "button",
+                    },
+                    "children": [
+                        {"tag": "span", "children": ["Context"]},
+                        {"tag": "span", "children": ["2"]},
+                    ],
+                },
+                {
+                    "tag": "div",
+                    "children": [
+                        {"tag": "span", "children": ["Skills"]},
+                        {"tag": "span", "children": ["reasoning-posture"]},
+                    ],
+                },
+            ],
+        },
+        context_expanded=True,
+    )
+    disagree_snap = await snapshot_skill_induction_before_submit(disagree_page)
+    assert disagree_snap.grid_unread is True
+    assert (
+        await scrape_loaded_skills(disagree_page, snapshot=disagree_snap)
+    ).skills == ()
 
 
 @pytest.mark.asyncio

@@ -29,7 +29,10 @@ from urllib.parse import urlparse
 
 from playwright.async_api import BrowserContext, Page
 
-from claude_bundles.chat_context_disclosure import expand_context_frame
+from claude_bundles.chat_context_disclosure import (
+    _CONTEXT_HEADER_MATCH_JS,
+    expand_context_frame,
+)
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)+$")
@@ -290,10 +293,9 @@ _SKILL_INDUCTION_SNAPSHOT_JS = (
   const headers = Array.from(
     document.querySelectorAll('[data-section-header][role="button"]')
   );
-  const ctxHeader = headers.find(
-    (el) =>
-      ((el.textContent || '').trim().split('\\n')[0] || '').trim() === 'Context'
-  );
+  const ctxHeader = headers.find((el) => """
+    + _CONTEXT_HEADER_MATCH_JS
+    + """);
   if (
     ctxHeader &&
     (ctxHeader.getAttribute('aria-expanded') || '').toLowerCase() === 'true' &&
@@ -355,8 +357,8 @@ async def _context_grid_read(page: Page) -> tuple[bool, bool]:
     """Whether the Context disclosure is on the rail and expanded (readable grid).
 
     Returns ``(found, readable)``. Uses the same ``disclosure_is_expanded`` test
-    as ``expand_context_frame`` / ``_read_disclosure`` — not the snapshot JS
-    ``textContent === 'Context'`` or ``aria-expanded === 'true'``-only checks.
+    as ``expand_context_frame`` / ``_read_disclosure`` rather than an
+    ``aria-expanded === 'true'``-only check.
     """
     from claude_bundles.chat_context_disclosure import (
         _aria,
@@ -403,11 +405,13 @@ async def snapshot_skill_induction_before_submit(
     if not isinstance(raw, dict):
         return SkillInductionSnapshot()
     found, context_grid_read = await _context_grid_read(page)
-    grid_unread = found and not context_grid_read
+    grid_unread = found and not (
+        context_grid_read and raw.get("context_grid_read") is True
+    )
     panel: set[str] = set()
     for label in raw.get("session_labels") or []:
         panel.update(parse_session_activity_skills(str(label)))
-    if context_grid_read:
+    if context_grid_read and raw.get("context_grid_read") is True:
         for slug in raw.get("context_skills") or []:
             norm = str(slug).strip().lower()
             if _SLUG_RE.fullmatch(norm):
@@ -650,9 +654,7 @@ async def scrape_loaded_skills(
     if snapshot is not None and snapshot.grid_unread:
         skills = ()
     if snapshot is not None and (
-        snapshot.grid_unread
-        or snapshot.panel_slugs
-        or snapshot.caption_node_ids
+        snapshot.grid_unread or snapshot.panel_slugs or snapshot.caption_node_ids
     ):
         fresh_panel = tuple(s for s in skills if s not in snapshot.panel_slugs)
         raw_turn = await page.evaluate(_ASSISTANT_TURN_BADGE_JS)

@@ -15,14 +15,21 @@ from typing import Any
 
 from playwright.async_api import Page
 
-_DISCLOSURE_JS = """
+_CONTEXT_HEADER_MATCH_JS = (
+    r"(el.innerText||'').trim().split('\n')[0].trim() === 'Context'"
+)
+
+_DISCLOSURE_JS = (
+    """
 (spec) => {
   const label = spec.label;
   const doClick = !!spec.click;
   const headers = Array.from(document.querySelectorAll('[data-section-header][role="button"]'));
-  const header = headers.find((el) =>
-    (el.innerText || '').trim().split('\\n')[0].trim() === label
-  );
+  const header = label === 'Context'
+    ? headers.find((el) => """
+    + _CONTEXT_HEADER_MATCH_JS
+    + """)
+    : null;
   if (!header) {
     return { found: false, aria_expanded: null, list_visible: false, clicked: false };
   }
@@ -43,6 +50,7 @@ _DISCLOSURE_JS = """
   };
 }
 """
+)
 
 
 def disclosure_is_expanded(
@@ -80,16 +88,25 @@ def _aria(state: dict[str, Any]) -> str | None:
 async def _read_disclosure(page: Page, label: str) -> dict[str, Any]:
     raw = await page.evaluate(_DISCLOSURE_JS, {"label": label, "click": False})
     if not isinstance(raw, dict):
-        return {"found": False, "aria_expanded": None, "list_visible": False, "clicked": False}
+        return {
+            "found": False,
+            "aria_expanded": None,
+            "list_visible": False,
+            "clicked": False,
+        }
     return raw
 
 
 async def _require_disclosure_open(page: Page, label: str) -> None:
     state = await _read_disclosure(page, label)
-    if disclosure_is_expanded(_aria(state), list_visible=bool(state.get("list_visible"))):
+    if disclosure_is_expanded(
+        _aria(state), list_visible=bool(state.get("list_visible"))
+    ):
         return
     if not state.get("found"):
-        _refuse(f"{label} list is not on the rail — scrape refused until it is expanded")
+        _refuse(
+            f"{label} list is not on the rail — scrape refused until it is expanded"
+        )
     clicked = await page.evaluate(_DISCLOSURE_JS, {"label": label, "click": True})
     if not (isinstance(clicked, dict) and clicked.get("clicked")):
         _refuse(f"{label} list is collapsed and has no toggle — scrape refused")
