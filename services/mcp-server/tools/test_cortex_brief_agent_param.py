@@ -42,6 +42,27 @@ def test_blank_on_code_mount_defaults_cursor() -> None:
         assert _resolve_boot_family_platform() == ("claude", "cursor")
 
 
+def test_blank_on_code_mount_oauth_requires_seat() -> None:
+    with bind_request("default", surface="code", auth_mode="oauth"):
+        result = _resolve_boot_family_platform()
+        assert isinstance(result, dict)
+        assert result["reason"] == "seat_required"
+        assert result["missing_fields"] == ["seat"]
+        assert "OAuth clients on /mcp/code must pass seat= explicitly." in result[
+            "error"
+        ]
+
+
+def test_blank_on_code_mount_static_defaults_cursor() -> None:
+    with bind_request("default", surface="code", auth_mode="static"):
+        assert _resolve_boot_family_platform() == ("claude", "cursor")
+
+
+def test_blank_on_life_mount_oauth_defaults_web() -> None:
+    with bind_request("default", surface="life", auth_mode="oauth"):
+        assert _resolve_boot_family_platform() == ("claude", "web")
+
+
 def test_blank_without_surface_requires_seat() -> None:
     result = _resolve_boot_family_platform()
     assert isinstance(result, dict)

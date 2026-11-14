@@ -5,6 +5,7 @@ from __future__ import annotations
 from request_profile import current_request_metadata
 
 from ._agent_bus_author import default_from_for_surface
+from ._code_mount_default_allowed import code_mount_default_allowed
 
 
 def infer_caller_agent_for_conductor(
@@ -20,5 +21,7 @@ def infer_caller_agent_for_conductor(
     meta = current_request_metadata()
     surface = meta.get("surface")
     if isinstance(surface, str):
+        if surface == "code" and not code_mount_default_allowed(meta):
+            return None
         return default_from_for_surface(surface)
     return None

@@ -22,6 +22,21 @@ def test_infer_conductor_code_mount_stamps_cursor() -> None:
         )
 
 
+def test_infer_conductor_code_mount_oauth_returns_none() -> None:
+    with bind_request("default", surface="code", auth_mode="oauth"):
+        assert (
+            infer_caller_agent_for_conductor(None, contract="conductor") is None
+        )
+
+
+def test_infer_conductor_code_mount_static_stamps_cursor() -> None:
+    with bind_request("default", surface="code", auth_mode="static"):
+        assert (
+            infer_caller_agent_for_conductor(None, contract="conductor")
+            == "cursor"
+        )
+
+
 def test_infer_conductor_life_mount_stamps_web_anthropic() -> None:
     with bind_request("default", surface="life"):
         assert (

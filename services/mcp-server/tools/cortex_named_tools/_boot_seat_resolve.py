@@ -18,6 +18,7 @@ from agent_seat.registry import (
 from request_profile import current_request_metadata
 
 from .._agent_bus_author import default_from_for_surface
+from .._code_mount_default_allowed import code_mount_default_allowed
 
 
 def parse_seat_slug(slug: str) -> tuple[str | None, str | None]:
@@ -62,6 +63,9 @@ def _surface_default_family_platform(
     surface = _active_mount_surface(mount_surface)
     if not surface:
         return None
+    meta = current_request_metadata()
+    if surface == "code" and not code_mount_default_allowed(meta):
+        return None
     addr = default_from_for_surface(surface)
     if not addr:
         return None
@@ -74,7 +78,8 @@ def _seat_required_error() -> dict[str, Any]:
             "seat is required when the MCP mount surface cannot be inferred — "
             'pass seat="web-anthropic" or seat="cursor" '
             "(or a capability cell like seat=\"grok-api-multi\"), "
-            "or call from /mcp/life or /mcp/code."
+            "or call from /mcp/life or /mcp/code. "
+            "OAuth clients on /mcp/code must pass seat= explicitly."
         ),
         "reason": "seat_required",
         "missing_fields": ["seat"],
