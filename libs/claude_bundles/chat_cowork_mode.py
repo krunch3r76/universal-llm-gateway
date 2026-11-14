@@ -917,8 +917,20 @@ _COMPOSE_MODEL_CHIP_JS = """() => {
     };
   }
 
+  function chipBlob(aria, text) {
+    const raw = strip(aria || text);
+    if (!raw) return '';
+    return raw.replace(/^Model:\\s*/i, '').trim();
+  }
+
+  function parsableModelLabel(label) {
+    const blob = chipBlob('', label);
+    if (!blob) return false;
+    return familyRe.test(blob);
+  }
+
   function modelLabelFrom(aria, text) {
-    const blob = strip(aria || text);
+    const blob = chipBlob(aria, text);
     if (!blob) return '';
     const m = blob.match(
       /^(Opus|Sonnet|Haiku|Fable)(?:\\s+(\\d+(?:\\.\\d+)?))?/i
@@ -928,6 +940,18 @@ _COMPOSE_MODEL_CHIP_JS = """() => {
     return ver ? `${m[1]} ${ver}` : m[1];
   }
 
+  function readTestidChip(el) {
+    const aria = (el.getAttribute('aria-label') || '').trim();
+    const rawText = (el.innerText || '').trim();
+    const text = strip(rawText);
+    const label = modelLabelFrom(aria, text);
+    if (!parsableModelLabel(label)) return null;
+    let effort = null;
+    const em = (aria + '\\n' + rawText).match(effortRe);
+    if (em) effort = em[1];
+    return {label, effort};
+  }
+
   function pickModel(root) {
     let best = null;
     for (const el of root.querySelectorAll('button, [role="button"]')) {
@@ -935,7 +959,7 @@ _COMPOSE_MODEL_CHIP_JS = """() => {
       const aria = (el.getAttribute('aria-label') || '').trim();
       const rawText = (el.innerText || '').trim();
       const text = strip(rawText);
-      const blob = strip(aria || text);
+      const blob = chipBlob(aria, text);
       if (!familyRe.test(blob)) continue;
       if (permRe.test(text) || permRe.test(strip(aria))) continue;
       const r = el.getBoundingClientRect();
@@ -969,34 +993,52 @@ _COMPOSE_MODEL_CHIP_JS = """() => {
   }
 
   const root = composeRoot();
-  const candidates = [];
+  const compose_candidates = [];
   if (root) {
     for (const el of root.querySelectorAll('button, [role="button"]')) {
-      candidates.push(candidateRow(el));
+      compose_candidates.push(candidateRow(el));
     }
   }
 
   const testid = document.querySelector('[data-testid="model-selector-dropdown"]');
+  let testid_probe = null;
+  if (testid) {
+    const st = getComputedStyle(testid);
+    const r = testid.getBoundingClientRect();
+    testid_probe = {
+      outerHTML: (testid.outerHTML || '').slice(0, 2000),
+      visibility: {
+        display: st.display,
+        visibility: st.visibility,
+        opacity: st.opacity,
+      },
+      offset_parent: !!testid.offsetParent,
+      bbox: {x: r.x, y: r.y, w: r.width, h: r.height},
+    };
+  }
+
   let model_label = '';
   let effort = null;
   let lookup = '';
   let chip_el = null;
 
-  if (testid && testid.offsetParent) {
-    const aria = (testid.getAttribute('aria-label') || '').trim();
-    const text = strip(testid.innerText || '');
-    model_label = modelLabelFrom(aria, text);
-    lookup = 'model_selector_testid';
-    chip_el = testid;
-    const em = (aria + '\\n' + (testid.innerText || '')).match(effortRe);
-    if (em) effort = em[1];
-  } else if (root) {
+  if (root) {
     const picked = pickModel(root);
-    if (picked) {
+    if (picked && parsableModelLabel(picked.label)) {
       model_label = picked.label;
       effort = picked.effort;
       lookup = picked.lookup;
       chip_el = picked.el;
+    }
+  }
+
+  if (!model_label && testid && testid.offsetParent) {
+    const hit = readTestidChip(testid);
+    if (hit) {
+      model_label = hit.label;
+      effort = hit.effort;
+      lookup = 'model_selector_testid';
+      chip_el = testid;
     }
   }
 
@@ -1008,7 +1050,9 @@ _COMPOSE_MODEL_CHIP_JS = """() => {
     model_label,
     effort,
     lookup,
-    model_chip_candidates: candidates,
+    model_chip_candidates: compose_candidates,
+    model_chip_compose_candidates: compose_candidates,
+    model_chip_testid_probe: testid_probe,
     compose_root: !!root,
   };
 }"""
@@ -1114,11 +1158,18 @@ async def _probe_compose_model_chip(page) -> dict[str, Any]:
             "lookup": "",
             "model_chip_candidates": [],
         }
+    compose_candidates = list(
+        raw.get("model_chip_compose_candidates")
+        or raw.get("model_chip_candidates")
+        or []
+    )
     return {
         "model_label": str(raw.get("model_label") or "").strip(),
         "effort": _normalize_compose_effort(raw.get("effort")),
         "lookup": str(raw.get("lookup") or ""),
-        "model_chip_candidates": list(raw.get("model_chip_candidates") or []),
+        "model_chip_candidates": compose_candidates,
+        "model_chip_compose_candidates": compose_candidates,
+        "model_chip_testid_probe": raw.get("model_chip_testid_probe"),
     }
 
 
@@ -1126,7 +1177,15 @@ async def _ui_census_with_model_chip(page) -> dict[str, Any]:
     rg = await collect_radiogroup_evidence(page)
     base = ui_census_from_radiogroup_evidence(rg)
     probe = await _probe_compose_model_chip(page)
-    base["model_chip_candidates"] = probe.get("model_chip_candidates") or []
+    compose_candidates = (
+        probe.get("model_chip_compose_candidates")
+        or probe.get("model_chip_candidates")
+        or []
+    )
+    base["model_chip_candidates"] = compose_candidates
+    base["model_chip_compose_candidates"] = compose_candidates
+    if probe.get("model_chip_testid_probe") is not None:
+        base["model_chip_testid_probe"] = probe["model_chip_testid_probe"]
     if probe.get("lookup"):
         base["model_chip_lookup"] = probe["lookup"]
     return base

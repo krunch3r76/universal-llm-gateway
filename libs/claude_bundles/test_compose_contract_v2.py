@@ -31,8 +31,8 @@ _COMPOSE_V2_HTML = """
   <div role="menuitemradio" id="row-auto" aria-checked="false">Auto
     <span>runs on its own, pauses if unsafe</span></div>
 </div>
-<button data-testid="model-selector-dropdown" aria-label="Opus 5.5"
-  style="width:90px;height:28px">Opus 5.5</button>
+<button type="button" data-testid="model-selector-dropdown" aria-label="Model: Opus 5.5 High"
+  style="width:118px;height:28px;display:inline-flex">Opus 5.5<br> High</button>
 <button id="effort" style="width:48px;height:28px">High</button>
 <div role="banner" id="quota">You've used 91% of your weekly limit</div>
 <script>
@@ -166,16 +166,18 @@ async def test_ensure_compose_model_chip_readback_ok() -> None:
 async def test_ensure_compose_model_chip_mismatch_sets_via_picker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    html = _COMPOSE_V2_HTML.replace('aria-label="Opus 5.5"', 'aria-label="Sonnet 5"')
-    html = html.replace(">Opus 5.5<", ">Sonnet 5<")
+    html = _COMPOSE_V2_HTML.replace(
+        'aria-label="Model: Opus 5.5 High"', 'aria-label="Model: Sonnet 5"'
+    )
+    html = html.replace("Opus 5.5<br> High", "Sonnet 5")
 
     async def _select_model(page, _model: str) -> dict:
         await page.evaluate(
             """() => {
               const b = document.querySelector('[data-testid="model-selector-dropdown"]');
               if (b) {
-                b.innerText = 'Opus 5.5';
-                b.setAttribute('aria-label', 'Opus 5.5');
+                b.setAttribute('aria-label', 'Model: Opus 5.5 High');
+                b.innerHTML = 'Opus 5.5<br> High';
               }
             }"""
         )
@@ -239,7 +241,7 @@ _COMPOSE_V2_LIVE_CHIP_HTML = """
 <section class="compose-shell">
   <div data-testid="chat-input" contenteditable="true"></div>
   <button id="project" style="width:72px;height:28px">Project</button>
-  <button id="model" aria-label="Opus 5.5" style="width:90px;height:28px">Opus 5.5\ue003</button>
+  <button id="model" aria-label="Model: Opus 5.5 High" style="width:118px;height:28px">Opus 5.5<br> High</button>
   <button id="perm" style="width:72px;height:28px">Auto</button>
   <div id="menu" role="menu" style="display:none">
     <div role="menuitemradio" id="row-opus" aria-checked="true" aria-label="Opus 5.5 High">
@@ -287,11 +289,106 @@ async def test_compose_model_chip_missing_attaches_candidates() -> None:
             result = await ensure_compose_model_chip(page, model_request="opus-5.5")
             assert result["ok"] is False
             assert result["step"] == "model_chip_missing"
+            assert result["failure_class"] == "ui_drift"
             census = result.get("ui_census") or {}
             assert "model_chip_candidates" in census
+            assert "model_chip_compose_candidates" in census
             assert any(
                 c.get("text") == "Manual" for c in census["model_chip_candidates"]
             )
+            assert census.get("model_chip_testid_probe") is None
+        finally:
+            await browser.close()
+
+
+# Live census 34002a46: closed chip uses aria ``Model: Opus 5.5 High`` and
+# innerText ``Opus 5.5`` + newline + `` High`` (no separate effort button).
+_COMPOSE_V2_LIVE_TESTID_CHIP_HTML = """
+<!doctype html><html><head><title>New session - Claude</title></head><body>
+<div role="radiogroup" aria-label="Mode">
+  <div role="radio" aria-checked="true" aria-label="Claude">Claude</div>
+</div>
+<section>
+  <div data-testid="chat-input" contenteditable="true"></div>
+  <button type="button" data-testid="model-selector-dropdown"
+    aria-label="Model: Opus 5.5 High"
+    style="width:118px;height:28px;display:inline-flex">Opus 5.5<br> High</button>
+  <button id="perm" style="width:72px;height:28px">Auto</button>
+</section>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_compose_model_chip_live_testid_closed_resolves_opus_high() -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_COMPOSE_V2_LIVE_TESTID_CHIP_HTML)
+            chip = await read_compose_model_chip(page)
+            assert chip["model_label"] == "Opus 5.5"
+            assert chip.get("effort") == "High"
+            assert chip.get("model_chip_lookup") == "chat_input_region"
+            result = await ensure_compose_model_chip(
+                page, model_request="opus-5.5", effort="high"
+            )
+            assert result["ok"] is True
+            assert result["step"] == "already_model"
+        finally:
+            await browser.close()
+
+
+# Hidden/unparsable testid must fall through to the compose-region chip.
+_COMPOSE_V2_TESTID_EMPTY_COMPOSE_CHIP_HTML = """
+<!doctype html><html><head><title>New session - Claude</title></head><body>
+<div data-testid="chat-input" contenteditable="true"></div>
+<button data-testid="model-selector-dropdown" style="display:none" aria-label=""></button>
+<section class="compose-shell">
+  <button type="button" aria-label="Model: Opus 5.5 High"
+    style="width:118px;height:28px;display:inline-flex">Opus 5.5<br> High</button>
+</section>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_compose_model_chip_falls_through_empty_testid_to_compose() -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_COMPOSE_V2_TESTID_EMPTY_COMPOSE_CHIP_HTML)
+            chip = await read_compose_model_chip(page)
+            assert chip["model_label"] == "Opus 5.5"
+            assert chip.get("effort") == "High"
+            assert chip.get("model_chip_lookup") == "chat_input_region"
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_compose_model_chip_failure_census_testid_probe() -> None:
+    html = _COMPOSE_V2_NO_MENU_HTML.replace(
+        "<button style=",
+        (
+            '<button data-testid="model-selector-dropdown" style="display:none" '
+            'aria-label=""></button><button id="decoy" style='
+        ),
+    )
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(html)
+            result = await ensure_compose_model_chip(page, model_request="opus-5.5")
+            assert result["ok"] is False
+            assert result["failure_class"] == "ui_drift"
+            census = result.get("ui_census") or {}
+            probe = census.get("model_chip_testid_probe") or {}
+            assert probe.get("offset_parent") is False
+            assert "outerHTML" in probe
+            assert census.get("model_chip_compose_candidates")
         finally:
             await browser.close()
 
