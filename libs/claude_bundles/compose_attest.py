@@ -2,9 +2,9 @@
 
 Dual-primary (friction 25051/25052): selector repair + poll-until-attest, not
 poll-only. Chip toggle may attest Cowork while approval is still Manual.
-Ship gate (Start task): Cowork requires ``Skip all approvals`` (aria-less
-short text ``Skip`` counts) — ``mode==cowork`` alone or Manual/Auto is not
-success.
+Ship gate (Start task / warm Send): compose v2 requires Permission mode
+``Auto`` (aria-less chip text ``Auto`` counts). Legacy Cowork chrome may
+still show ``Skip all approvals`` or ``Skip`` — both pass the gate.
 Chat success: ``mode==chat`` and approval is None. Project-shell rows without
 chips are a named skip, not a silent Skip waiver on ``/new``.
 
@@ -195,29 +195,29 @@ def dispatch_approval_refuse_reason(
 def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:
     """Fail-closed refuse text when a Cowork dispatch must not Start task.
 
-    Callers (``send_prompt``) raise this string so Manual/Auto cannot ship.
-    None iff the label matches Skip all approvals or the short text Skip.
+    Callers (``send_prompt``) raise this string so Manual cannot ship.
+    None iff the chip reads Auto (v2 Permission mode) or legacy Skip-all.
     Chat (no approval chrome) and Project-shell rows without chips return
-    None — named skip, not a silent Skip waiver on ``/new`` or ``/cowork/cse_``.
+    None — named skip, not a silent waiver on ``/new`` or ``/cowork/cse_``.
     """
     aria = _approval_aria(fp)
     mode = fp.get("mode")
     if mode == "chat" and not aria:
         return None
-    if not aria and mode != "cowork":
+    if not aria and mode != "cowork" and not fp.get("approval"):
+        return None
+    seen = str(fp.get("approval", {}).get("text") or aria).strip() or aria
+    if _AUTO_ARIA_RE.search(aria):
         return None
     if _SKIP_ARIA_RE.search(aria):
         return None
     if _MANUAL_ARIA_RE.search(aria):
         return (
-            f"cowork dispatch refused: approval aria {aria!r} (need Skip all approvals)"
-        )
-    if _AUTO_ARIA_RE.search(aria):
-        return (
-            f"cowork dispatch refused: approval aria {aria!r} (need Skip all approvals)"
+            f"cowork dispatch refused: approval {seen!r} "
+            "(need Permission mode Auto)"
         )
     return (
-        "cowork dispatch refused: Skip all approvals not attested "
+        "cowork dispatch refused: Permission mode Auto not attested "
         f"(mode={mode!r} approval={fp.get('approval')!r})"
     )
 
@@ -228,14 +228,17 @@ def _compose_attested(
     *,
     require_auto: bool = True,
 ) -> bool:
-    """Cowork ship-attest. ``require_auto=True`` requires Skip all approvals.
+    """Cowork ship-attest. ``require_auto=True`` requires Permission Auto (v2)
+    or legacy Skip-all.
 
     ``require_auto=False`` is chip/title only so the Cowork chip can attest
     before the radio flip (Manual or Auto ok at that step).
     """
     if mode == "cowork":
         if require_auto:
-            return fp.get("mode") == "cowork" and _approval_is_skip(fp)
+            if fp.get("approval"):
+                return _approval_is_auto(fp) or _approval_is_skip(fp)
+            return fp.get("mode") == "cowork"
         return fp.get("mode") == "cowork" or bool(fp.get("approval"))
     if fp.get("mode") == "chat" and not fp.get("approval"):
         return True
@@ -255,8 +258,8 @@ async def await_compose_attest(
 ) -> dict[str, Any]:
     """Poll ``compose_mode_fingerprint`` until mode attests or timeout.
 
-    Default ``require_auto=True`` is the Start-task ship gate: Cowork must
-    show Skip all approvals (aria-less ``Skip`` counts). Chip toggle
+    Default ``require_auto=True`` is the Start-task ship gate: Permission
+    mode Auto or legacy Skip-all (aria-less ``Skip`` counts). Chip toggle
     (``select_compose_mode``) passes ``require_auto=False`` so the Cowork
     chip can attest before the radio flip.
     """

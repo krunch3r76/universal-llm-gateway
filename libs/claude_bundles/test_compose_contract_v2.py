@@ -393,6 +393,88 @@ async def test_compose_model_chip_failure_census_testid_probe() -> None:
             await browser.close()
 
 
+_PERM_V2_DOM_MANUAL_HTML = """
+<!doctype html><html><head><title>New session - Claude</title></head><body>
+<div data-testid="chat-input" contenteditable="true"></div>
+<button id="perm" type="button" data-cds="Button" aria-haspopup="menu"
+  aria-expanded="false" style="width:68px;height:28px">Manual</button>
+<div id="menu" role="menu" style="display:none">
+  <div role="group" aria-labelledby="perm-group">
+    <div id="perm-group" aria-hidden="true">Permission mode</div>
+    <div role="menuitemradio" aria-checked="true">Manual</div>
+    <div role="menuitemradio" aria-checked="false">Auto</div>
+  </div>
+</div>
+<script>
+document.getElementById('perm').addEventListener('click', () => {
+  document.getElementById('menu').style.display = 'block';
+});
+document.getElementById('menu').children[0].children[2].addEventListener('click', () => {
+  document.getElementById('perm').innerText = 'Auto';
+  document.getElementById('menu').style.display = 'none';
+});
+</script>
+</body></html>
+"""
+
+_PERM_V2_DOM_AUTO_HTML = _PERM_V2_DOM_MANUAL_HTML.replace(
+    'style="width:68px;height:28px">Manual</button>',
+    'style="width:68px;height:28px">Auto</button>',
+)
+
+_PERM_V2_DOM_SET_FAIL_HTML = _PERM_V2_DOM_MANUAL_HTML.replace(
+    "document.getElementById('menu').children[0].children[2].addEventListener('click', () => {",
+    "document.getElementById('menu').children[0].children[2].addEventListener('click', () => { return;",
+)
+
+
+@pytest.mark.asyncio
+async def test_ensure_permission_mode_closed_manual_fixture() -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_PERM_V2_DOM_MANUAL_HTML)
+            result = await ensure_permission_mode(page, "Auto")
+            assert result["ok"] is True
+            assert result["button_label"] == "Auto"
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_ensure_permission_mode_closed_auto_noop() -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_PERM_V2_DOM_AUTO_HTML)
+            result = await ensure_permission_mode(page, "Auto")
+            assert result["ok"] is True
+            assert result["step"] == "already_auto"
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_ensure_permission_mode_set_fail_census() -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_PERM_V2_DOM_SET_FAIL_HTML)
+            result = await ensure_permission_mode(page, "Auto")
+            assert result["ok"] is False
+            census = result.get("permission_census") or {}
+            assert census.get("chip_innerText") == "Manual"
+            assert census.get("chip_outerHTML")
+            assert any(
+                "aria_checked" in row for row in (census.get("menu_items") or [])
+            )
+        finally:
+            await browser.close()
+
+
 @pytest.mark.asyncio
 async def test_permission_chip_prefers_chat_input_region() -> None:
     from claude_bundles.chat_cowork_mode import _permission_mode_button_label

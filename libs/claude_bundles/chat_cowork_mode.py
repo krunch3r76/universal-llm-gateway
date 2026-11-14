@@ -640,6 +640,71 @@ async def _wait_permission_menu(page) -> dict[str, Any]:
     return {"ok": False, "menu": last, "polled_ms": elapsed}
 
 
+async def _permission_chip_snapshot(page) -> dict[str, Any]:
+    """Permission-mode chip census for failure payloads (DOM sample a:43854-d)."""
+    raw = await page.evaluate(
+        """() => {
+          const re = /^(manual|auto)$/i;
+          function pickIn(root) {
+            let best = null;
+            for (const el of root.querySelectorAll('button, [role="button"]')) {
+              const text = (el.innerText || '').trim();
+              if (!re.test(text) || !el.offsetParent) continue;
+              const r = el.getBoundingClientRect();
+              if (r.width < 28 || r.width > 160 || r.height < 16 || r.height > 52) {
+                continue;
+              }
+              if (!best || r.width < best.w) best = {el, w: r.width, text};
+            }
+            return best;
+          }
+          let best = null;
+          const chat = document.querySelector('[data-testid="chat-input"]');
+          if (chat) {
+            const root =
+              chat.closest('form, main, section, [class*="compose"]')
+              || chat.parentElement;
+            if (root) best = pickIn(root);
+          }
+          if (!best) best = pickIn(document.body);
+          if (!best) return {found: false};
+          const el = best.el;
+          return {
+            found: true,
+            innerText: best.text,
+            outerHTML: (el.outerHTML || '').slice(0, 2000),
+            attrs: {
+              'aria-expanded': el.getAttribute('aria-expanded'),
+              'aria-haspopup': el.getAttribute('aria-haspopup'),
+              'aria-label': el.getAttribute('aria-label') || '',
+              id: el.id || '',
+            },
+          };
+        }"""
+    )
+    return raw if isinstance(raw, dict) else {"found": False}
+
+
+def _permission_failure_census(
+    chip: dict[str, Any],
+    menu_probe: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach chip outerHTML + menu aria-checked rows for refuse diagnostics."""
+    items = [
+        {
+            "text": row.get("text"),
+            "aria_checked": row.get("aria_checked"),
+            "role": row.get("role"),
+        }
+        for row in (menu_probe.get("items") or [])
+    ]
+    return {
+        "chip_outerHTML": chip.get("outerHTML"),
+        "chip_innerText": chip.get("innerText") or chip.get("text"),
+        "menu_items": items,
+    }
+
+
 async def _permission_mode_button_label(page) -> dict[str, Any]:
     """Read the compact Manual/Auto permission-mode trigger, if present."""
     raw = await page.evaluate(
@@ -748,12 +813,16 @@ async def _open_permission_menu(page) -> dict[str, Any]:
                     "menu": waited.get("menu"),
                     "polled_ms": waited.get("polled_ms"),
                 }
+    menu_probe = await _permission_menu_probe(page)
+    chip = await _permission_chip_snapshot(page)
     rg = await collect_radiogroup_evidence(page)
     return {
         "ok": False,
         "step": "permission_control_missing",
         "button": btn,
-        "menu_probe": await _permission_menu_probe(page),
+        "chip": chip,
+        "menu_probe": menu_probe,
+        "permission_census": _permission_failure_census(chip, menu_probe),
         "ui_census": ui_census_from_radiogroup_evidence(rg),
         "failure_class": "ui_drift",
     }
@@ -811,6 +880,8 @@ async def ensure_permission_mode(page, mode: PermissionMode = "Auto") -> dict[st
         item_re.pattern,
     )
     if not isinstance(picked, dict) or not picked.get("ok"):
+        menu_probe = await _permission_menu_probe(page)
+        chip = await _permission_chip_snapshot(page)
         rg = await collect_radiogroup_evidence(page)
         return {
             "ok": False,
@@ -818,7 +889,9 @@ async def ensure_permission_mode(page, mode: PermissionMode = "Auto") -> dict[st
             "wanted": mode,
             "opened": opened,
             "before": before_btn,
-            "menu_probe": await _permission_menu_probe(page),
+            "chip": chip,
+            "menu_probe": menu_probe,
+            "permission_census": _permission_failure_census(chip, menu_probe),
             "ui_census": ui_census_from_radiogroup_evidence(rg),
             "failure_class": "ui_drift",
         }
@@ -848,11 +921,14 @@ async def ensure_permission_mode(page, mode: PermissionMode = "Auto") -> dict[st
         "menu_probe": menu_after,
     }
     if not ok:
+        chip = await _permission_chip_snapshot(page)
         rg = await collect_radiogroup_evidence(page)
         ui_census = ui_census_from_radiogroup_evidence(rg)
         lookup = str(after_btn.get("permission_lookup") or "")
         if lookup:
             ui_census = {**ui_census, "permission_lookup": lookup}
+        out["chip"] = chip
+        out["permission_census"] = _permission_failure_census(chip, menu_after)
         out["ui_census"] = ui_census
         out["failure_class"] = "ui_drift"
     elif after_btn.get("permission_lookup") == "viewport_fallback":
@@ -1349,15 +1425,37 @@ async def ensure_cowork_auto(
 
 
 async def ensure_approval_auto(page) -> dict[str, Any]:
-    """Re-apply Skip all approvals when the approval chip exists.
+    """Set Permission mode Auto (v2) or legacy Skip-all before Start task / Send.
 
-    Used immediately before Start task / warm Send so model-picker or paste
-    cannot ship Cowork+Manual or Cowork+Auto after ``ensure_cowork_auto``
-    already attested on ``/new``. Skips when chrome is absent (Chat / Project
-    shell). Does not toggle Cowork — callers that need the chip use
-    ``ensure_cowork_auto``.
+    Used immediately before dispatch so model-picker or paste cannot ship
+    Manual after ``ensure_cowork_auto`` attested on ``/new``. Skips when
+    chrome is absent (Chat / Project shell). Does not toggle Cowork — callers
+    that need readiness + permission use ``ensure_cowork_auto``.
     """
     before = await compose_mode_fingerprint(page)
+    perm_btn = await _permission_mode_button_label(page)
+    if perm_btn.get("found"):
+        permission = await ensure_permission_mode(page, "Auto")
+        after = await compose_mode_fingerprint(page)
+        out: dict[str, Any] = {
+            "ok": bool(permission.get("ok")),
+            "step": "permission_auto" if permission.get("ok") else "permission_auto_failed",
+            "before": before,
+            "after": after,
+            "permission": permission,
+        }
+        if not permission.get("ok"):
+            chip = permission.get("chip") or await _permission_chip_snapshot(page)
+            menu_probe = permission.get("menu_probe") or await _permission_menu_probe(
+                page
+            )
+            out["chip"] = chip
+            out["menu_probe"] = menu_probe
+            out["permission_census"] = permission.get(
+                "permission_census"
+            ) or _permission_failure_census(chip, menu_probe)
+        return out
+
     if not before.get("approval"):
         return {
             "ok": True,
