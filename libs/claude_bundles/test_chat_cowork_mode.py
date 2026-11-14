@@ -276,45 +276,38 @@ async def test_set_approval_mode_selects_skip_via_menuitem() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ensure_cowork_auto_fails_closed_when_skip_unattained_on_auto(
+async def test_ensure_cowork_auto_fails_closed_when_permission_menu_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Chip stays Auto and Skip is not attested: launch fails closed."""
-    mode_ok = {"ok": True, "step": "selected_cowork"}
-    skip_fail = {
+    """Compose v2: readiness ok but Permission menu missing fails closed."""
+    readiness_ok = {"ready": True, "step": "compose_readiness"}
+    permission_fail = {
         "ok": False,
-        "step": "approval_control_missing",
-        "before": {
-            "title": "New task - Claude",
-            "mode": "cowork",
-            "approval": {"aria": "", "text": "Auto", "via": "text"},
-            "url": "https://claude.ai/new",
-        },
+        "step": "permission_control_missing",
+        "failure_class": "ui_drift",
+        "ui_census": {"radiogroup_names": ["Mode"]},
     }
 
-    async def mock_select(_page, _mode: str) -> dict:
-        return mode_ok
-
-    skip_mock = AsyncMock(side_effect=[skip_fail, skip_fail])
     monkeypatch.setattr(
-        "claude_bundles.chat_cowork_mode.select_compose_mode",
-        mock_select,
+        "claude_bundles.chat_cowork_mode.compose_readiness_attestation",
+        AsyncMock(return_value=readiness_ok),
     )
     monkeypatch.setattr(
-        "claude_bundles.chat_cowork_mode.set_approval_mode",
-        skip_mock,
+        "claude_bundles.chat_cowork_mode.ensure_permission_mode",
+        AsyncMock(return_value=permission_fail),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.read_quota_weekly_pct",
+        AsyncMock(return_value={"pct": None, "banner_text": None}),
     )
 
     class _Page:
-        async def wait_for_timeout(self, _ms: int) -> None:
-            return None
+        pass
 
-    page = _Page()
-
-    result = await ensure_cowork_auto(page)
+    result = await ensure_cowork_auto(_Page())
     assert result["ok"] is False
-    assert result["step"] == "cowork_skip_unattained"
-    assert not hasattr(page, "_cowork_approval_" + "degraded")
+    assert result["step"] == "permission_mode"
+    assert result["failure_class"] == "ui_drift"
 
 
 # Live shape (Jupiter /new, 2026-09-29): aria-less Auto chip, menuitemradio

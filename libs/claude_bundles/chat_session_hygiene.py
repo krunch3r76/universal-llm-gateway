@@ -338,6 +338,51 @@ def classify_compose_setup_failure(result: dict, *, url: str, on_new: bool) -> d
             "failing_block": "url",
         }
 
+    if (
+        str(result.get("failure_class") or "") == "quota_near"
+        or str(result.get("step") or "") == "quota_near"
+    ):
+        return {
+            "failure_class": "quota_near",
+            "hint": "new_compose_quota_near",
+            "failing_block": "quota",
+            "quota_weekly_pct": result.get("quota_weekly_pct"),
+            "result": result,
+        }
+
+    permission = (
+        result.get("permission") if isinstance(result.get("permission"), dict) else None
+    )
+    if permission is not None and not permission.get("ok"):
+        return {
+            "failure_class": "ui_drift",
+            "hint": "new_compose_permission_failed",
+            "failing_block": "permission",
+            "permission": permission,
+            "compose_readiness": result.get("compose_readiness"),
+        }
+
+    if str(result.get("step") or "") in {
+        "permission_mode",
+        "model_chip",
+        "ui_drift",
+        "compose_not_ready",
+    }:
+        fc = str(result.get("failure_class") or "ui_drift")
+        hint = (
+            "new_compose_quota_near"
+            if fc == "quota_near"
+            else "new_compose_ui_drift"
+            if fc == "ui_drift"
+            else "new_compose_toggle_failed"
+        )
+        return {
+            "failure_class": fc,
+            "hint": hint,
+            "failing_block": "result",
+            "result": result,
+        }
+
     mode = result.get("mode") if isinstance(result.get("mode"), dict) else None
     approval = (
         result.get("approval") if isinstance(result.get("approval"), dict) else None
@@ -478,14 +523,15 @@ async def goto_fresh_compose(
     project_uuid: str | None = None,
     compose_url: str | None = None,
     ensure_cowork_auto: bool = True,
+    model_request: str | None = None,
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
 ) -> str:
     """Land on a clean compose surface (Project chrome or bare /new).
 
-    On bare ``/new``, default ``ensure_cowork_auto=True`` selects Cowork +
-    Skip all approvals (friction 25051 — Chat CDP Send path broken). Pass
-    ``ensure_cowork_auto=False`` only on **operator-gated** Chat dispatches.
+    On bare ``/new``, default ``ensure_cowork_auto=True`` runs compose v2
+    (readiness + Permission Auto — a:43854). Pass ``ensure_cowork_auto=False``
+    only on **operator-gated** Chat dispatches.
 
     ``stargate_execution_id`` / ``satellite_execution_id`` thread into
     ``cdp.generate.compose_attested`` on both arms (arc 6928 / 7034 B1 producer).
@@ -515,6 +561,7 @@ async def goto_fresh_compose(
         result = await ensure_bare_new_compose(
             page,
             ensure_cowork_auto=ensure_cowork_auto,
+            model_request=model_request if ensure_cowork_auto else None,
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=satellite_execution_id,
         )

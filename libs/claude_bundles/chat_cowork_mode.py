@@ -32,6 +32,7 @@ from claude_bundles.compose_chip_probe import (
     collect_approval_candidates,
     collect_chip_candidates,
     collect_radiogroup_evidence,
+    compose_readiness_attestation,
     compose_ui_drift_detected,
     try_click_compose_chip,
     ui_census_from_radiogroup_evidence,
@@ -44,6 +45,17 @@ _CHIP_POLL_TIMEOUT_S = 8.0
 
 ApprovalMode = Literal["auto", "manual", "skip"]
 ComposeMode = Literal["chat", "cowork"]
+PermissionMode = Literal["Auto", "Manual"]
+
+DEFAULT_QUOTA_NEAR_THRESHOLD = 95
+
+_QUOTA_WEEKLY_PCT_RE = re.compile(r"(\d{1,3})\s*%\s+of\s+your\s+weekly\s+limit", re.I)
+
+_PERMISSION_BUTTON_RE = re.compile(r"^(Manual|Auto)$", re.I)
+_PERMISSION_ITEM = {
+    "Auto": re.compile(r"^Auto\b", re.I),
+    "Manual": re.compile(r"^Manual\b", re.I),
+}
 
 # Short-form alternation (a:31319) — chip can render aria-less with just the
 # bare state name as its button text.
@@ -337,7 +349,9 @@ async def select_compose_mode(page, mode: ComposeMode) -> dict[str, Any]:
             "gate_rejects": [],
         }
     if mode == "chat" and (before.get("compose_readiness") or {}).get("ready"):
-        attest = await await_compose_attest(page, mode, timeout_s=8.0, require_auto=False)
+        attest = await await_compose_attest(
+            page, mode, timeout_s=8.0, require_auto=False
+        )
         after = attest.get("fingerprint") or before
         return {
             "ok": bool(attest.get("ok")),
@@ -584,6 +598,369 @@ async def set_approval_mode(page, mode: ApprovalMode = "skip") -> dict[str, Any]
     return result
 
 
+async def _permission_menu_probe(page) -> dict[str, Any]:
+    """Count visible Permission-mode rows (Manual/Auto without legacy approve copy)."""
+    raw = await page.evaluate(
+        """() => {
+          const roles = ['menuitemradio', 'menuitem', 'option'];
+          const items = [];
+          for (const role of roles) {
+            for (const el of document.querySelectorAll(`[role="${role}"]`)) {
+              if (!el.offsetParent) continue;
+              const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+              if (!/^(manual|auto)\\b/i.test(t)) continue;
+              if (/approve/i.test(t)) continue;
+              items.push({
+                role,
+                text: t.slice(0, 100),
+                aria_checked: el.getAttribute('aria-checked') || '',
+              });
+            }
+          }
+          return {count: items.length, items: items.slice(0, 8)};
+        }"""
+    )
+    if not isinstance(raw, dict):
+        return {"count": 0, "items": []}
+    return {
+        "count": int(raw.get("count") or 0),
+        "items": list(raw.get("items") or []),
+    }
+
+
+async def _wait_permission_menu(page) -> dict[str, Any]:
+    elapsed = 0
+    last = await _permission_menu_probe(page)
+    while elapsed < _APPROVAL_MENU_OPEN_TIMEOUT_MS:
+        if last.get("count", 0) >= 2:
+            return {"ok": True, "menu": last, "polled_ms": elapsed}
+        await page.wait_for_timeout(_APPROVAL_MENU_OPEN_POLL_MS)
+        elapsed += _APPROVAL_MENU_OPEN_POLL_MS
+        last = await _permission_menu_probe(page)
+    return {"ok": False, "menu": last, "polled_ms": elapsed}
+
+
+async def _permission_mode_button_label(page) -> dict[str, Any]:
+    """Read the compact Manual/Auto permission-mode trigger, if present."""
+    raw = await page.evaluate(
+        """() => {
+          const re = /^(manual|auto)$/i;
+          function pickIn(root) {
+            let best = null;
+            for (const el of root.querySelectorAll('button, [role="button"]')) {
+              const text = (el.innerText || '').trim();
+              if (!re.test(text) || !el.offsetParent) continue;
+              const r = el.getBoundingClientRect();
+              if (r.width < 28 || r.width > 160 || r.height < 16 || r.height > 52) {
+                continue;
+              }
+              if (!best || r.width < best.w) best = {el, w: r.width, text};
+            }
+            return best;
+          }
+          let lookup = 'viewport_fallback';
+          let best = null;
+          const chat = document.querySelector('[data-testid="chat-input"]');
+          if (chat) {
+            const root =
+              chat.closest('form, main, section, [class*="compose"]')
+              || chat.parentElement;
+            if (root) {
+              best = pickIn(root);
+              if (best) lookup = 'chat_input_region';
+            }
+          }
+          if (!best) {
+            best = pickIn(document.body);
+            lookup = 'viewport_fallback';
+          }
+          if (!best) return {found: false, permission_lookup: lookup};
+          return {
+            found: true,
+            text: best.text,
+            aria: best.el.getAttribute('aria-label') || '',
+            permission_lookup: lookup,
+          };
+        }"""
+    )
+    return raw if isinstance(raw, dict) else {"found": False}
+
+
+async def _click_permission_mode_button(page) -> bool:
+    clicked = await page.evaluate(
+        """() => {
+          const re = /^(manual|auto)$/i;
+          function pickIn(root) {
+            let best = null;
+            for (const el of root.querySelectorAll('button, [role="button"]')) {
+              const text = (el.innerText || '').trim();
+              if (!re.test(text) || !el.offsetParent) continue;
+              const r = el.getBoundingClientRect();
+              if (r.width < 28 || r.width > 160 || r.height < 16 || r.height > 52) {
+                continue;
+              }
+              if (!best || r.width < best.w) best = {el, w: r.width};
+            }
+            return best;
+          }
+          let best = null;
+          const chat = document.querySelector('[data-testid="chat-input"]');
+          if (chat) {
+            const root =
+              chat.closest('form, main, section, [class*="compose"]')
+              || chat.parentElement;
+            if (root) best = pickIn(root);
+          }
+          if (!best) best = pickIn(document.body);
+          if (!best) return false;
+          best.el.click();
+          return true;
+        }"""
+    )
+    return bool(clicked)
+
+
+async def _open_permission_menu(page) -> dict[str, Any]:
+    """Open the Permission mode menu from the Manual/Auto chip."""
+    btn = await _permission_mode_button_label(page)
+    if btn.get("found") and await _click_permission_mode_button(page):
+        waited = await _wait_permission_menu(page)
+        if waited.get("ok"):
+            return {
+                "ok": True,
+                "opened_via": "permission_chip",
+                "button_before": btn,
+                "menu": waited.get("menu"),
+                "polled_ms": waited.get("polled_ms"),
+            }
+    for pat in (r"^Manual\b", r"^Auto\b"):
+        loc = page.locator('button, [role="button"]').filter(
+            has_text=re.compile(pat, re.I)
+        )
+        if await loc.count():
+            await loc.first.click(force=True)
+            waited = await _wait_permission_menu(page)
+            if waited.get("ok"):
+                return {
+                    "ok": True,
+                    "opened_via": "text",
+                    "pattern": pat,
+                    "menu": waited.get("menu"),
+                    "polled_ms": waited.get("polled_ms"),
+                }
+    rg = await collect_radiogroup_evidence(page)
+    return {
+        "ok": False,
+        "step": "permission_control_missing",
+        "button": btn,
+        "menu_probe": await _permission_menu_probe(page),
+        "ui_census": ui_census_from_radiogroup_evidence(rg),
+        "failure_class": "ui_drift",
+    }
+
+
+def _permission_attested(button: dict[str, Any], mode: PermissionMode) -> bool:
+    text = str(button.get("text") or "")
+    return bool(_PERMISSION_BUTTON_RE.match(text) and text.lower() == mode.lower())
+
+
+async def ensure_permission_mode(page, mode: PermissionMode = "Auto") -> dict[str, Any]:
+    """Select Permission mode Auto or Manual on bare ``/new`` (compose v2).
+
+      Opens the permission-mode button, chooses the menu row, and read-backs the
+      button label plus the checked menu item. Missing chrome fails closed with
+    ``failure_class=ui_drift`` and ``ui_census``.
+    """
+    before_btn = await _permission_mode_button_label(page)
+    if before_btn.get("found") and _permission_attested(before_btn, mode):
+        menu = await _permission_menu_probe(page)
+        return {
+            "ok": True,
+            "step": f"already_{mode.lower()}",
+            "button_label": before_btn.get("text"),
+            "before": before_btn,
+            "after": before_btn,
+            "menu_probe": menu,
+        }
+
+    opened = await _open_permission_menu(page)
+    if not opened.get("ok"):
+        return {**opened, "wanted": mode, "before": before_btn}
+
+    item_re = _PERMISSION_ITEM[mode]
+    picked = await page.evaluate(
+        """(modePat) => {
+          const re = new RegExp(modePat, 'i');
+          const roles = ['menuitemradio', 'menuitem', 'option'];
+          for (const role of roles) {
+            for (const el of document.querySelectorAll(`[role="${role}"]`)) {
+              const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+              if (!re.test(t) || /approve/i.test(t)) continue;
+              if (/manual/i.test(t) && /auto/i.test(t)) continue;
+              el.click();
+              return {
+                ok: true,
+                text: t.slice(0, 120),
+                aria_checked: el.getAttribute('aria-checked') || '',
+                role,
+              };
+            }
+          }
+          return {ok: false};
+        }""",
+        item_re.pattern,
+    )
+    if not isinstance(picked, dict) or not picked.get("ok"):
+        rg = await collect_radiogroup_evidence(page)
+        return {
+            "ok": False,
+            "step": "permission_menu_item_missing",
+            "wanted": mode,
+            "opened": opened,
+            "before": before_btn,
+            "menu_probe": await _permission_menu_probe(page),
+            "ui_census": ui_census_from_radiogroup_evidence(rg),
+            "failure_class": "ui_drift",
+        }
+
+    await page.wait_for_timeout(400)
+    after_btn = await _permission_mode_button_label(page)
+    menu_after = await _permission_menu_probe(page)
+    checked = [
+        row
+        for row in menu_after.get("items") or []
+        if str(row.get("aria_checked") or "").lower() == "true"
+        and item_re.search(str(row.get("text") or ""))
+    ]
+    ok = _permission_attested(after_btn, mode) or bool(checked)
+    out: dict[str, Any] = {
+        "ok": ok,
+        "step": f"selected_{mode.lower()}"
+        if ok
+        else f"select_{mode.lower()}_no_attest",
+        "wanted": mode,
+        "opened": opened,
+        "before": before_btn,
+        "after": after_btn,
+        "button_label": after_btn.get("text"),
+        "selected_item": picked,
+        "checked_items": checked,
+        "menu_probe": menu_after,
+    }
+    if not ok:
+        rg = await collect_radiogroup_evidence(page)
+        ui_census = ui_census_from_radiogroup_evidence(rg)
+        lookup = str(after_btn.get("permission_lookup") or "")
+        if lookup:
+            ui_census = {**ui_census, "permission_lookup": lookup}
+        out["ui_census"] = ui_census
+        out["failure_class"] = "ui_drift"
+    elif after_btn.get("permission_lookup") == "viewport_fallback":
+        rg = await collect_radiogroup_evidence(page)
+        out["ui_census"] = {
+            **ui_census_from_radiogroup_evidence(rg),
+            "permission_lookup": "viewport_fallback",
+        }
+    return out
+
+
+async def read_quota_weekly_pct(page) -> dict[str, Any]:
+    """Parse weekly-limit usage percentage when the banner is visible."""
+    raw = await page.evaluate(
+        """() => {
+          const pat = /\\d{1,3}\\s*%\\s*of\\s*your\\s*weekly\\s*limit/i;
+          for (const el of document.querySelectorAll(
+            'div,span,p,[role=banner],[role=alert],aside'
+          )) {
+            const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+            if (!pat.test(t)) continue;
+            if (!el.offsetParent) continue;
+            return {found: true, text: t.slice(0, 240)};
+          }
+          return {found: false};
+        }"""
+    )
+    if not isinstance(raw, dict) or not raw.get("found"):
+        return {"pct": None, "banner_text": None}
+    text = str(raw.get("text") or "")
+    match = _QUOTA_WEEKLY_PCT_RE.search(text)
+    pct = int(match.group(1)) if match else None
+    return {"pct": pct, "banner_text": text}
+
+
+async def read_compose_model_chip(page) -> dict[str, Any]:
+    """Read model picker label and separate effort chip when present."""
+    from claude_bundles.chat_model_select import current_model_label
+
+    label = await current_model_label(page)
+    effort = await page.evaluate(
+        """() => {
+          for (const el of document.querySelectorAll('button,[role=button],span')) {
+            const t = (el.innerText || '').trim();
+            if (!/^(low|medium|high|extra|max)$/i.test(t) || !el.offsetParent) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width < 12 || r.width > 120 || r.height < 12 || r.height > 48) continue;
+            return t;
+          }
+          return '';
+        }"""
+    )
+    return {
+        "model_label": (label or "").strip(),
+        "effort": str(effort or "").strip() or None,
+    }
+
+
+async def ensure_compose_model_chip(
+    page, *, model_request: str, effort: str | None = None
+) -> dict[str, Any]:
+    """Assert or set model + effort via the compose model chip."""
+    from claude_bundles.chat_model_match import label_satisfies_request
+    from claude_bundles.chat_model_select import select_model
+
+    before = await read_compose_model_chip(page)
+    label = before.get("model_label") or ""
+    if not label:
+        rg = await collect_radiogroup_evidence(page)
+        return {
+            "ok": False,
+            "step": "model_chip_missing",
+            "before": before,
+            "ui_census": ui_census_from_radiogroup_evidence(rg),
+            "failure_class": "ui_drift",
+        }
+    if label_satisfies_request(label, model_request) and (
+        effort is None or (before.get("effort") or "").lower() == effort.strip().lower()
+    ):
+        return {
+            "ok": True,
+            "step": "already_model",
+            "before": before,
+            "after": before,
+            "requested": model_request,
+        }
+    picked = await select_model(page, model_request)
+    after = await read_compose_model_chip(page)
+    ok = bool(picked.get("ok")) and label_satisfies_request(
+        after.get("model_label") or "", model_request
+    )
+    if effort and (after.get("effort") or "").lower() != effort.strip().lower():
+        ok = False
+    result: dict[str, Any] = {
+        "ok": ok,
+        "step": "model_chip_set" if ok else "model_chip_mismatch",
+        "requested": model_request,
+        "before": before,
+        "after": after,
+        "pick": picked,
+    }
+    if not ok:
+        rg = await collect_radiogroup_evidence(page)
+        result["ui_census"] = ui_census_from_radiogroup_evidence(rg)
+        result["failure_class"] = "ui_drift"
+    return result
+
+
 async def ensure_chat_compose(page) -> dict[str, Any]:
     """Select Chat mode on ``/new`` compose (operator-gated only).
 
@@ -598,51 +975,74 @@ async def ensure_chat_compose(page) -> dict[str, Any]:
     }
 
 
-async def ensure_cowork_auto(page) -> dict[str, Any]:
-    """Select Cowork mode and Skip all approvals (>> Skip).
+async def ensure_cowork_auto(
+    page,
+    *,
+    model_request: str | None = None,
+    model_effort: str | None = None,
+    quota_near_threshold: int = DEFAULT_QUOTA_NEAR_THRESHOLD,
+) -> dict[str, Any]:
+    """Bare ``/new`` compose v2: readiness + Permission Auto (+ optional model chip).
 
-    Default on bare ``/new`` for automated CDP (friction 25051). Call after
-    landing on ``https://claude.ai/new``, before model pick / send. No-op-ish
-    on Project shells that lack the Chat/Cowork chips (returns
-    ``chip_missing`` — callers may continue without failing hard).
-
-    One bounded retry on approval-only failure — Cowork attest can succeed
-    while the menu click to Skip all approvals flakes (b7ea437d / 10:13
-    Manual fingerprint). Skip unattested fails closed. Auto and Manual are
-    never accepted.
+    Replaces the legacy Cowork + Skip-all path for the default CDP surface
+    (a:43854). When ``compose_readiness`` attests Claude mode, sets Permission
+    mode to Auto, records ``quota_weekly_pct``, and optionally asserts the model
+    chip. Legacy Surface Chat/Cowork chrome is no longer selected on this path.
     """
-    mode = await select_compose_mode(page, "cowork")
-    if not mode.get("ok"):
-        return {"ok": False, "step": "cowork", "mode": mode}
-    approval = await set_approval_mode(page, "skip")
-    if not approval.get("ok"):
-        await page.wait_for_timeout(800)
-        approval = await set_approval_mode(page, "skip")
-        approval["retried"] = True
-    if approval.get("ok"):
+    readiness = await compose_readiness_attestation(page)
+    if not readiness.get("ready"):
+        rg = await collect_radiogroup_evidence(page)
+        ui_census = ui_census_from_radiogroup_evidence(rg)
+        drift = compose_ui_drift_detected(rg)
         return {
-            "ok": True,
-            "step": "cowork_auto",
-            "mode": mode,
-            "approval": approval,
+            "ok": False,
+            "step": "ui_drift" if drift else "compose_not_ready",
+            "failure_class": "ui_drift" if drift else "toggle",
+            "compose_readiness": readiness,
+            "ui_census": ui_census,
+            "surface_radiogroup_count": int(rg.get("surface_radiogroup_count") or 0),
+            "radiogroup_names": list(rg.get("radiogroup_names") or []),
         }
-    after_fp = (
-        approval.get("after")
-        or approval.get("before")
-        or await compose_mode_fingerprint(page)
-    )
-    step = (
-        "skip_option_absent"
-        if approval.get("step") == "skip_option_absent"
-        else "cowork_skip_unattained"
-    )
-    return {
-        "ok": False,
-        "step": step,
-        "mode": mode,
-        "approval": approval,
-        "fingerprint": after_fp,
+
+    permission = await ensure_permission_mode(page, "Auto")
+    quota = await read_quota_weekly_pct(page)
+    out: dict[str, Any] = {
+        "ok": True,
+        "step": "compose_v2",
+        "compose_readiness": readiness,
+        "permission": permission,
+        "quota_weekly_pct": quota.get("pct"),
+        "quota_banner": quota,
     }
+    if not permission.get("ok"):
+        out["ok"] = False
+        out["step"] = "permission_mode"
+        out["failure_class"] = permission.get("failure_class") or "ui_drift"
+        if permission.get("ui_census"):
+            out["ui_census"] = permission["ui_census"]
+        return out
+
+    pct = quota.get("pct")
+    if pct is not None and int(pct) >= int(quota_near_threshold):
+        out["ok"] = False
+        out["step"] = "quota_near"
+        out["failure_class"] = "quota_near"
+        return out
+
+    if model_request:
+        chip = await ensure_compose_model_chip(
+            page,
+            model_request=model_request,
+            effort=model_effort,
+        )
+        out["model_chip"] = chip
+        if not chip.get("ok"):
+            out["ok"] = False
+            out["step"] = "model_chip"
+            out["failure_class"] = chip.get("failure_class") or "ui_drift"
+            if chip.get("ui_census"):
+                out["ui_census"] = chip["ui_census"]
+    return out
 
 
 async def ensure_approval_auto(page) -> dict[str, Any]:

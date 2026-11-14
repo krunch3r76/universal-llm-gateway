@@ -35,6 +35,8 @@ def cdp_generate_compose_attested(
     fingerprint: dict[str, Any] | None = None,
     execution_id: str = "",
     satellite_execution_id: str = "",
+    quota_weekly_pct: int | None = None,
+    quota_near: bool = False,
 ) -> Event:
     """Observation event for ``/new`` compose toggle attest (success or fail).
 
@@ -61,6 +63,8 @@ def cdp_generate_compose_attested(
             "fingerprint": dict(fingerprint or {}),
             "execution_id": str(execution_id or ""),
             "satellite_execution_id": str(satellite_execution_id or ""),
+            "quota_weekly_pct": quota_weekly_pct,
+            "quota_near": bool(quota_near),
         },
     )
 
@@ -80,6 +84,8 @@ def emit_compose_attested(
     fingerprint: dict[str, Any] | None = None,
     execution_id: str = "",
     satellite_execution_id: str = "",
+    quota_weekly_pct: int | None = None,
+    quota_near: bool = False,
 ) -> Event | None:
     """Build + best-effort-mirror ``cdp.generate.compose_attested``; never raises.
 
@@ -101,6 +107,8 @@ def emit_compose_attested(
             fingerprint=fingerprint,
             execution_id=execution_id,
             satellite_execution_id=satellite_execution_id,
+            quota_weekly_pct=quota_weekly_pct,
+            quota_near=quota_near,
         )
     except Exception:  # noqa: BLE001 — attest path must not fail on telemetry
         return None
@@ -115,13 +123,29 @@ def emit_compose_attested_from_result(
     execution_id: str = "",
     satellite_execution_id: str = "",
 ) -> Event | None:
-    """Project ensure_cowork_auto result onto dual-id compose_attested telemetry.
+    """Project compose ensure result onto dual-id compose_attested telemetry.
 
-    Prefers ``approval.after`` so a successful Skip flip is not reported as the
-    pre-flip Manual fingerprint from the mode block. Best-effort emit; never
+    Prefers ``approval.after`` on legacy shapes; compose v2 uses
+    ``compose_readiness`` / ``permission`` blocks. Best-effort emit; never
     raises. ``ok`` follows the ensure result, not the nested mode chip alone.
     """
-    mode_block = result.get("mode") if isinstance(result.get("mode"), dict) else result
+    mode_block = result.get("mode") if isinstance(result.get("mode"), dict) else None
+    if mode_block is None and isinstance(result, dict):
+        mode_block = {
+            k: result[k]
+            for k in (
+                "compose_readiness",
+                "permission",
+                "quota_weekly_pct",
+                "surface_radiogroup_count",
+                "radiogroup_names",
+                "ui_census",
+                "gate_rejects",
+            )
+            if k in result
+        }
+    if mode_block is None:
+        mode_block = result
     if not isinstance(mode_block, dict):
         mode_block = {}
     approval_block = (
@@ -170,6 +194,13 @@ def emit_compose_attested_from_result(
         fingerprint=fp,
         execution_id=execution_id,
         satellite_execution_id=satellite_execution_id,
+        quota_weekly_pct=result.get("quota_weekly_pct")
+        if result.get("quota_weekly_pct") is not None
+        else None,
+        quota_near=bool(
+            result.get("step") == "quota_near"
+            or result.get("failure_class") == "quota_near"
+        ),
     )
 
 

@@ -13,10 +13,10 @@ import ast
 import hashlib
 import re
 from collections.abc import Awaitable, Callable
-from urllib.parse import urlparse
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from durable_io.atomic import durable_write_text
 from implement_admission.closeout_helpers import cortex_files_root
@@ -1114,6 +1114,45 @@ async def _apply_code_surface_model_picker(
     }
 
 
+def _model_info_from_compose_v2_chip(model: str) -> dict | None:
+    """Return picker info when bare ``/new`` compose v2 already set the model chip."""
+    from claude_bundles.compose_setup_emit import last_bare_compose_ensure
+
+    compose = last_bare_compose_ensure() or {}
+    chip = compose.get("model_chip")
+    if not isinstance(chip, dict) or not chip.get("ok"):
+        return None
+    after = chip.get("after") if isinstance(chip.get("after"), dict) else {}
+    return {
+        "ok": True,
+        "step": "compose_v2_model_chip",
+        "requested": model,
+        "current_model": after.get("model_label"),
+        "model_chip": chip,
+    }
+
+
+async def _pick_compose_model(
+    page: Page,
+    model: str,
+    *,
+    project_uuid: str | None,
+    ensure_cowork_auto: bool,
+) -> dict:
+    """Select model when compose v2 chip ensure did not already attest."""
+    if not project_uuid and ensure_cowork_auto:
+        via_chip = _model_info_from_compose_v2_chip(model)
+        if via_chip is not None:
+            return via_chip
+        if await picker_attests_request(page, model):
+            return {
+                "ok": True,
+                "step": "compose_v2_model_attested",
+                "requested": model,
+            }
+    return await select_model(page, model)
+
+
 async def _compose_model_selected(
     page: Page,
     model: str,
@@ -1138,6 +1177,7 @@ async def _compose_model_selected(
             page,
             compose_url=url,
             ensure_cowork_auto=ensure_cowork_auto,
+            model_request=model if ensure_cowork_auto else None,
             **compose_kw,
         )
     composer = await find_composer(page)
@@ -1164,7 +1204,12 @@ async def _compose_model_selected(
             "current_model": model_ran,
             "code_surface_pick": pick.get("step"),
         }
-    model_info = await select_model(page, model)
+    model_info = await _pick_compose_model(
+        page,
+        model,
+        project_uuid=project_uuid,
+        ensure_cowork_auto=ensure_cowork_auto,
+    )
     if not model_info.get("ok"):
         return model_info
     # Model picker clicks can land on settings / scheduled-task — re-land + re-pick.
@@ -1180,9 +1225,15 @@ async def _compose_model_selected(
                 page,
                 compose_url=compose_url or "https://claude.ai/new",
                 ensure_cowork_auto=ensure_cowork_auto,
+                model_request=model if ensure_cowork_auto else None,
                 **compose_kw,
             )
-        model_info = await select_model(page, model)
+        model_info = await _pick_compose_model(
+            page,
+            model,
+            project_uuid=project_uuid,
+            ensure_cowork_auto=ensure_cowork_auto,
+        )
         if not model_info.get("ok"):
             return model_info
     # Warm CSE/chat retains the prior family — fresh dispatch must use /new.
@@ -1194,9 +1245,15 @@ async def _compose_model_selected(
                 page,
                 compose_url=compose_url or "https://claude.ai/new",
                 ensure_cowork_auto=ensure_cowork_auto,
+                model_request=model if ensure_cowork_auto else None,
                 **compose_kw,
             )
-        model_info = await select_model(page, model)
+        model_info = await _pick_compose_model(
+            page,
+            model,
+            project_uuid=project_uuid,
+            ensure_cowork_auto=ensure_cowork_auto,
+        )
     return model_info
 
 

@@ -21,6 +21,7 @@ from claude_bundles.cdp_registry.driving_seat import (
     ensure_driving_operator_seat,
     launch_or_defer,
 )
+from claude_bundles.compose_setup_emit import compose_runner_quota_fields
 from claude_bundles.cowork_output_download import should_attempt_output_download
 from claude_bundles.cse_wake_retain import registration_has_wake_debt
 from claude_bundles.project_ask import (
@@ -1026,6 +1027,7 @@ async def run_execution(
                 **_wake_debt_extras(reg.registration_id, ok=conv_ok),
                 **poll_banner_fields,
                 **code_surface_extra,
+                **compose_runner_quota_fields(),
             }
 
         if run_no_project and not effective_converse:
@@ -1112,6 +1114,7 @@ async def run_execution(
         payload.update(_wake_debt_extras(reg.registration_id, ok=result.ok))
         payload.update(poll_banner_fields)
         payload.update(code_surface_extra)
+        payload.update(compose_runner_quota_fields())
         return payload
     finally:
         escaped = sys.exc_info()[1]
