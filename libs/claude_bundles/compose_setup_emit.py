@@ -18,15 +18,23 @@ def last_bare_compose_ensure() -> dict[str, Any] | None:
 
 
 def compose_runner_quota_fields() -> dict[str, Any]:
-    """Project quota fields from the last bare compose ensure onto runner payloads."""
-    snap = _LAST_BARE_COMPOSE_ENSURE or {}
-    out: dict[str, Any] = {}
+    """Project quota fields from the last bare compose ensure onto runner payloads.
+
+    Always emits ``quota_weekly_pct`` (``None`` when no weekly-limit banner was
+    observed or no bare compose ensure ran) and ``quota_near`` (``bool``) so
+    ``cdp_ask.runner`` result payloads carry explicit JSON ``null``/``false``.
+    """
+    snap = (
+        _LAST_BARE_COMPOSE_ENSURE if isinstance(_LAST_BARE_COMPOSE_ENSURE, dict) else {}
+    )
     pct = snap.get("quota_weekly_pct")
-    if pct is not None:
-        out["quota_weekly_pct"] = pct
-    if snap.get("step") == "quota_near" or snap.get("failure_class") == "quota_near":
-        out["quota_near"] = True
-    return out
+    quota_near = bool(
+        snap.get("step") == "quota_near" or snap.get("failure_class") == "quota_near"
+    )
+    return {
+        "quota_weekly_pct": pct if pct is not None else None,
+        "quota_near": quota_near,
+    }
 
 
 async def ensure_bare_new_compose(

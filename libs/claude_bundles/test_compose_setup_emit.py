@@ -44,6 +44,7 @@ async def test_ensure_bare_new_compose_passes_model_request(
     assert snap["quota_weekly_pct"] == 42
 
 
+@pytest.mark.offline
 def test_compose_runner_quota_fields_from_last_ensure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -52,7 +53,10 @@ def test_compose_runner_quota_fields_from_last_ensure(
         "_LAST_BARE_COMPOSE_ENSURE",
         {"quota_weekly_pct": 91, "step": "compose_v2"},
     )
-    assert cse.compose_runner_quota_fields() == {"quota_weekly_pct": 91}
+    assert cse.compose_runner_quota_fields() == {
+        "quota_weekly_pct": 91,
+        "quota_near": False,
+    }
     monkeypatch.setattr(
         cse,
         "_LAST_BARE_COMPOSE_ENSURE",
@@ -61,4 +65,24 @@ def test_compose_runner_quota_fields_from_last_ensure(
     assert cse.compose_runner_quota_fields() == {
         "quota_weekly_pct": 96,
         "quota_near": True,
+    }
+
+
+@pytest.mark.offline
+def test_compose_runner_quota_fields_absent_banner_explicit_null(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cse, "_LAST_BARE_COMPOSE_ENSURE", None)
+    assert cse.compose_runner_quota_fields() == {
+        "quota_weekly_pct": None,
+        "quota_near": False,
+    }
+    monkeypatch.setattr(
+        cse,
+        "_LAST_BARE_COMPOSE_ENSURE",
+        {"ok": True, "step": "compose_v2", "quota_weekly_pct": None},
+    )
+    assert cse.compose_runner_quota_fields() == {
+        "quota_weekly_pct": None,
+        "quota_near": False,
     }
