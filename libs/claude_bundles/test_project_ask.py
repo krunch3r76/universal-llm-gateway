@@ -273,7 +273,9 @@ def test_abort_cleanup_non_owner_emits_detached_not_kill(
     monkeypatch.setattr(reg, "is_driver_lock_held", lambda _rid: True)
     killed: list[str] = []
     monkeypatch.setattr(
-        abort, "bounded_stop_via_cdp", lambda _url, target_id=None: killed.append("stop")
+        abort,
+        "bounded_stop_via_cdp",
+        lambda _url, target_id=None: killed.append("stop"),
     )
     monkeypatch.setattr(
         abort, "deregister_on_exit", lambda *_a, **_k: killed.append("kill")
@@ -296,7 +298,9 @@ def test_abort_cleanup_orphan_reap_noop_on_port_reassign(
     reg._release_driver_lock(r.registration_id)
     killed: list[str] = []
     monkeypatch.setattr(
-        abort, "bounded_stop_via_cdp", lambda _url, target_id=None: killed.append("stop")
+        abort,
+        "bounded_stop_via_cdp",
+        lambda _url, target_id=None: killed.append("stop"),
     )
     monkeypatch.setattr(
         abort, "deregister_on_exit", lambda *_a, **_k: killed.append("kill")
@@ -351,14 +355,14 @@ def test_registration_owns_port_rejects_reassigned(
 
 
 @pytest.mark.asyncio
-async def test_submit_composer_draft_auto_refuses(
+async def test_submit_composer_draft_manual_refuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Cowork+Auto at re-attest raises; Start task is not clicked."""
+    """Permission Manual fails the ship gate; Start task is not clicked."""
     fp = {
-        "title": "New task - Claude",
+        "title": "New session - Claude",
         "mode": "cowork",
-        "approval": {"aria": "", "text": "Auto", "via": "text"},
+        "approval": {"aria": "", "text": "Manual", "via": "text"},
         "url": "https://claude.ai/new",
     }
 
@@ -376,9 +380,62 @@ async def test_submit_composer_draft_auto_refuses(
     )
     from claude_bundles.project_ask import _submit_composer_draft
 
-    with pytest.raises(RuntimeError, match="cowork dispatch refused"):
-        await _submit_composer_draft(AsyncMock(), composer=AsyncMock(), draft_text="hi")
+    page = AsyncMock()
+    page.url = "https://claude.ai/new"
+    with pytest.raises(
+        RuntimeError, match=r"cowork dispatch refused.*\(need Permission mode Auto\)"
+    ):
+        await _submit_composer_draft(page, composer=AsyncMock(), draft_text="hi")
     click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_composer_draft_auto_passes_ship_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Permission Auto passes the ship gate; mode_locked path clicks Start task."""
+    fp = {
+        "title": "New session - Claude",
+        "mode": "cowork",
+        "approval": {"aria": "", "text": "Auto", "via": "text"},
+        "url": "https://claude.ai/new",
+    }
+
+    async def fake_ensure(_page) -> dict:
+        return {"ok": True, "after": fp}
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.ensure_approval_auto",
+        fake_ensure,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.project_ask.await_compose_attest",
+        AsyncMock(return_value={"ok": True, "fingerprint": fp}),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.project_ask.await_submit_visible",
+        AsyncMock(return_value={"ok": True}),
+    )
+    click = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "claude_bundles.composer_submit.click_submit_button",
+        click,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.composer_submit.prove_composer_submitted",
+        AsyncMock(),
+    )
+    from claude_bundles.project_ask import _submit_composer_draft
+
+    page = MagicMock()
+    page.url = "https://claude.ai/new"
+    loc = MagicMock()
+    loc.count = AsyncMock(return_value=1)
+    loc.first = MagicMock()
+    page.get_by_role.return_value = loc
+
+    await _submit_composer_draft(page, composer=AsyncMock(), draft_text="hi")
+    click.assert_awaited_once_with(loc.first)
 
 
 @pytest.mark.asyncio
@@ -964,7 +1021,9 @@ async def test_compose_model_selected_code_surface_rejects_cowork_project_url() 
 
     with (
         patch("claude_bundles.project_ask.goto_fresh_compose", new=AsyncMock()),
-        patch("claude_bundles.project_ask.find_composer", new=AsyncMock(return_value=None)),
+        patch(
+            "claude_bundles.project_ask.find_composer", new=AsyncMock(return_value=None)
+        ),
         patch(
             "claude_bundles.project_ask._apply_code_surface_model_picker",
             new=AsyncMock(),
@@ -991,10 +1050,14 @@ async def test_compose_model_selected_code_surface_runs_picker_on_code_url() -> 
 
     with (
         patch("claude_bundles.project_ask.goto_fresh_compose", new=AsyncMock()),
-        patch("claude_bundles.project_ask.find_composer", new=AsyncMock(return_value=None)),
+        patch(
+            "claude_bundles.project_ask.find_composer", new=AsyncMock(return_value=None)
+        ),
         patch(
             "claude_bundles.project_ask._apply_code_surface_model_picker",
-            new=AsyncMock(return_value={"ok": True, "step": "code_surface_model_picked"}),
+            new=AsyncMock(
+                return_value={"ok": True, "step": "code_surface_model_picked"}
+            ),
         ) as picker,
         patch(
             "claude_bundles.project_ask._read_code_surface_model_label",
@@ -1035,10 +1098,14 @@ async def test_compose_model_selected_code_page_url_guard(
 
     with (
         patch("claude_bundles.project_ask.goto_fresh_compose", new=AsyncMock()),
-        patch("claude_bundles.project_ask.find_composer", new=AsyncMock(return_value=None)),
+        patch(
+            "claude_bundles.project_ask.find_composer", new=AsyncMock(return_value=None)
+        ),
         patch(
             "claude_bundles.project_ask._apply_code_surface_model_picker",
-            new=AsyncMock(return_value={"ok": True, "step": "code_surface_model_picked"}),
+            new=AsyncMock(
+                return_value={"ok": True, "step": "code_surface_model_picked"}
+            ),
         ) as picker,
         patch(
             "claude_bundles.project_ask._read_code_surface_model_label",
@@ -1103,7 +1170,10 @@ async def test_skill_receipt_unverified_harvest_failure_returns_ok_false() -> No
 
 @pytest.mark.asyncio
 async def test_marked_context_rail_error_harvests_work_reply() -> None:
-    from claude_bundles.chat_context_skills import ChatContextSkillsError, LoadedSkillsReport
+    from claude_bundles.chat_context_skills import (
+        ChatContextSkillsError,
+        LoadedSkillsReport,
+    )
     from claude_bundles.project_ask import project_ask_on_page
 
     page, composer = _induction_page()
@@ -1166,11 +1236,15 @@ async def test_marked_context_rail_error_harvests_work_reply() -> None:
             patch(
                 "claude_bundles.project_ask.resolve_harvest_body",
                 new=AsyncMock(
-                    return_value=type("H", (), {"content": harvested, "provenance": None})()
+                    return_value=type(
+                        "H", (), {"content": harvested, "provenance": None}
+                    )()
                 ),
             )
         )
-        stack.enter_context(patch("claude_bundles.project_ask._attest_model", return_value=None))
+        stack.enter_context(
+            patch("claude_bundles.project_ask._attest_model", return_value=None)
+        )
         result = await project_ask_on_page(
             page,
             _SEALED,
