@@ -22,20 +22,22 @@ from typing import Any, Literal
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
+from cdp_ask.standing_pins import resolve_cdp_ask_browser_cdp_url
+
 # Advisory stream telemetry only. Cowork does not cap concurrent sessions at a
 # small integer; 2/3 read as "full" while the product still had room. The
 # ceilings stay finite so ``free_slots`` remains an int. They do not refuse mint.
 LANE_SOFT_LIMIT = 32
 LANE_HARD_LIMIT = 64
-ADMISSION_COUNT_SCOPE = (
-    f"running/stream admissions, this host (soft={LANE_SOFT_LIMIT} hard={LANE_HARD_LIMIT})"
-)
+ADMISSION_COUNT_SCOPE = f"running/stream admissions, this host (soft={LANE_SOFT_LIMIT} hard={LANE_HARD_LIMIT})"
 ADVISOR_RESERVE = 1
 SEAT_FLOOR = 1
 
 SEAT_PURPOSES = OPERATOR_PROXY_MISSION_PURPOSES
 
-AdmissionRefusal = str  # seat_cap | abs_hard | soft | hard | advisor_cap | operator_seat_held | …
+AdmissionRefusal = (
+    str  # seat_cap | abs_hard | soft | hard | advisor_cap | operator_seat_held | …
+)
 
 SeatHolderState = Literal["held", "vacant", "conflict", "unavailable"]
 
@@ -281,6 +283,13 @@ def evaluate_new_admission(
         unattended,
         hop_succession,
     )
+    if not is_seat_purpose(incoming_purpose):
+        try:
+            browser_url, _via = resolve_admission_browser_cdp_url()
+        except Exception:
+            return False, "browser_unavailable"
+        if not browser_url:
+            return False, "browser_unavailable"
     return True, None
 
 
@@ -328,6 +337,14 @@ def count_seats_on_lane(rows: list[dict[str, Any]], parent_thread: str) -> int:
     return count
 
 
+def resolve_admission_browser_cdp_url(
+    *,
+    lanes: dict[str, dict] | None = None,
+) -> tuple[str, str]:
+    """Return ``(browser_cdp_url, via)`` selected for incoming ``cdp_ask`` admits."""
+    return resolve_cdp_ask_browser_cdp_url(lanes=lanes)
+
+
 def purpose_lane_refusal(
     snap: dict[str, Any],
     *,
@@ -344,6 +361,7 @@ def purpose_lane_refusal(
     hop-succession overlap. Unbound incoming (no ``parent_thread``) skips the
     per-lane cap — missing binding is INDETERMINATE, not a silent refuse.
     """
+    _browser_cdp_url, _browser_via = resolve_admission_browser_cdp_url()
     rows = snap.get("rows") or []
     lane = str(parent_thread or "").strip()
     if lane and is_seat_purpose(purpose):

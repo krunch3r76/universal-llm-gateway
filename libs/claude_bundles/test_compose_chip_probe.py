@@ -268,12 +268,16 @@ async def test_compose_readiness_new_session_claude_mode_specimen() -> None:
             assert readiness.get("ready") is True
             assert readiness.get("step") == "compose_readiness"
             census = readiness.get("ui_census") or {}
-            group_labels = [g.get("aria_label") for g in census.get("radiogroups") or []]
+            group_labels = [
+                g.get("aria_label") for g in census.get("radiogroups") or []
+            ]
             assert group_labels == ["Mode"]
             mode_group = census["radiogroups"][0]
             radio_labels = {r["label"] for r in mode_group["radios"]}
             assert radio_labels == {"Claude", "Code"}
-            checked = [r for r in mode_group["radios"] if r.get("aria_checked") == "true"]
+            checked = [
+                r for r in mode_group["radios"] if r.get("aria_checked") == "true"
+            ]
             assert len(checked) == 1
             assert checked[0]["label"] == "Claude"
             assert census.get("document_title") == "New session - Claude"
@@ -283,7 +287,9 @@ async def test_compose_readiness_new_session_claude_mode_specimen() -> None:
 
 @pytest.mark.offline
 @pytest.mark.asyncio
-async def test_select_compose_mode_new_session_claude_mode_readiness_selects_chat() -> None:
+async def test_select_compose_mode_new_session_claude_mode_readiness_selects_chat() -> (
+    None
+):
     pytest.importorskip("playwright")
     from playwright.async_api import async_playwright
 
@@ -374,10 +380,15 @@ async def test_select_compose_mode_drifted_sidebar_mode_raises_ui_drift(
             result = await select_compose_mode(page, "cowork")
             assert result["ok"] is False
             assert result["step"] == "ui_drift"
+            assert result["failure_class"] == "ui_drift"
             census = result.get("ui_census") or {}
-            group_labels = [g.get("aria_label") for g in census.get("radiogroups") or []]
+            group_labels = [
+                g.get("aria_label") for g in census.get("radiogroups") or []
+            ]
             assert "Mode" in group_labels
-            mode_group = next(g for g in census["radiogroups"] if g["aria_label"] == "Mode")
+            mode_group = next(
+                g for g in census["radiogroups"] if g["aria_label"] == "Mode"
+            )
             radio_labels = {r["label"] for r in mode_group["radios"]}
             assert radio_labels == {"Home", "Code"}
             assert census.get("document_title") == "New session - Claude"

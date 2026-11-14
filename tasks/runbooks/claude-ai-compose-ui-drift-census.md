@@ -24,7 +24,7 @@ Unexpected observed labels **fail loudly** as `ui_drift`: `select_compose_mode` 
 
 ## Operational notes
 
-cdp-lane@ask disabled, launcher no longer knows ask (looks retired), cdp_ask still targets :9223 ECONNREFUSED, StartLimitIntervalSec warning; flag only.
+cdp-lane@ask disabled, launcher no longer knows ask (looks retired), cdp_ask now falls back to fleet :9222 when ask is absent from pins.toml, StartLimitIntervalSec warning; stale-unit flag only.
 
 ## Verification commands
 

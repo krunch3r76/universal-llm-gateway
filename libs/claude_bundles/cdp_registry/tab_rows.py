@@ -55,6 +55,11 @@ def _host_capacity_eligible_row(
     return listen(port)
 
 
+def _standing_pin_host_row_ok(host_id: str) -> bool:
+    """True when *host_id* names a standing pin host (``pin:fleet``, ``pin:ask``)."""
+    return host_id.startswith("pin:") and bool(host_id.removeprefix("pin:").strip())
+
+
 def _host_eligible_row(
     row: dict[str, Any],
     *,
@@ -276,7 +281,7 @@ def sweep_kept_tab_rows() -> list[str]:
             continue
         host_id = str(row.get("host_registration_id") or "").strip()
         host = active.get(host_id) if host_id else None
-        host_dead = (
+        host_dead = not _standing_pin_host_row_ok(host_id) and (
             not isinstance(host, dict) or host.get("status") not in _CAPACITY_STATUSES
         )
         port = row.get("port")
@@ -311,6 +316,12 @@ def open_tab_row_for_ask(
                 raise RegistryError(
                     f"host_row account {host_account!r} != request account "
                     f"{resolved_account!r}"
+                )
+            host_port = int(host_row["port"])
+            if not listen(host_port):
+                raise RegistryError(
+                    f"configured browser CDP host {host_row.get('registration_id')!r} "
+                    f"is not listening on port {host_port}"
                 )
             host = host_row
         else:

@@ -46,6 +46,7 @@ from cdp_ask.page_liveness import (
     advance_ladder_from_harvest,
     make_harvest_ladder_hook,
 )
+from cdp_ask.standing_pins import resolve_cdp_ask_browser_host_row
 from cdp_ask.unverifiable import (
     converse_fail_error,
     converse_stall_stage,
@@ -132,12 +133,15 @@ def _open_tab_lane(
         )
     except AccountNotSignedInError as exc:
         raise RuntimeError(f"cdp_ask account routing refused: {exc}") from exc
+    effective_host = host_row
+    if effective_host is None and account_id == "default":
+        effective_host = resolve_cdp_ask_browser_host_row()
     return open_tab_row_for_ask(
         holder=holder,
         purpose=req.purpose,
         mission_kind=req.mission_kind,
         parent_thread=req.parent_thread,
-        host_row=host_row,
+        host_row=effective_host,
         account_id=account_id,
     )
 

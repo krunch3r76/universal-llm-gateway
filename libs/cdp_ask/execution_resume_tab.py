@@ -43,10 +43,22 @@ def resolve_resume_host(row: dict[str, Any], *, trigger: str) -> dict[str, Any]:
     own = active.get(own_id) if own_id else None
     if isinstance(own, dict) and host_row_eligible(own):
         return own
+    from claude_bundles.cdp_registry.tab_rows import _standing_pin_host_row_ok
+
+    own_port = row.get("port")
+    if (
+        _standing_pin_host_row_ok(own_id)
+        and isinstance(own_port, int)
+        and cdp_lane.is_listening(own_port)
+    ):
+        return {
+            "registration_id": own_id,
+            "port": own_port,
+            "display": row.get("display") or ":2",
+            "account_id": row.get("account_id") or "default",
+        }
     acct = normalize_account_id(row.get("account_id"))
-    host = eligible_host(
-        active, cdp_lane.cdp_display_candidates(acct), account_id=acct
-    )
+    host = eligible_host(active, cdp_lane.cdp_display_candidates(acct), account_id=acct)
     if host is not None:
         return host
     return _mint_pool_host(trigger=trigger, account_id=acct)

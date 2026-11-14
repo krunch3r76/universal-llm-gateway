@@ -74,6 +74,43 @@ def resolve_cdp_ask_browser_cdp_url(
     return f"http://127.0.0.1:{port}", "fleet"
 
 
+def resolve_cdp_ask_browser_host_row(
+    *,
+    lanes: dict[str, dict] | None = None,
+) -> dict[str, object] | None:
+    """Return a standing-pin host descriptor when ``ULG_REPO`` pins are configured.
+
+    When ``ULG_REPO`` is unset or ``pins.toml`` is absent, return ``None`` so
+    isolated callers keep registry-pool host allocation. When ``pins.toml`` is
+    configured, resolve through ``resolve_cdp_ask_browser_cdp_url`` so retired
+    ``ask`` routes generates onto the standing ``fleet`` (:9222) browser and
+    never dials ``:9223``.
+    """
+    rows = lanes
+    if rows is None:
+        try:
+            rows = _load_pins()
+        except Exception:
+            return None
+    cdp_url, via = resolve_cdp_ask_browser_cdp_url(lanes=rows)
+    parsed = urlparse(cdp_url)
+    lane_cfg = rows.get(via) or {}
+    port = int(parsed.port or lane_cfg.get("port") or 9222)
+    display = str(lane_cfg.get("display") or ":2").strip() or ":2"
+    return {
+        "registration_id": f"pin:{via}",
+        "status": "active",
+        "purpose": "tab_host",
+        "holder": f"cdp-lane@{via}",
+        "port": port,
+        "display": display,
+        "profile_suffix": via,
+        "account_id": "default",
+        "cdp_url": cdp_url,
+        "via": via,
+    }
+
+
 def _iso_now() -> str:
     return datetime.now(tz=UTC).isoformat()
 

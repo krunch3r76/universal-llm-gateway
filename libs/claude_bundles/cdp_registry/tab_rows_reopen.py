@@ -219,7 +219,13 @@ def reopen_tab_row(
         if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
             raise RegistryError(f"tab row {rid!r} missing")
         if not isinstance(host, dict):
-            raise RegistryError(f"host {hid!r} missing")
+            from .tab_rows import _standing_pin_host_row_ok
+
+            old_row_port = row.get("port")
+            if _standing_pin_host_row_ok(hid) and isinstance(old_row_port, int):
+                host = {"registration_id": hid, "port": old_row_port}
+            else:
+                raise RegistryError(f"host {hid!r} missing")
         port = int(host["port"])
         stale = str(row.get("target_id") or "").strip()
         old_port = row.get("port") if isinstance(row.get("port"), int) else None
