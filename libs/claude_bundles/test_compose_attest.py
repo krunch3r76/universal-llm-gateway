@@ -11,6 +11,7 @@ from playwright.async_api import async_playwright  # noqa: E402
 
 from claude_bundles.chat_cowork_mode import select_compose_mode
 from claude_bundles.compose_attest import (
+    _AUTO_ARIA_RE,
     _compose_attested,
     approval_label,
     approval_mode_chip,
@@ -513,6 +514,68 @@ _PERM_V2_SKIP_HTML = """
   aria-labelledby="perm-chip-label" tabindex="0" style="width:52px;height:28px">Skip</button>
 </body></html>
 """
+
+
+_A84028F3_AUTO_LABELLEDBY_FP = {
+    "title": "New session - Claude",
+    "mode": "chat",
+    "approval": {
+        "aria": "",
+        "text": "Auto",
+        "via": "text",
+        "labelledby": "Permission mode: Auto",
+    },
+    "url": "https://claude.ai/new",
+}
+
+_V2_MANUAL_LABELLEDBY_FP = {
+    "title": "New session - Claude",
+    "mode": "chat",
+    "approval": {
+        "aria": "",
+        "text": "Manual",
+        "via": "text",
+        "labelledby": "Permission mode: Manual",
+    },
+    "url": "https://claude.ai/new",
+}
+
+
+def test_v2_auto_labelledby_passes_ship_gate_a84028f3() -> None:
+    assert approval_label(_A84028F3_AUTO_LABELLEDBY_FP) == "Permission mode: Auto"
+    assert approval_mode_chip(_A84028F3_AUTO_LABELLEDBY_FP) == "auto"
+    assert cowork_auto_refuse_reason(_A84028F3_AUTO_LABELLEDBY_FP) is None
+    assert (
+        dispatch_approval_refuse_reason(_A84028F3_AUTO_LABELLEDBY_FP, surface="cowork")
+        is None
+    )
+    assert (
+        dispatch_approval_refuse_reason(_A84028F3_AUTO_LABELLEDBY_FP, surface="code")
+        is None
+    )
+    assert _compose_attested(_A84028F3_AUTO_LABELLEDBY_FP, "cowork") is True
+
+
+def test_v2_manual_labelledby_classified_as_manual_not_unknown() -> None:
+    assert approval_label(_V2_MANUAL_LABELLEDBY_FP) == "Permission mode: Manual"
+    assert approval_mode_chip(_V2_MANUAL_LABELLEDBY_FP) == "manual"
+    cowork_reason = dispatch_approval_refuse_reason(
+        _V2_MANUAL_LABELLEDBY_FP, surface="cowork"
+    )
+    assert (
+        cowork_reason
+        == "cowork dispatch refused: approval 'Manual' (need Permission mode Skip or Auto)"
+    )
+    code_reason = dispatch_approval_refuse_reason(_V2_MANUAL_LABELLEDBY_FP, surface="code")
+    assert (
+        code_reason
+        == "code dispatch refused: surface=code approval 'Manual' (code accepts skip, auto)"
+    )
+    assert _compose_attested(_V2_MANUAL_LABELLEDBY_FP, "cowork") is False
+
+
+def test_auto_aria_re_does_not_match_automate_prefix() -> None:
+    assert not _AUTO_ARIA_RE.search("Automate")
 
 
 def test_v2_skip_labelledby_passes_ship_gate() -> None:

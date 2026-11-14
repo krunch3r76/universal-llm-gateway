@@ -52,10 +52,16 @@ _EXCLUDE_SUBMIT_RE = re.compile(
 _POLL_MS = 400
 # Short-form alternation (a:31319) — the chip can render with no aria-label at
 # all, just a bare "Auto"/"Manual"/"Skip" button label.
-_AUTO_ARIA_RE = re.compile(r"Automatically approve|^Auto$", re.I)
-_MANUAL_ARIA_RE = re.compile(r"Manually approve|^Manual$", re.I)
+_AUTO_ARIA_RE = re.compile(
+    r"Automatically approve|^Auto$|Permission mode:\s*Auto\b",
+    re.I,
+)
+_MANUAL_ARIA_RE = re.compile(
+    r"Manually approve|^Manual$|Permission mode:\s*Manual\b",
+    re.I,
+)
 _SKIP_ARIA_RE = re.compile(
-    r"Skip all approvals|Never pause|^Skip$|Permission mode:\s*Skip",
+    r"Skip all approvals|Never pause|^Skip$|Permission mode:\s*Skip\b",
     re.I,
 )
 _SUBMIT_ROLE = {

@@ -23,7 +23,10 @@ import re
 from typing import Any, Literal
 
 from claude_bundles.compose_attest import (
+    _AUTO_ARIA_RE,
+    _MANUAL_ARIA_RE,
     _POLL_MS,
+    _SKIP_ARIA_RE,
     approval_label,
     await_compose_attest,
     compose_mode_fingerprint,
@@ -57,12 +60,11 @@ _PERMISSION_ITEM = {
     "Manual": re.compile(r"^Manual\b", re.I),
 }
 
-# Short-form alternation (a:31319) — chip can render aria-less with just the
-# bare state name as its button text.
+# Short-form alternation (a:31319) — shared with compose_attest for parity.
 _APPROVAL_ARIA = {
-    "auto": re.compile(r"Automatically approve|^Auto$", re.I),
-    "manual": re.compile(r"Manually approve|^Manual$", re.I),
-    "skip": re.compile(r"Skip all approvals|Never pause|^Skip$", re.I),
+    "auto": _AUTO_ARIA_RE,
+    "manual": _MANUAL_ARIA_RE,
+    "skip": _SKIP_ARIA_RE,
 }
 
 _APPROVAL_MENU = {
