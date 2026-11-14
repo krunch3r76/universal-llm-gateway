@@ -10,6 +10,7 @@ from claude_bundles.chat_context_skills import (
     _SKILL_INDUCTION_SNAPSHOT_JS,
     ChatContextSkillsError,
     LoadedSkillsReport,
+    SkillInductionSnapshot,
     parse_loaded_skills_from_turn_badges,
     parse_session_activity_skills,
     parse_skills_from_context_section,
@@ -520,7 +521,16 @@ class _EvaluatedDomPage:
     def set_panel_label(self, aria_label: str) -> None:
         self._steps.append({"set_panel_label": aria_label})
 
-    async def evaluate(self, js: str) -> dict[str, object]:
+    async def evaluate(
+        self, js: str, spec: dict | None = None
+    ) -> dict[str, object]:
+        if spec is not None:
+            return {
+                "found": False,
+                "aria_expanded": None,
+                "list_visible": False,
+                "clicked": False,
+            }
         self._steps.append({"eval_js": js})
         results = _run_dom_steps_in_node(self._steps)
         return results[-1]
@@ -972,6 +982,272 @@ async def test_scrape_loaded_skills_session_activity_live_path(monkeypatch) -> N
     report = await scrape_loaded_skills(page)
     assert report.skills == ("reasoning-posture", "hypothesize-simulate")
     assert report.context_found is False
+
+
+@pytest.mark.asyncio
+async def test_thinking_morph_skill_shaped_caption_refuses(monkeypatch) -> None:
+    """Thinking ``data-morph-key`` must not forge a skill-load caption."""
+
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    dom_page = _EvaluatedDomPage(
+        {
+            "tag": "body",
+            "children": [
+                {
+                    "tag": "div",
+                    "attrs": {
+                        "data-cds": "TurnStatus",
+                        "data-item-key": "turn1:grp:th0",
+                    },
+                    "children": [
+                        {
+                            "tag": "span",
+                            "attrs": {"data-morph-key": "done|Thinking"},
+                            "children": ["Used the reasoning-posture skill"],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert await scrape_chat_turn_loaded_skills(dom_page) == ()
+
+
+@pytest.mark.asyncio
+async def test_thinking_morph_used_slug_shaped_refuses_not_required(
+    monkeypatch,
+) -> None:
+    """Do not treat Thinking-stream ``Used <slug>`` prose as a skill receipt."""
+
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    dom_page = _EvaluatedDomPage(
+        {
+            "tag": "body",
+            "children": [
+                {
+                    "tag": "div",
+                    "attrs": {
+                        "data-cds": "TurnStatus",
+                        "data-item-key": "turn1:grp:th0",
+                    },
+                    "children": [
+                        {
+                            "tag": "span",
+                            "attrs": {"data-morph-key": "streaming|Thinking"},
+                            "children": ["Used ulg-code"],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert await scrape_chat_turn_loaded_skills(dom_page) == ()
+
+
+@pytest.mark.asyncio
+async def test_skill_template_morph_matching_slug_passes(monkeypatch) -> None:
+    """Skill load/use morph suffix matching caption text is a valid receipt."""
+
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    dom_page = _EvaluatedDomPage(
+        {
+            "tag": "body",
+            "children": [
+                {
+                    "tag": "div",
+                    "attrs": {
+                        "data-cds": "TurnStatus",
+                        "data-item-key": "turn1:grp:th0",
+                    },
+                    "children": [
+                        {
+                            "tag": "span",
+                            "attrs": {
+                                "data-morph-key": (
+                                    "done|Loaded the reasoning-posture skill"
+                                )
+                            },
+                            "children": ["Loaded the reasoning-posture skill."],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert await scrape_chat_turn_loaded_skills(dom_page) == ("reasoning-posture",)
+
+
+@pytest.mark.asyncio
+async def test_grid_unread_snapshot_new_caption_passes(monkeypatch) -> None:
+    """When the pre-submit grid was unread, a fresh caption after submit passes."""
+
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    snap = SkillInductionSnapshot(
+        panel_slugs=frozenset(),
+        caption_node_ids=frozenset({"item:turn-1"}),
+        grid_unread=True,
+    )
+    dom_page = _EvaluatedDomPage(
+        {
+            "tag": "body",
+            "children": [
+                {
+                    "tag": "div",
+                    "attrs": {
+                        "data-cds": "TurnStatus",
+                        "data-item-key": "turn-1",
+                    },
+                    "children": [
+                        {
+                            "tag": "span",
+                            "attrs": {
+                                "data-morph-key": (
+                                    "done|Loaded the reasoning-posture skill"
+                                )
+                            },
+                            "children": ["Loaded the reasoning-posture skill."],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    dom_page.append_turn(
+        {
+            "tag": "div",
+            "attrs": {"data-cds": "TurnStatus", "data-item-key": "turn-2"},
+            "children": [
+                {
+                    "tag": "span",
+                    "attrs": {
+                        "data-morph-key": "done|Loaded the consult-posture skill"
+                    },
+                    "children": ["Loaded the consult-posture skill."],
+                }
+            ],
+        }
+    )
+    assert await scrape_chat_turn_loaded_skills(dom_page, snapshot=snap) == (
+        "consult-posture",
+    )
+
+
+@pytest.mark.asyncio
+async def test_collapsed_rail_snapshot_grid_unread_stale_grid_refuses(
+    monkeypatch,
+) -> None:
+    """Pre-submit collapsed grid must not pin stale rail slugs into the snapshot."""
+
+    class _ContextPage:
+        url = "https://claude.ai/cowork/cse_x"
+
+        def __init__(self) -> None:
+            self._context_expanded = False
+
+        async def evaluate(self, js: str, spec: dict | None = None) -> dict:
+            if spec is not None:
+                if spec.get("click"):
+                    self._context_expanded = True
+                    return {
+                        "found": True,
+                        "clicked": True,
+                        "aria_expanded": "true",
+                        "list_visible": True,
+                    }
+                return {
+                    "found": True,
+                    "aria_expanded": "true" if self._context_expanded else "false",
+                    "list_visible": self._context_expanded,
+                    "clicked": False,
+                }
+            if "context_header_found" in js:
+                expanded = self._context_expanded
+                return {
+                    "session_labels": [],
+                    "captions": [
+                        {
+                            "node_id": "item:turn-1",
+                            "text": "Loaded the reasoning-posture skill.",
+                        }
+                    ],
+                    "context_skills": ["reasoning-posture"]
+                    if expanded
+                    else [],
+                    "context_grid_read": expanded,
+                    "context_header_found": True,
+                }
+            if "session_labels" in js:
+                return {
+                    "session_labels": [],
+                    "captions": [
+                        {
+                            "node_id": "item:turn-1",
+                            "text": "Loaded the reasoning-posture skill.",
+                        }
+                    ],
+                }
+            return {
+                "context_found": True,
+                "skills_heading_found": True,
+                "skills": ["reasoning-posture"],
+                "raw_section_text": "Skills\nreasoning-posture",
+                "model_label": None,
+            }
+
+        async def wait_for_timeout(self, _ms: int) -> None:
+            return None
+
+    page = _ContextPage()
+    expand_calls = {"n": 0}
+
+    async def staged_expand(_page) -> bool:
+        expand_calls["n"] += 1
+        if expand_calls["n"] >= 2:
+            page._context_expanded = True
+        return True
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills._expand_context_for_snapshot",
+        staged_expand,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", staged_expand
+    )
+    snap = await snapshot_skill_induction_before_submit(page)
+    assert snap.grid_unread is True
+    assert "reasoning-posture" not in snap.panel_slugs
+
+    assert await scrape_chat_turn_loaded_skills(page, snapshot=snap) == ()
+    report = await scrape_loaded_skills(page, snapshot=snap)
+    assert report.skills == ()
 
 
 @pytest.mark.asyncio

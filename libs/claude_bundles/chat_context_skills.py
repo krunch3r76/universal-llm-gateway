@@ -153,10 +153,14 @@ class SkillInductionSnapshot:
     Captured immediately before submit so warm follow-ups reject stale Turn-1
     panel entries and stale Turn-1 ``TurnStatus`` captions while accepting new
     panel slugs or captions on newly mounted ``TurnStatus`` nodes.
+
+    When ``grid_unread`` is set, pre-submit Context grid slugs were not
+    captured — post-submit filtering must not trust rail-derived slugs.
     """
 
     panel_slugs: frozenset[str] = frozenset()
     caption_node_ids: frozenset[str] = frozenset()
+    grid_unread: bool = False
 
 
 def _parse_caption_clause(clause: str) -> list[str]:
@@ -232,6 +236,17 @@ _TURN_STATUS_AND_PANEL_COLLECT_JS = """
     if (al && al.trim()) session_labels.push(al.trim());
   }
 
+  const morphCaptionOk = (el) => {
+    const key = (el.getAttribute('data-morph-key') || '').trim();
+    const text = (el.textContent || '').trim();
+    if (!key) return false;
+    const bar = key.indexOf('|');
+    const suffix = (bar >= 0 ? key.slice(bar + 1) : key).trim();
+    if (/thinking/i.test(suffix)) return false;
+    if (/^(?:Loaded|Used)\\b/.test(suffix)) return true;
+    return suffix === text;
+  };
+
   const captions = [];
   const turnStatuses = Array.from(
     document.querySelectorAll('[data-cds="TurnStatus"]')
@@ -249,18 +264,12 @@ _TURN_STATUS_AND_PANEL_COLLECT_JS = """
     const morphs = Array.from(
       ts.querySelectorAll('span[data-morph-key]')
     ).filter(
-      (el) => !el.closest('[data-cds="TurnStatusStep"], [data-cds-row-panel]')
+      (el) =>
+        !el.closest('[data-cds="TurnStatusStep"], [data-cds-row-panel]') &&
+        morphCaptionOk(el)
     );
-    if (morphs.length) {
-      for (const el of morphs) {
-        captions.push({ node_id, text: (el.textContent || '').trim() });
-      }
-    } else {
-      const labelEl = ts.querySelector(':scope > [data-cds-row] [id$="-label"]');
-      captions.push({
-        node_id,
-        text: labelEl ? (labelEl.textContent || '').trim() : '',
-      });
+    for (const el of morphs) {
+      captions.push({ node_id, text: (el.textContent || '').trim() });
     }
   }
 """
@@ -276,6 +285,7 @@ _SKILL_INDUCTION_SNAPSHOT_JS = (
     + _TURN_STATUS_AND_PANEL_COLLECT_JS
     + """
   const context_skills = [];
+  let context_grid_read = false;
   const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
   const headers = Array.from(
     document.querySelectorAll('[data-section-header][role="button"]')
@@ -289,6 +299,7 @@ _SKILL_INDUCTION_SNAPSHOT_JS = (
     (ctxHeader.getAttribute('aria-expanded') || '').toLowerCase() === 'true' &&
     ctxHeader.nextElementSibling
   ) {
+    context_grid_read = true;
     const root = ctxHeader.nextElementSibling;
     const skillsHeading = Array.from(
       root.querySelectorAll('span,h1,h2,h3,h4,div,button')
@@ -307,7 +318,13 @@ _SKILL_INDUCTION_SNAPSHOT_JS = (
       }
     }
   }
-  return { session_labels, captions, context_skills };
+  return {
+    session_labels,
+    captions,
+    context_skills,
+    context_grid_read,
+    context_header_found: !!ctxHeader,
+  };
 }"""
 )
 
@@ -334,20 +351,47 @@ def _captions_to_slugs(
     return _ordered_unique_slugs(tuple(slugs))
 
 
+async def _expand_context_for_snapshot(page: Page) -> None:
+    """Open the Cowork Context header when present — no ``/code`` sidebar fallback."""
+    from claude_bundles.chat_context_disclosure import (
+        _aria,
+        _read_disclosure,
+        _require_disclosure_open,
+        disclosure_is_expanded,
+    )
+
+    state = await _read_disclosure(page, "Context")
+    if not state.get("found"):
+        return
+    if disclosure_is_expanded(
+        _aria(state), list_visible=bool(state.get("list_visible"))
+    ):
+        return
+    await _require_disclosure_open(page, "Context")
+
+
 async def snapshot_skill_induction_before_submit(
     page: Page,
 ) -> SkillInductionSnapshot:
     """Capture pre-submit panel slugs and ``TurnStatus`` caption node ids."""
+    try:
+        await _expand_context_for_snapshot(page)
+    except ChatContextSkillsError:
+        pass
     raw = await page.evaluate(_SKILL_INDUCTION_SNAPSHOT_JS)
     if not isinstance(raw, dict):
         return SkillInductionSnapshot()
+    context_header_found = bool(raw.get("context_header_found"))
+    context_grid_read = bool(raw.get("context_grid_read"))
+    grid_unread = context_header_found and not context_grid_read
     panel: set[str] = set()
     for label in raw.get("session_labels") or []:
         panel.update(parse_session_activity_skills(str(label)))
-    for slug in raw.get("context_skills") or []:
-        norm = str(slug).strip().lower()
-        if _SLUG_RE.fullmatch(norm):
-            panel.add(norm)
+    if not grid_unread:
+        for slug in raw.get("context_skills") or []:
+            norm = str(slug).strip().lower()
+            if _SLUG_RE.fullmatch(norm):
+                panel.add(norm)
     node_ids: set[str] = set()
     for item in raw.get("captions") or []:
         if isinstance(item, dict):
@@ -361,6 +405,7 @@ async def snapshot_skill_induction_before_submit(
     return SkillInductionSnapshot(
         panel_slugs=frozenset(panel),
         caption_node_ids=frozenset(node_ids),
+        grid_unread=grid_unread,
     )
 
 
@@ -582,6 +627,8 @@ async def scrape_loaded_skills(
         for s in (raw.get("skills") or [])
         if isinstance(s, str) and _SLUG_RE.fullmatch(s)
     )
+    if snapshot is not None and snapshot.grid_unread:
+        skills = ()
     if snapshot is not None and (snapshot.panel_slugs or snapshot.caption_node_ids):
         fresh_panel = tuple(s for s in skills if s not in snapshot.panel_slugs)
         raw_turn = await page.evaluate(_ASSISTANT_TURN_BADGE_JS)

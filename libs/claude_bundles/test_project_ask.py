@@ -1323,7 +1323,14 @@ async def test_warm_followup_stale_turn1_slug_refuses_then_new_caption_passes() 
         async def wait_for_timeout(self, _ms: int) -> None:
             return None
 
-        async def evaluate(self, js: str) -> dict:
+        async def evaluate(self, js: str, spec: dict | None = None) -> dict:
+            if spec is not None:
+                return {
+                    "found": False,
+                    "aria_expanded": None,
+                    "list_visible": False,
+                    "clicked": False,
+                }
             if "context_skills" in js:
                 events.append("snapshot_before_submit")
                 return {
@@ -1335,6 +1342,8 @@ async def test_warm_followup_stale_turn1_slug_refuses_then_new_caption_passes() 
                         }
                     ],
                     "context_skills": [],
+                    "context_grid_read": False,
+                    "context_header_found": False,
                 }
             if "Session activity panel" in js:
                 captions = [
