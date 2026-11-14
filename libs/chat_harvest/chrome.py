@@ -16,6 +16,7 @@ import re
 _TOOL_BADGE_SEGMENT = (
     r"(searched the web|used toys integration|used a skill|used \d+ skills?|"
     r"used \d+ tools?|loaded tools|loaded a skill|loaded \d+ skills?|"
+    r"loaded the [a-z0-9-]+(?:(?:\s*,\s*|\s+and\s+)[a-z0-9-]+)* skills?|"
     r"ran a command|ran \d+ commands?)"
 )
 TOOL_BADGE_LINE_RE = re.compile(

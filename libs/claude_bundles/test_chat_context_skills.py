@@ -8,8 +8,11 @@ from claude_bundles.chat_context_disclosure import disclosure_is_expanded
 from claude_bundles.chat_context_skills import (
     ChatContextSkillsError,
     LoadedSkillsReport,
+    parse_loaded_skills_from_turn_badges,
     parse_skills_from_context_section,
     require_chat_surface,
+    scrape_chat_turn_loaded_skills,
+    scrape_loaded_skills,
 )
 
 pytestmark = pytest.mark.offline
@@ -207,3 +210,93 @@ async def test_expand_context_frame_stays_collapsed_after_one_click() -> None:
         await expand_context_frame(page)
     click_calls = [c for c in page.evaluate_calls if c.get("click")]
     assert len(click_calls) == 1
+
+
+def test_parse_loaded_skills_from_turn_badges_single_and_multi() -> None:
+    single = "Loaded the reasoning-posture skill."
+    multi = "Loaded the reasoning-posture and hypothesize-simulate skills"
+    list_form = "Loaded the reasoning-posture, hypothesize-simulate skills."
+    assert parse_loaded_skills_from_turn_badges(single) == ("reasoning-posture",)
+    assert parse_loaded_skills_from_turn_badges(multi) == (
+        "reasoning-posture",
+        "hypothesize-simulate",
+    )
+    assert parse_loaded_skills_from_turn_badges(list_form) == (
+        "reasoning-posture",
+        "hypothesize-simulate",
+    )
+
+
+class _BadgeTurnPage:
+    url = "https://claude.ai/chat/c1bb5193-9607-4b8b-81ac-5d4aeea0867c"
+
+    def __init__(self, *, turn_text: str) -> None:
+        self._turn_text = turn_text
+
+    async def evaluate(self, js: str) -> str:
+        if "assistant-message" in js or "assistant-turn" in js:
+            return self._turn_text
+        return ""
+
+    async def wait_for_timeout(self, _ms: int) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_scrape_chat_turn_loaded_skills_ignores_user_and_composer_nodes() -> None:
+    class _EvalPage:
+        url = "https://claude.ai/chat/x"
+
+        async def evaluate(self, js: str) -> str:
+            assert "user-message" in js
+            return ""
+
+    assert await scrape_chat_turn_loaded_skills(_EvalPage()) == ()
+
+
+@pytest.mark.asyncio
+async def test_scrape_loaded_skills_falls_back_to_assistant_badge_when_rail_absent(
+    monkeypatch,
+) -> None:
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    async def turn_badges(_page) -> tuple[str, ...]:
+        return ("reasoning-posture", "hypothesize-simulate")
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.scrape_chat_turn_loaded_skills",
+        turn_badges,
+    )
+    page = _BadgeTurnPage(turn_text="")
+    report = await scrape_loaded_skills(page)
+    assert report.skills == ("reasoning-posture", "hypothesize-simulate")
+    assert report.context_found is False
+    assert report.skills_rail_post_use is True
+
+
+@pytest.mark.asyncio
+async def test_collapsed_rail_does_not_fall_back_to_badges(monkeypatch) -> None:
+    async def collapsed(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is still collapsed after open — scrape refused"
+        )
+
+    async def should_not_run(_page) -> tuple[str, ...]:
+        raise AssertionError("badge fallback must not run on collapsed rail")
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", collapsed
+    )
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.scrape_chat_turn_loaded_skills",
+        should_not_run,
+    )
+    page = _BadgeTurnPage(turn_text="Loaded the reasoning-posture skill.")
+    with pytest.raises(ChatContextSkillsError, match="still collapsed"):
+        await scrape_loaded_skills(page)

@@ -105,6 +105,17 @@ def test_finalize_scrape_body_drops_37508_chrome_keeps_command() -> None:
     assert "install-ecosystem-plugin.sh" in cleaned
 
 
+def test_finalize_scrape_body_strips_named_loaded_skills_badge() -> None:
+    raw = (
+        "Loaded the reasoning-posture and hypothesize-simulate skills\n"
+        "Loaded the reasoning-posture and hypothesize-simulate skills\n\n"
+        "SMOKE_OK line one\nSMOKE_OK line two"
+    )
+    cleaned = finalize_scrape_body(raw)
+    assert "Loaded the reasoning-posture" not in cleaned
+    assert cleaned.startswith("SMOKE_OK line one")
+
+
 def test_finalize_scrape_body_keeps_code_block_brace_lines() -> None:
     raw = "Here is the patch:\n```python\ndef f(x):\n    return x\n}\n```\n---\ndone\n"
     cleaned = finalize_scrape_body(raw)

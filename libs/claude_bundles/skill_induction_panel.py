@@ -16,7 +16,11 @@ from collections.abc import Awaitable, Callable
 
 from playwright.async_api import Page
 
-from claude_bundles.chat_context_skills import LoadedSkillsReport, scrape_loaded_skills
+from claude_bundles.chat_context_skills import (
+    ChatContextSkillsError,
+    LoadedSkillsReport,
+    scrape_loaded_skills,
+)
 from claude_bundles.cowork_skill_delivery import (
     SkillDeliveryError,
     induction_panel_ready,
@@ -28,6 +32,10 @@ from claude_bundles.events_skill_delivery import emit_skill_fetch_decision
 # Replies on the prior witnesses landed about 9–21s after the user line.
 INDUCTION_PANEL_TIMEOUT_S = 45.0
 INDUCTION_PANEL_INTERVAL_MS = 1000
+_NOT_ON_RAIL = (
+    "Context list is not on the rail \u2014 scrape refused until it is expanded"
+)
+_PRE_MOUNT_MAX_IDLE_S = 15.0
 
 
 def _grid_activity_key(report: LoadedSkillsReport) -> tuple[tuple[str, ...], str, bool]:
@@ -59,6 +67,11 @@ async def _sample_page_liveness(page: Page) -> dict:
     return value
 
 
+def _is_chat_uuid_url(url: str) -> bool:
+    low = (url or "").lower()
+    return "/chat/" in low and "claude.ai" in low
+
+
 async def wait_for_induction_panel(
     page: Page,
     required: list[str],
@@ -78,14 +91,33 @@ async def wait_for_induction_panel(
     """
     idle_deadline = time.monotonic() + max(timeout_s, 0.0)
     started = time.monotonic()
+    absent_mount_deadline = started + min(timeout_s, _PRE_MOUNT_MAX_IDLE_S)
     last_observed: list[str] = []
     last_report: LoadedSkillsReport | None = None
     saw_post_use_rail = False
+    saw_absent_rail = False
+    saw_streaming = False
+    never_page_active = True
+    post_stream_quiet_polls = 0
     attempts = 0
     prev_grid_key: tuple[tuple[str, ...], str, bool] | None = None
     while True:
         attempts += 1
-        report = await scrape_loaded_skills(page)
+        try:
+            report = await scrape_loaded_skills(page)
+        except ChatContextSkillsError as exc:
+            if "not on the rail" not in str(exc):
+                raise
+            saw_absent_rail = True
+            report = LoadedSkillsReport(
+                url=page.url or "",
+                skills=(),
+                context_found=False,
+                skills_heading_found=False,
+                model_label=None,
+                selectors=(),
+                raw_section_text="",
+            )
         liveness = await _sample_page_liveness(page)
         if on_harvest is not None:
             await on_harvest(
@@ -117,9 +149,39 @@ async def wait_for_induction_panel(
             or (prev_grid_key is not None and grid_key != prev_grid_key)
         )
         prev_grid_key = grid_key
+        if bool(liveness.get("streaming")):
+            saw_streaming = True
         if page_active:
+            never_page_active = False
             idle_deadline = time.monotonic() + max(timeout_s, 0.0)
+        if saw_streaming and not page_active:
+            post_stream_quiet_polls += 1
+        else:
+            post_stream_quiet_polls = 0
+        url_now = str(liveness.get("url") or page.url or "")
+        if (
+            saw_streaming
+            and not page_active
+            and not report.context_found
+            and not induction_panel_ready(required, list(report.skills))
+        ):
+            if _is_chat_uuid_url(url_now) or post_stream_quiet_polls >= 2:
+                raise ChatContextSkillsError(_NOT_ON_RAIL)
+        if (
+            saw_absent_rail
+            and never_page_active
+            and time.monotonic() >= absent_mount_deadline
+            and not induction_panel_ready(required, last_observed)
+        ):
+            raise ChatContextSkillsError(_NOT_ON_RAIL)
         if time.monotonic() >= idle_deadline:
+            if (
+                saw_absent_rail
+                and last_report is not None
+                and not last_report.context_found
+                and not induction_panel_ready(required, last_observed)
+            ):
+                raise ChatContextSkillsError(_NOT_ON_RAIL)
             elapsed = time.monotonic() - started
             timeout_reason = (
                 "missing_required_slugs" if saw_post_use_rail else "pre_use_timeout"

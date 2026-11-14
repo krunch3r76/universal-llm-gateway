@@ -33,6 +33,9 @@ from claude_bundles.chat_context_disclosure import expand_context_frame
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)+$")
+_LOADED_NAMED_SKILL_LINE = re.compile(r"^loaded\s+the\s+(.+?)\s+skills?\.?$", re.I)
+_LOADED_SKILL_LIST_SPLIT = re.compile(r"\s*,\s*|\s+and\s+", re.I)
+_BADGE_SELECTOR = "assistant-turn badge: Loaded the <slug> skill(s)"
 # ``/cowork/local_<uuid>`` is the session Cowork opens after the induction
 # submit (thread 12831). ``cse_`` is the older session id. Both are compose.
 _COMPOSE_URL = re.compile(
@@ -95,6 +98,48 @@ _SELECTORS_USED = (
     "under Context: exact heading Skills (post-use)",
     "skill rows: kebab-case slug text under Skills group",
 )
+
+
+def parse_loaded_skills_from_turn_badges(text: str) -> tuple[str, ...]:
+    """Parse kebab slugs from assistant skill-load badge lines (offline-safe)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in text.splitlines():
+        match = _LOADED_NAMED_SKILL_LINE.match(line.strip())
+        if not match:
+            continue
+        for part in _LOADED_SKILL_LIST_SPLIT.split(match.group(1)):
+            slug = part.strip().lower()
+            if not _SLUG_RE.fullmatch(slug) or slug in seen:
+                continue
+            seen.add(slug)
+            out.append(slug)
+    return tuple(out)
+
+
+_ASSISTANT_TURN_BADGE_JS = """() => {
+  const pick = [
+    '[data-testid="assistant-message"]',
+    '[data-testid="assistant-turn"]',
+    'div[class*="font-claude"]',
+  ].join(',');
+  const nodes = Array.from(document.querySelectorAll(pick));
+  const parts = [];
+  for (const node of nodes) {
+    if (node.closest('[data-testid="user-message"], [data-testid="human-turn"]')) continue;
+    if (node.matches('[contenteditable="true"]') || node.closest('[contenteditable="true"]')) continue;
+    const t = (node.innerText || '').trim();
+    if (t) parts.push(t);
+  }
+  return parts.join('\\n');
+}"""
+
+
+async def scrape_chat_turn_loaded_skills(page: Page) -> tuple[str, ...]:
+    """Skill slugs from assistant-turn load badges when the Context rail is absent."""
+    raw = await page.evaluate(_ASSISTANT_TURN_BADGE_JS)
+    text = raw if isinstance(raw, str) else ""
+    return parse_loaded_skills_from_turn_badges(text)
 
 
 def parse_skills_from_context_section(section_text: str) -> tuple[str, ...]:
@@ -166,7 +211,23 @@ async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
     collapsed raises ``ChatContextSkillsError``.
     """
     url = require_chat_surface(page)
-    await expand_context_frame(page)
+    try:
+        await expand_context_frame(page)
+    except ChatContextSkillsError as exc:
+        if "not on the rail" not in str(exc):
+            raise
+        badge_skills = await scrape_chat_turn_loaded_skills(page)
+        if badge_skills:
+            return LoadedSkillsReport(
+                url=url,
+                skills=badge_skills,
+                context_found=False,
+                skills_heading_found=False,
+                model_label=None,
+                selectors=(*_SELECTORS_USED, _BADGE_SELECTOR),
+                raw_section_text="",
+            )
+        raise
     await page.wait_for_timeout(400)
 
     raw = await page.evaluate(

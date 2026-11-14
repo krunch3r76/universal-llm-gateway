@@ -310,6 +310,9 @@ async def test_on_harvest_receives_liveness_samples(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_absent_header_is_not_retried_until_idle_deadline(monkeypatch) -> None:
+    clock = {"t": 0.0}
+    monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
+
     async def scrape(_page):
         raise ChatContextSkillsError(
             "Context list is not on the rail \u2014 scrape refused until it is expanded"
@@ -318,11 +321,110 @@ async def test_absent_header_is_not_retried_until_idle_deadline(monkeypatch) -> 
     monkeypatch.setattr(panel, "scrape_loaded_skills", scrape)
     monkeypatch.setattr(panel, "emit_skill_fetch_decision", lambda **_k: None)
     page = _Page()
+
+    async def wait_for_timeout(ms: int) -> None:
+        clock["t"] += ms / 1000.0
+        page.waits.append(ms)
+
+    page.wait_for_timeout = wait_for_timeout  # type: ignore[method-assign]
+
     with pytest.raises(ChatContextSkillsError, match="not on the rail"):
         await panel.wait_for_induction_panel(
             page, ["reasoning-posture"], timeout_s=30, interval_ms=1000
         )
-    assert page.waits == []
+    assert clock["t"] >= panel._PRE_MOUNT_MAX_IDLE_S
+    assert page.waits
+
+
+@pytest.mark.asyncio
+async def test_not_on_rail_at_submit_polls_until_cowork_rail_mounts(monkeypatch) -> None:
+    absent = ChatContextSkillsError(
+        "Context list is not on the rail \u2014 scrape refused until it is expanded"
+    )
+    mounted = _report("reasoning-posture")
+    snapshots: list = [absent, absent, mounted]
+    calls = {"n": 0}
+
+    async def scrape(_page):
+        calls["n"] += 1
+        item = snapshots.pop(0)
+        if isinstance(item, ChatContextSkillsError):
+            raise item
+        return item
+
+    monkeypatch.setattr(panel, "scrape_loaded_skills", scrape)
+    monkeypatch.setattr(panel, "emit_skill_fetch_decision", lambda **_k: None)
+    page = _Page(
+        liveness={
+            "streaming": True,
+            "stop": False,
+            "tool_pause": False,
+            "url": "https://claude.ai/cowork/cse_x",
+        }
+    )
+    report = await panel.wait_for_induction_panel(
+        page, ["reasoning-posture"], timeout_s=30, interval_ms=1000
+    )
+    assert report.skills == ("reasoning-posture",)
+    assert calls["n"] == 3
+    assert page.waits == [1000, 1000]
+
+
+@pytest.mark.asyncio
+async def test_absent_rail_without_badges_fails_closed_after_stream_quiet(
+    monkeypatch,
+) -> None:
+    clock = {"t": 0.0}
+    monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
+
+    async def scrape(_page):
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(panel, "scrape_loaded_skills", scrape)
+    monkeypatch.setattr(panel, "emit_skill_fetch_decision", lambda **_k: None)
+    page = _Page(
+        liveness={
+            "streaming": False,
+            "stop": False,
+            "tool_pause": False,
+            "url": "https://claude.ai/chat/c1bb5193-9607-4b8b-81ac-5d4aeea0867c",
+        }
+    )
+    page.url = "https://claude.ai/chat/c1bb5193-9607-4b8b-81ac-5d4aeea0867c"
+
+    streaming_ticks = {"left": 1}
+
+    async def evaluate(_js: str) -> dict:
+        if streaming_ticks["left"] > 0:
+            streaming_ticks["left"] -= 1
+            return {
+                "streaming": True,
+                "stop": False,
+                "tool_pause": False,
+                "url": page.url,
+            }
+        return {
+            "streaming": False,
+            "stop": False,
+            "tool_pause": False,
+            "url": page.url,
+        }
+
+    page.evaluate = evaluate  # type: ignore[method-assign]
+
+    async def wait_for_timeout(ms: int) -> None:
+        clock["t"] += ms / 1000.0
+        page.waits.append(ms)
+
+    page.wait_for_timeout = wait_for_timeout  # type: ignore[method-assign]
+
+    with pytest.raises(ChatContextSkillsError, match="not on the rail"):
+        await panel.wait_for_induction_panel(
+            page, ["reasoning-posture"], timeout_s=45, interval_ms=1000
+        )
+    assert clock["t"] < 45.0
 
 
 @pytest.mark.asyncio
