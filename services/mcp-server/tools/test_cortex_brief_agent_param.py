@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from request_profile import bind_request
+
 from tools.cortex_named_tools._orchestration_tools import _resolve_boot_family_platform
 
 
@@ -48,9 +49,9 @@ def test_blank_on_code_mount_oauth_requires_seat() -> None:
         assert isinstance(result, dict)
         assert result["reason"] == "seat_required"
         assert result["missing_fields"] == ["seat"]
-        assert "OAuth clients on /mcp/code must pass seat= explicitly." in result[
-            "error"
-        ]
+        assert (
+            "OAuth clients on /mcp/code must pass seat= explicitly." in result["error"]
+        )
 
 
 def test_blank_on_code_mount_static_defaults_cursor() -> None:

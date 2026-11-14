@@ -16,25 +16,17 @@ def test_infer_conductor_code_mount_stamps_cursor() -> None:
     # 19ab1566a: kw-only packet_kind renamed to contract. Blank caller +
     # contract other than "conductor" returns None (ordering / omitted contract).
     with bind_request("default", surface="code"):
-        assert (
-            infer_caller_agent_for_conductor(None, contract="conductor")
-            == "cursor"
-        )
+        assert infer_caller_agent_for_conductor(None, contract="conductor") == "cursor"
 
 
 def test_infer_conductor_code_mount_oauth_returns_none() -> None:
     with bind_request("default", surface="code", auth_mode="oauth"):
-        assert (
-            infer_caller_agent_for_conductor(None, contract="conductor") is None
-        )
+        assert infer_caller_agent_for_conductor(None, contract="conductor") is None
 
 
 def test_infer_conductor_code_mount_static_stamps_cursor() -> None:
     with bind_request("default", surface="code", auth_mode="static"):
-        assert (
-            infer_caller_agent_for_conductor(None, contract="conductor")
-            == "cursor"
-        )
+        assert infer_caller_agent_for_conductor(None, contract="conductor") == "cursor"
 
 
 def test_infer_conductor_life_mount_stamps_web_anthropic() -> None:
@@ -61,6 +53,4 @@ def test_infer_non_conductor_returns_none() -> None:
 
 def test_infer_unknown_surface_returns_none() -> None:
     with bind_request("default", surface="unknown"):
-        assert (
-            infer_caller_agent_for_conductor(None, contract="conductor") is None
-        )
+        assert infer_caller_agent_for_conductor(None, contract="conductor") is None

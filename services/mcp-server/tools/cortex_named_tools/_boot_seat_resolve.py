@@ -77,7 +77,7 @@ def _seat_required_error() -> dict[str, Any]:
         "error": (
             "seat is required when the MCP mount surface cannot be inferred — "
             'pass seat="web-anthropic" or seat="cursor" '
-            "(or a capability cell like seat=\"grok-api-multi\"), "
+            '(or a capability cell like seat="grok-api-multi"), '
             "or call from /mcp/life or /mcp/code. "
             "OAuth clients on /mcp/code must pass seat= explicitly."
         ),
