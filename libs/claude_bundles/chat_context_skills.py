@@ -33,13 +33,26 @@ from claude_bundles.chat_context_disclosure import expand_context_frame
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)+$")
-_LOADED_NAMED_SKILL_LINE = re.compile(r"^loaded\s+the\s+(.+?)\s+skills?\.?$", re.I)
-_LOADED_SKILL_LIST_SPLIT = re.compile(r"\s*,\s*|\s+and\s+", re.I)
-_BADGE_SELECTOR = "assistant-turn badge: Loaded the <slug> skill(s)"
-_SESSION_ACTIVITY_SELECTOR = (
-    'aside[aria-label="Session activity panel"] [data-kind-row="skills"]'
+_NAMED_SKILL_CAPTION_RE = re.compile(
+    r"^(?:loaded|used)\s+the\s+(.+?)\s+skills?\.?$",
+    re.I,
 )
-_SESSION_ACTIVITY_FALLBACK = '[data-activity-peek-zone] [data-kind-row="skills"]'
+_USED_BARE_SKILL_CAPTION_RE = re.compile(
+    r"^used\s+(?!the\s)(.+?)(?:\s+skills?)?\.?$",
+    re.I,
+)
+_LOADED_SKILL_LIST_SPLIT = re.compile(r"\s*,\s*and\s+|\s*,\s*|\s+and\s+", re.I)
+_COMPOUND_CAPTION_SPLIT = re.compile(
+    r",\s+(?=(?:loaded|used|searched|ran)\s+)",
+    re.I,
+)
+_BADGE_SELECTOR = (
+    '[data-cds="TurnStatus"] caption: '
+    "Loaded the <slug> skill(s) | Used [the] <slug> [skill(s)]"
+)
+_SESSION_ACTIVITY_SELECTOR = (
+    'aside[aria-label="Session activity panel"] [data-kind-row="skills"][aria-label]'
+)
 _SKILLS_PANEL_PREFIX = re.compile(r"^Skills:\s*", re.I)
 # ``/cowork/local_<uuid>`` is the session Cowork opens after the induction
 # submit (thread 12831). ``cse_`` is the older session id. Both are compose.
@@ -133,96 +146,251 @@ def parse_session_activity_skills(raw: str) -> tuple[str, ...]:
     return tuple(out)
 
 
+@dataclass(frozen=True)
+class SkillInductionSnapshot:
+    """Pre-submit baseline of session-panel slugs and ``TurnStatus`` node ids.
+
+    Captured immediately before submit so warm follow-ups reject stale Turn-1
+    panel entries and stale Turn-1 ``TurnStatus`` captions while accepting new
+    panel slugs or captions on newly mounted ``TurnStatus`` nodes.
+    """
+
+    panel_slugs: frozenset[str] = frozenset()
+    caption_node_ids: frozenset[str] = frozenset()
+
+
+def _parse_caption_clause(clause: str) -> list[str]:
+    cleaned = clause.strip()
+    if not cleaned:
+        return []
+    named = _NAMED_SKILL_CAPTION_RE.match(cleaned)
+    if named:
+        parts = [
+            part.strip().lower()
+            for part in _LOADED_SKILL_LIST_SPLIT.split(named.group(1))
+        ]
+        return [part for part in parts if _SLUG_RE.fullmatch(part)]
+    used = _USED_BARE_SKILL_CAPTION_RE.match(cleaned)
+    if used:
+        parts = [
+            part.strip().lower()
+            for part in _LOADED_SKILL_LIST_SPLIT.split(used.group(1))
+        ]
+        if parts and all(_SLUG_RE.fullmatch(part) for part in parts):
+            return parts
+    return []
+
+
 def parse_loaded_skills_from_turn_badges(text: str) -> tuple[str, ...]:
-    """Parse kebab slugs from assistant skill-load badge lines (offline-safe)."""
+    """Parse kebab slugs from ``TurnStatus`` caption text (offline-safe).
+
+    Accepts ``Loaded the <slugs> skill(s)``, ``Used the <slugs> skill(s)``, and
+    ``Used <slugs>`` captions, validating every candidate with ``_SLUG_RE``.
+    """
     out: list[str] = []
     seen: set[str] = set()
-    for line in text.splitlines():
-        match = _LOADED_NAMED_SKILL_LINE.match(line.strip())
-        if not match:
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
             continue
-        for part in _LOADED_SKILL_LIST_SPLIT.split(match.group(1)):
-            slug = part.strip().lower()
-            if not _SLUG_RE.fullmatch(slug) or slug in seen:
-                continue
-            seen.add(slug)
-            out.append(slug)
+        matched = _parse_caption_clause(line)
+        if not matched and "," in line:
+            for sub in _COMPOUND_CAPTION_SPLIT.split(line):
+                matched.extend(_parse_caption_clause(sub))
+        for slug in matched:
+            if slug not in seen:
+                seen.add(slug)
+                out.append(slug)
     return tuple(out)
 
 
-_ASSISTANT_TURN_BADGE_JS = """() => {
-  const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
-  const skillRowsIn = (root) =>
-    Array.from(root.querySelectorAll('[data-kind-row="skills"]'));
-  const sessionAside = document.querySelector(
-    'aside[aria-label="Session activity panel"]'
-  );
-  let skillRows = sessionAside ? skillRowsIn(sessionAside) : [];
-  if (!skillRows.length) {
-    const peek = document.querySelector('[data-activity-peek-zone]');
-    if (peek) skillRows = skillRowsIn(peek);
-  }
-  const session_labels = [];
-  const truncate_texts = [];
-  for (const row of skillRows) {
-    const al = row.getAttribute('aria-label');
-    if (al) session_labels.push(al.trim());
-    const tr = row.querySelector('span.truncate');
-    if (tr) {
-      const t = (tr.textContent || '').trim();
-      if (t) truncate_texts.push(t);
+_TURN_STATUS_AND_PANEL_COLLECT_JS = """
+  const wm = (window.__ulgTurnStatusIds =
+    window.__ulgTurnStatusIds || new WeakMap());
+  let seq = window.__ulgTurnStatusSeq || 0;
+  const nodeIdFor = (el) => {
+    const itemKey = (el.getAttribute('data-item-key') || '').trim();
+    if (itemKey) return `item:${itemKey}`;
+    let id = wm.get(el);
+    if (!id) {
+      seq += 1;
+      window.__ulgTurnStatusSeq = seq;
+      id = `node:${seq}`;
+      wm.set(el, id);
     }
-  }
-
-  const pick = [
-    '[data-testid="assistant-message"]',
-    '[data-testid="assistant-turn"]',
-    'div[class*="font-claude"]',
-  ].join(',');
-  const nodes = Array.from(document.querySelectorAll(pick));
-  const parts = [];
-  const cds_subjects = [];
-  for (const node of nodes) {
-    if (node.closest('[data-testid="user-message"], [data-testid="human-turn"]')) continue;
-    if (node.matches('[contenteditable="true"]') || node.closest('[contenteditable="true"]')) continue;
-    const steps = node.querySelectorAll(
-      '[data-cds="TurnStatusStep"] [data-cds-row-subject], [data-cds="TurnStatusStep"] [data-cds-row-title]'
-    );
-    for (const el of steps) {
-      const t = (el.textContent || '').trim().toLowerCase();
-      if (slugRe.test(t)) cds_subjects.push(t);
-    }
-    const t = (node.innerText || '').trim();
-    if (t) parts.push(t);
-  }
-  return {
-    session_labels,
-    truncate_texts,
-    turn_text: parts.join('\\n'),
-    cds_subjects,
+    return id;
   };
+
+  const panelRows = Array.from(
+    document.querySelectorAll(
+      'aside[aria-label="Session activity panel"] [data-kind-row="skills"]'
+    )
+  );
+  const session_labels = [];
+  for (const row of panelRows) {
+    const al = row.getAttribute('aria-label');
+    if (al && al.trim()) session_labels.push(al.trim());
+  }
+
+  const captions = [];
+  const turnStatuses = Array.from(
+    document.querySelectorAll('[data-cds="TurnStatus"]')
+  );
+  for (const ts of turnStatuses) {
+    if (
+      ts.closest(
+        '[data-testid="user-message"], [data-testid="human-turn"], [contenteditable="true"]'
+      ) ||
+      ts.matches('[contenteditable="true"]')
+    ) {
+      continue;
+    }
+    const node_id = nodeIdFor(ts);
+    const morphs = Array.from(
+      ts.querySelectorAll('span[data-morph-key]')
+    ).filter(
+      (el) => !el.closest('[data-cds="TurnStatusStep"], [data-cds-row-panel]')
+    );
+    if (morphs.length) {
+      for (const el of morphs) {
+        captions.push({ node_id, text: (el.textContent || '').trim() });
+      }
+    } else {
+      const labelEl = ts.querySelector(':scope > [data-cds-row] [id$="-label"]');
+      captions.push({
+        node_id,
+        text: labelEl ? (labelEl.textContent || '').trim() : '',
+      });
+    }
+  }
+"""
+
+_ASSISTANT_TURN_BADGE_JS = (
+    "() => {"
+    + _TURN_STATUS_AND_PANEL_COLLECT_JS
+    + "\n  return { session_labels, captions };\n}"
+)
+
+_SKILL_INDUCTION_SNAPSHOT_JS = (
+    "() => {"
+    + _TURN_STATUS_AND_PANEL_COLLECT_JS
+    + """
+  const context_skills = [];
+  const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
+  const headers = Array.from(
+    document.querySelectorAll('[data-section-header][role="button"]')
+  );
+  const ctxHeader = headers.find(
+    (el) =>
+      ((el.textContent || '').trim().split('\\n')[0] || '').trim() === 'Context'
+  );
+  if (
+    ctxHeader &&
+    (ctxHeader.getAttribute('aria-expanded') || '').toLowerCase() === 'true' &&
+    ctxHeader.nextElementSibling
+  ) {
+    const root = ctxHeader.nextElementSibling;
+    const skillsHeading = Array.from(
+      root.querySelectorAll('span,h1,h2,h3,h4,div,button')
+    ).find((n) => (n.textContent || '').trim() === 'Skills');
+    if (skillsHeading) {
+      let sroot = skillsHeading.parentElement;
+      for (let i = 0; i < 6 && sroot; i++) {
+        const slugish = Array.from(sroot.querySelectorAll('span,a,button,div,li'))
+          .map((n) => (n.textContent || '').trim().toLowerCase())
+          .filter((t) => slugRe.test(t));
+        if (slugish.length) {
+          for (const s of slugish) context_skills.push(s);
+          break;
+        }
+        sroot = sroot.parentElement;
+      }
+    }
+  }
+  return { session_labels, captions, context_skills };
 }"""
+)
 
 
-async def scrape_chat_turn_loaded_skills(page: Page) -> tuple[str, ...]:
-    """Skill slugs from session activity + turn badges when the Context rail is absent."""
+def _captions_to_slugs(
+    raw_captions: Any,
+    *,
+    snapshot: SkillInductionSnapshot | None = None,
+) -> tuple[str, ...]:
+    if not isinstance(raw_captions, list):
+        return ()
+    slugs: list[str] = []
+    for item in raw_captions:
+        if not isinstance(item, dict):
+            continue
+        node_id = str(item.get("node_id") or "").strip()
+        if snapshot is not None and (
+            not node_id or node_id in snapshot.caption_node_ids
+        ):
+            continue
+        text = str(item.get("text") or "").strip()
+        if text:
+            slugs.extend(parse_loaded_skills_from_turn_badges(text))
+    return _ordered_unique_slugs(tuple(slugs))
+
+
+async def snapshot_skill_induction_before_submit(
+    page: Page,
+) -> SkillInductionSnapshot:
+    """Capture pre-submit panel slugs and ``TurnStatus`` caption node ids."""
+    raw = await page.evaluate(_SKILL_INDUCTION_SNAPSHOT_JS)
+    if not isinstance(raw, dict):
+        return SkillInductionSnapshot()
+    panel: set[str] = set()
+    for label in raw.get("session_labels") or []:
+        panel.update(parse_session_activity_skills(str(label)))
+    for slug in raw.get("context_skills") or []:
+        norm = str(slug).strip().lower()
+        if _SLUG_RE.fullmatch(norm):
+            panel.add(norm)
+    node_ids: set[str] = set()
+    for item in raw.get("captions") or []:
+        if isinstance(item, dict):
+            nid = str(item.get("node_id") or "").strip()
+            if nid:
+                node_ids.add(nid)
+    for item in raw.get("caption_node_ids") or []:
+        nid = str(item or "").strip()
+        if nid:
+            node_ids.add(nid)
+    return SkillInductionSnapshot(
+        panel_slugs=frozenset(panel),
+        caption_node_ids=frozenset(node_ids),
+    )
+
+
+async def scrape_chat_turn_loaded_skills(
+    page: Page,
+    *,
+    snapshot: SkillInductionSnapshot | None = None,
+) -> tuple[str, ...]:
+    """Skill slugs from Session activity panel + ``TurnStatus`` captions.
+
+    Reads only ``aside[aria-label="Session activity panel"] [data-kind-row="skills"]``
+    ``aria-label`` and ``[data-cds="TurnStatus"]`` caption elements — never
+    assistant ``innerText``, model prose, or ``TurnStatusStep`` subjects/titles.
+    When ``snapshot`` is supplied, returns only panel slugs absent from
+    ``snapshot.panel_slugs`` or captions on nodes absent from
+    ``snapshot.caption_node_ids``.
+    """
     raw = await page.evaluate(_ASSISTANT_TURN_BADGE_JS)
     if not isinstance(raw, dict):
         return ()
     session_slugs: list[str] = []
     for label in raw.get("session_labels") or []:
         session_slugs.extend(parse_session_activity_skills(str(label)))
-    for text in raw.get("truncate_texts") or []:
-        session_slugs.extend(parse_session_activity_skills(str(text)))
+    if snapshot is not None:
+        session_slugs = [
+            slug for slug in session_slugs if slug not in snapshot.panel_slugs
+        ]
     session_tuple = _ordered_unique_slugs(tuple(session_slugs))
-    from_badges = parse_loaded_skills_from_turn_badges(str(raw.get("turn_text") or ""))
-    cds_slugs: list[str] = []
-    for item in raw.get("cds_subjects") or []:
-        slug = str(item).strip().lower()
-        if _SLUG_RE.fullmatch(slug):
-            cds_slugs.append(slug)
-    cds_tuple = _ordered_unique_slugs(tuple(cds_slugs))
-    return _ordered_unique_slugs(session_tuple + from_badges + cds_tuple)
+    caption_tuple = _captions_to_slugs(raw.get("captions"), snapshot=snapshot)
+    return _ordered_unique_slugs(session_tuple + caption_tuple)
 
 
 def parse_skills_from_context_section(section_text: str) -> tuple[str, ...]:
@@ -284,14 +452,19 @@ async def _pick_chat_page(context: BrowserContext, *, chat_url: str | None) -> P
     raise ChatContextSkillsError("No browser pages on CDP session")
 
 
-async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
+async def scrape_loaded_skills(
+    page: Page,
+    *,
+    snapshot: SkillInductionSnapshot | None = None,
+) -> LoadedSkillsReport:
     """Return the skill slugs listed under the chat UI Context → Skills frame.
 
     Non-LLM. Does not ask the model. Confirms the Context section header
     is expanded before reading rows. The Skills label sits in that open
     grid; it is not its own toggle. Empty ``skills`` with ``context_found``
     true means that open section has no skills bound. A header that stays
-    collapsed raises ``ChatContextSkillsError``.
+    collapsed raises ``ChatContextSkillsError``. When ``snapshot`` is supplied,
+    filters out pre-submit panel slugs and pre-existing ``TurnStatus`` nodes.
     """
     url = require_chat_surface(page)
     try:
@@ -299,7 +472,11 @@ async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
     except ChatContextSkillsError as exc:
         if "not on the rail" not in str(exc):
             raise
-        badge_skills = await scrape_chat_turn_loaded_skills(page)
+        badge_skills = (
+            await scrape_chat_turn_loaded_skills(page)
+            if snapshot is None
+            else await scrape_chat_turn_loaded_skills(page, snapshot=snapshot)
+        )
         if badge_skills:
             return LoadedSkillsReport(
                 url=url,
@@ -310,7 +487,6 @@ async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
                 selectors=(
                     *_SELECTORS_USED,
                     _SESSION_ACTIVITY_SELECTOR,
-                    _SESSION_ACTIVITY_FALLBACK,
                     _BADGE_SELECTOR,
                 ),
                 raw_section_text="",
@@ -406,6 +582,15 @@ async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
         for s in (raw.get("skills") or [])
         if isinstance(s, str) and _SLUG_RE.fullmatch(s)
     )
+    if snapshot is not None and (snapshot.panel_slugs or snapshot.caption_node_ids):
+        fresh_panel = tuple(s for s in skills if s not in snapshot.panel_slugs)
+        raw_turn = await page.evaluate(_ASSISTANT_TURN_BADGE_JS)
+        fresh_captions = (
+            _captions_to_slugs(raw_turn.get("captions"), snapshot=snapshot)
+            if isinstance(raw_turn, dict)
+            else ()
+        )
+        skills = _ordered_unique_slugs(fresh_panel + fresh_captions)
     return LoadedSkillsReport(
         url=url,
         skills=skills,

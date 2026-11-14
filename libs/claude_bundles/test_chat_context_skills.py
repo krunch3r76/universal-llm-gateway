@@ -6,6 +6,8 @@ import pytest
 
 from claude_bundles.chat_context_disclosure import disclosure_is_expanded
 from claude_bundles.chat_context_skills import (
+    _ASSISTANT_TURN_BADGE_JS,
+    _SKILL_INDUCTION_SNAPSHOT_JS,
     ChatContextSkillsError,
     LoadedSkillsReport,
     parse_loaded_skills_from_turn_badges,
@@ -14,6 +16,7 @@ from claude_bundles.chat_context_skills import (
     require_chat_surface,
     scrape_chat_turn_loaded_skills,
     scrape_loaded_skills,
+    snapshot_skill_induction_before_submit,
 )
 
 pytestmark = pytest.mark.offline
@@ -150,7 +153,12 @@ class _DisclosurePage:
         if spec.get("click"):
             return dict(self.click_result)
         if not self.reads:
-            return {"found": False, "aria_expanded": None, "list_visible": False, "clicked": False}
+            return {
+                "found": False,
+                "aria_expanded": None,
+                "list_visible": False,
+                "clicked": False,
+            }
         return dict(self.reads.pop(0))
 
     async def wait_for_timeout(self, ms: int) -> None:
@@ -227,15 +235,18 @@ def test_parse_session_activity_skills_aria_label_single_and_multi() -> None:
 
 def test_parse_session_activity_skills_truncate_fallback() -> None:
     assert parse_session_activity_skills("reasoning-posture") == ("reasoning-posture",)
-    assert parse_session_activity_skills(
-        "reasoning-posture, hypothesize-simulate"
-    ) == ("reasoning-posture", "hypothesize-simulate")
+    assert parse_session_activity_skills("reasoning-posture, hypothesize-simulate") == (
+        "reasoning-posture",
+        "hypothesize-simulate",
+    )
 
 
 def test_parse_loaded_skills_from_turn_badges_single_and_multi() -> None:
     single = "Loaded the reasoning-posture skill."
     multi = "Loaded the reasoning-posture and hypothesize-simulate skills"
     list_form = "Loaded the reasoning-posture, hypothesize-simulate skills."
+    used_bare = "Used ulg-code"
+    used_named = "Used the reasoning-posture and hypothesize-simulate skills."
     assert parse_loaded_skills_from_turn_badges(single) == ("reasoning-posture",)
     assert parse_loaded_skills_from_turn_badges(multi) == (
         "reasoning-posture",
@@ -245,6 +256,13 @@ def test_parse_loaded_skills_from_turn_badges_single_and_multi() -> None:
         "reasoning-posture",
         "hypothesize-simulate",
     )
+    assert parse_loaded_skills_from_turn_badges(used_bare) == ("ulg-code",)
+    assert parse_loaded_skills_from_turn_badges(used_named) == (
+        "reasoning-posture",
+        "hypothesize-simulate",
+    )
+    assert parse_loaded_skills_from_turn_badges("Used toys integration") == ()
+    assert parse_loaded_skills_from_turn_badges("reasoning-posture") == ()
 
 
 class _BadgeTurnPage:
@@ -253,16 +271,12 @@ class _BadgeTurnPage:
     def __init__(
         self,
         *,
-        turn_text: str = "",
+        captions: list[dict[str, str]] | None = None,
         session_labels: list[str] | None = None,
-        truncate_texts: list[str] | None = None,
-        cds_subjects: list[str] | None = None,
     ) -> None:
         self._payload = {
             "session_labels": session_labels or [],
-            "truncate_texts": truncate_texts or [],
-            "turn_text": turn_text,
-            "cds_subjects": cds_subjects or [],
+            "captions": captions or [],
         }
 
     async def evaluate(self, js: str) -> dict[str, object]:
@@ -274,8 +288,251 @@ class _BadgeTurnPage:
         return None
 
 
+_NODE_DOM_HARNESS_JS = r"""
+const fs = require('fs');
+const vm = require('vm');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+
+function parseSimple(token) {
+  const attrRe = /\[([a-zA-Z0-9_-]+)(?:([*$]?=)"([^"]*)")?\]/g;
+  const tagMatch = token.match(/^[a-zA-Z0-9_-]+/);
+  const tag = tagMatch ? tagMatch[0].toLowerCase() : null;
+  const attrs = [];
+  let m;
+  while ((m = attrRe.exec(token)) !== null) {
+    attrs.push({ name: m[1], op: m[2] || null, val: m[3] || '' });
+  }
+  return { tag, attrs };
+}
+
+function matchSimple(el, simple) {
+  if (!el || el.nodeType !== 1) return false;
+  if (simple.tag && el.tag !== simple.tag) return false;
+  for (const a of simple.attrs) {
+    const has = Object.prototype.hasOwnProperty.call(el.attrs, a.name);
+    if (!a.op) {
+      if (!has) return false;
+      continue;
+    }
+    if (!has) return false;
+    const v = String(el.attrs[a.name] || '');
+    if (a.op === '=' && v !== a.val) return false;
+    if (a.op === '*=' && !v.includes(a.val)) return false;
+    if (a.op === '$=' && !v.endsWith(a.val)) return false;
+  }
+  return true;
+}
+
+function splitTopLevelCommas(sel) {
+  const out = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of sel) {
+    if (ch === '[') depth += 1;
+    if (ch === ']') depth -= 1;
+    if (ch === ',' && depth === 0) {
+      if (cur.trim()) out.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+function splitSelectorParts(sel) {
+  const out = [];
+  let depth = 0;
+  let inQuote = false;
+  let cur = '';
+  for (const ch of sel) {
+    if (ch === '"') inQuote = !inQuote;
+    if (!inQuote && ch === '[') depth += 1;
+    if (!inQuote && ch === ']') depth -= 1;
+    if (!inQuote && depth === 0 && /\s/.test(ch)) {
+      if (cur.trim()) out.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+function matchSingleSelector(el, sel, scopeEl) {
+  let s = sel.trim();
+  let directFromScope = false;
+  if (s.startsWith(':scope')) {
+    s = s.slice(':scope'.length).trim();
+    if (s.startsWith('>')) {
+      directFromScope = true;
+      s = s.slice(1).trim();
+    }
+  }
+  const parts = splitSelectorParts(s).map(parseSimple);
+  if (!parts.length) return false;
+  if (!matchSimple(el, parts[parts.length - 1])) return false;
+  if (parts.length === 1) {
+    return directFromScope ? el.parent === scopeEl : true;
+  }
+  let cur = el.parent;
+  for (let i = parts.length - 2; i >= 0; i--) {
+    if (i === 0 && directFromScope) {
+      while (cur && !(matchSimple(cur, parts[0]) && cur.parent === scopeEl)) {
+        cur = cur.parent;
+      }
+      return Boolean(cur);
+    }
+    while (cur && !matchSimple(cur, parts[i])) {
+      cur = cur.parent;
+    }
+    if (!cur) return false;
+    cur = cur.parent;
+  }
+  return true;
+}
+
+function makeNode(spec, parent) {
+  if (typeof spec === 'string') {
+    return { nodeType: 3, text: spec, parent };
+  }
+  const node = {
+    nodeType: 1,
+    tag: String(spec.tag || 'div').toLowerCase(),
+    attrs: Object.assign({}, spec.attrs || {}),
+    parent: parent || null,
+    children: [],
+    nextElementSibling: null,
+    get parentElement() { return this.parent; },
+    get textContent() {
+      return this.children.map((c) => (c.nodeType === 3 ? c.text : c.textContent)).join('');
+    },
+    get innerText() {
+      return this.children
+        .map((c) => (c.nodeType === 3 ? c.text : c.innerText))
+        .join('\n');
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attrs, name)
+        ? String(this.attrs[name])
+        : null;
+    },
+    matches(selector) {
+      return splitTopLevelCommas(selector).some((s) =>
+        matchSingleSelector(this, s, null)
+      );
+    },
+    closest(selector) {
+      let cur = this;
+      while (cur && cur.nodeType === 1) {
+        if (cur.matches(selector)) return cur;
+        cur = cur.parent;
+      }
+      return null;
+    },
+    querySelectorAll(selector) {
+      const branches = splitTopLevelCommas(selector);
+      const found = [];
+      const walk = (n) => {
+        for (const ch of n.children) {
+          if (ch.nodeType === 1) {
+            if (branches.some((b) => matchSingleSelector(ch, b, this))) {
+              found.push(ch);
+            }
+            walk(ch);
+          }
+        }
+      };
+      walk(this);
+      return found;
+    },
+    querySelector(selector) {
+      const all = this.querySelectorAll(selector);
+      return all.length ? all[0] : null;
+    },
+  };
+  node.children = (spec.children || []).map((c) => makeNode(c, node));
+  const elemChildren = node.children.filter((c) => c.nodeType === 1);
+  for (let i = 0; i < elemChildren.length - 1; i++) {
+    elemChildren[i].nextElementSibling = elemChildren[i + 1];
+  }
+  return node;
+}
+
+const win = {};
+const ctx = vm.createContext({ window: win, document: null });
+win.window = win;
+const out = [];
+let rootTree = null;
+for (const step of input.steps) {
+  if (step.set_tree) {
+    rootTree = makeNode(step.set_tree, null);
+    ctx.document = rootTree;
+    win.document = rootTree;
+  }
+  if (step.append_to_body && rootTree) {
+    const added = makeNode(step.append_to_body, rootTree);
+    const prevElems = rootTree.children.filter((c) => c.nodeType === 1);
+    if (prevElems.length) prevElems[prevElems.length - 1].nextElementSibling = added;
+    rootTree.children.push(added);
+  }
+  if (step.set_panel_label && rootTree) {
+    const row = rootTree.querySelector('[data-kind-row="skills"]');
+    if (row) row.attrs['aria-label'] = step.set_panel_label;
+  }
+  if (step.eval_js) {
+    const fn = vm.runInContext(`(${step.eval_js})`, ctx);
+    out.push(fn());
+  }
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def _run_dom_steps_in_node(steps: list[dict[str, object]]) -> list[dict[str, object]]:
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    assert node is not None, "node runtime required to execute DOM JS snippets"
+    proc = subprocess.run(
+        [node, "-e", _NODE_DOM_HARNESS_JS],
+        input=json.dumps({"steps": steps}),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return json.loads(proc.stdout)
+
+
+class _EvaluatedDomPage:
+    url = "https://claude.ai/chat/c1bb5193-9607-4b8b-81ac-5d4aeea0867c"
+
+    def __init__(self, tree: dict[str, object]) -> None:
+        self._steps: list[dict[str, object]] = [{"set_tree": tree}]
+
+    def append_turn(self, node_spec: dict[str, object]) -> None:
+        self._steps.append({"append_to_body": node_spec})
+
+    def set_panel_label(self, aria_label: str) -> None:
+        self._steps.append({"set_panel_label": aria_label})
+
+    async def evaluate(self, js: str) -> dict[str, object]:
+        self._steps.append({"eval_js": js})
+        results = _run_dom_steps_in_node(self._steps)
+        return results[-1]
+
+    async def wait_for_timeout(self, _ms: int) -> None:
+        return None
+
+
 @pytest.mark.asyncio
-async def test_scrape_chat_turn_loaded_skills_reads_session_activity_aria_label() -> None:
+async def test_scrape_chat_turn_loaded_skills_reads_session_activity_aria_label() -> (
+    None
+):
     page = _BadgeTurnPage(session_labels=["Skills: reasoning-posture"])
     assert await scrape_chat_turn_loaded_skills(page) == ("reasoning-posture",)
 
@@ -284,8 +541,12 @@ async def test_scrape_chat_turn_loaded_skills_reads_session_activity_aria_label(
 async def test_scrape_chat_turn_loaded_skills_prefers_panel_then_caption() -> None:
     page = _BadgeTurnPage(
         session_labels=[],
-        truncate_texts=[],
-        turn_text="Loaded the hypothesize-simulate skill.",
+        captions=[
+            {
+                "node_id": "item:t1",
+                "text": "Loaded the hypothesize-simulate skill.",
+            }
+        ],
     )
     assert await scrape_chat_turn_loaded_skills(page) == ("hypothesize-simulate",)
 
@@ -294,7 +555,12 @@ async def test_scrape_chat_turn_loaded_skills_prefers_panel_then_caption() -> No
 async def test_scrape_chat_turn_loaded_skills_panel_wins_over_caption_order() -> None:
     page = _BadgeTurnPage(
         session_labels=["Skills: reasoning-posture"],
-        turn_text="Loaded the hypothesize-simulate skill.",
+        captions=[
+            {
+                "node_id": "item:t1",
+                "text": "Loaded the hypothesize-simulate skill.",
+            }
+        ],
     )
     assert await scrape_chat_turn_loaded_skills(page) == (
         "reasoning-posture",
@@ -304,15 +570,322 @@ async def test_scrape_chat_turn_loaded_skills_panel_wins_over_caption_order() ->
 
 @pytest.mark.asyncio
 async def test_scrape_chat_turn_loaded_skills_empty_fails_closed() -> None:
-    page = _BadgeTurnPage(turn_text="Loaded skill\nSome reply prose.")
+    page = _BadgeTurnPage(captions=[{"node_id": "item:t1", "text": "Loaded skill"}])
     assert await scrape_chat_turn_loaded_skills(page) == ()
 
 
 @pytest.mark.asyncio
 async def test_scrape_chat_turn_loaded_skills_does_not_trust_user_skills_line() -> None:
     """User-turn ``Skills: <slug>`` prose must not count as a load receipt."""
-    page = _BadgeTurnPage(turn_text="Skills: reasoning-posture\nLoaded skill")
+    page = _BadgeTurnPage(
+        captions=[{"node_id": "item:t1", "text": "Skills: reasoning-posture"}]
+    )
     assert await scrape_chat_turn_loaded_skills(page) == ()
+
+
+def test_assistant_turn_badge_js_never_reads_innertext_or_step_subjects() -> None:
+    assert "innerText" not in _ASSISTANT_TURN_BADGE_JS
+    assert "innerText" not in _SKILL_INDUCTION_SNAPSHOT_JS
+    assert "cds_subjects" not in _ASSISTANT_TURN_BADGE_JS
+    assert "data-cds-row-subject" not in _ASSISTANT_TURN_BADGE_JS
+    assert "data-cds-row-title" not in _ASSISTANT_TURN_BADGE_JS
+
+
+@pytest.mark.asyncio
+async def test_forged_prose_line_in_assistant_reply_refuses(monkeypatch) -> None:
+    """R3 F1b: model prose ``Loaded the reasoning-posture skill.`` must refuse."""
+
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    dom_page = _EvaluatedDomPage(
+        {
+            "tag": "body",
+            "children": [
+                {
+                    "tag": "div",
+                    "attrs": {
+                        "data-testid": "assistant-message",
+                        "class": "font-claude-response",
+                    },
+                    "children": [
+                        {
+                            "tag": "div",
+                            "attrs": {
+                                "data-cds": "TurnStatus",
+                                "data-item-key": "turn1:grp:th0",
+                            },
+                            "children": [
+                                {
+                                    "tag": "span",
+                                    "attrs": {"data-morph-key": "done|Thinking"},
+                                    "children": ["Thought for 2s"],
+                                }
+                            ],
+                        },
+                        {
+                            "tag": "p",
+                            "children": ["Loaded the reasoning-posture skill."],
+                        },
+                        {
+                            "tag": "p",
+                            "children": ["Used reasoning-posture"],
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+    assert await scrape_chat_turn_loaded_skills(dom_page) == ()
+    with pytest.raises(ChatContextSkillsError, match="not on the rail"):
+        await scrape_loaded_skills(dom_page)
+
+
+@pytest.mark.asyncio
+async def test_slug_shaped_turn_status_step_subject_alone_refuses(monkeypatch) -> None:
+    """R3 F1a: a slug-shaped ``TurnStatusStep`` subject/title alone must refuse."""
+
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    dom_page = _EvaluatedDomPage(
+        {
+            "tag": "body",
+            "children": [
+                {
+                    "tag": "div",
+                    "attrs": {"data-testid": "assistant-message"},
+                    "children": [
+                        {
+                            "tag": "div",
+                            "attrs": {
+                                "data-cds": "TurnStatus",
+                                "data-item-key": "turn1:grp:th0",
+                            },
+                            "children": [
+                                {
+                                    "tag": "div",
+                                    "attrs": {"data-cds-row": ""},
+                                    "children": [
+                                        {
+                                            "tag": "span",
+                                            "attrs": {
+                                                "data-morph-key": "done|Ran a command"
+                                            },
+                                            "children": ["Ran a command"],
+                                        }
+                                    ],
+                                },
+                                {
+                                    "tag": "div",
+                                    "attrs": {"data-cds-row-panel": ""},
+                                    "children": [
+                                        {
+                                            "tag": "div",
+                                            "attrs": {"data-cds": "TurnStatusStep"},
+                                            "children": [
+                                                {
+                                                    "tag": "div",
+                                                    "attrs": {
+                                                        "data-cds-row-title": (
+                                                            "reasoning-posture"
+                                                        )
+                                                    },
+                                                    "children": [
+                                                        {
+                                                            "tag": "span",
+                                                            "attrs": {
+                                                                "data-morph-key": (
+                                                                    "done|Loaded skill"
+                                                                )
+                                                            },
+                                                            "children": [
+                                                                "Loaded skill"
+                                                            ],
+                                                        },
+                                                        {
+                                                            "tag": "span",
+                                                            "attrs": {
+                                                                "data-cds-row-subject": (
+                                                                    ""
+                                                                )
+                                                            },
+                                                            "children": [
+                                                                "reasoning-posture"
+                                                            ],
+                                                        },
+                                                    ],
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert await scrape_chat_turn_loaded_skills(dom_page) == ()
+    with pytest.raises(ChatContextSkillsError, match="not on the rail"):
+        await scrape_loaded_skills(dom_page)
+
+
+@pytest.mark.asyncio
+async def test_used_slug_caption_passes_in_dom(monkeypatch) -> None:
+    """R3 (1): ``Used <slug>`` TurnStatus caption (run e681ec54) passes."""
+
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    dom_page = _EvaluatedDomPage(
+        {
+            "tag": "body",
+            "children": [
+                {
+                    "tag": "div",
+                    "attrs": {"data-testid": "assistant-message"},
+                    "children": [
+                        {
+                            "tag": "div",
+                            "attrs": {
+                                "data-cds": "TurnStatus",
+                                "data-item-key": "e681ec54:grp:th0",
+                            },
+                            "children": [
+                                {
+                                    "tag": "span",
+                                    "attrs": {"data-morph-key": "done|Used ulg-code"},
+                                    "children": ["Used ulg-code"],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    report = await scrape_loaded_skills(dom_page)
+    assert report.skills == ("ulg-code",)
+    assert report.context_found is False
+
+
+@pytest.mark.asyncio
+async def test_warm_followup_stale_panel_and_caption_refuse_then_new_caption_passes(
+    monkeypatch,
+) -> None:
+    """R3 F2: stale turn-1 panel+caption refuse; new post-submit caption passes."""
+
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    dom_page = _EvaluatedDomPage(
+        {
+            "tag": "body",
+            "children": [
+                {
+                    "tag": "aside",
+                    "attrs": {"aria-label": "Session activity panel"},
+                    "children": [
+                        {
+                            "tag": "div",
+                            "attrs": {
+                                "data-kind-row": "skills",
+                                "aria-label": "Skills: reasoning-posture",
+                            },
+                        }
+                    ],
+                },
+                {
+                    "tag": "div",
+                    "attrs": {"data-testid": "assistant-message"},
+                    "children": [
+                        {
+                            "tag": "div",
+                            "attrs": {"data-cds": "TurnStatus"},
+                            "children": [
+                                {
+                                    "tag": "span",
+                                    "attrs": {
+                                        "data-morph-key": (
+                                            "done|Loaded the reasoning-posture skill"
+                                        )
+                                    },
+                                    "children": ["Loaded the reasoning-posture skill"],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    # Snapshot taken BEFORE turn-2 submit captures turn-1 panel + WeakMap node id.
+    snap = await snapshot_skill_induction_before_submit(dom_page)
+    assert snap.panel_slugs == frozenset({"reasoning-posture"})
+    assert len(snap.caption_node_ids) == 1
+
+    # Turn 2 has not loaded anything yet (even if forged prose appears) -> refuses.
+    dom_page.append_turn(
+        {
+            "tag": "div",
+            "attrs": {"data-testid": "assistant-message"},
+            "children": [
+                {"tag": "p", "children": ["Loaded the reasoning-posture skill."]}
+            ],
+        }
+    )
+    assert await scrape_chat_turn_loaded_skills(dom_page, snapshot=snap) == ()
+    with pytest.raises(ChatContextSkillsError, match="not on the rail"):
+        await scrape_loaded_skills(dom_page, snapshot=snap)
+
+    # Turn 2 now mounts a NEW TurnStatus caption node -> passes!
+    dom_page.append_turn(
+        {
+            "tag": "div",
+            "attrs": {"data-testid": "assistant-message"},
+            "children": [
+                {
+                    "tag": "div",
+                    "attrs": {"data-cds": "TurnStatus"},
+                    "children": [
+                        {
+                            "tag": "span",
+                            "attrs": {
+                                "data-morph-key": (
+                                    "done|Loaded the reasoning-posture skill"
+                                )
+                            },
+                            "children": ["Loaded the reasoning-posture skill"],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    report = await scrape_loaded_skills(dom_page, snapshot=snap)
+    assert report.skills == ("reasoning-posture",)
 
 
 @pytest.mark.asyncio
@@ -346,7 +919,7 @@ async def test_scrape_loaded_skills_falls_back_to_assistant_badge_when_rail_abse
         "claude_bundles.chat_context_skills.scrape_chat_turn_loaded_skills",
         turn_badges,
     )
-    page = _BadgeTurnPage(turn_text="")
+    page = _BadgeTurnPage()
     report = await scrape_loaded_skills(page)
     assert report.skills == ("reasoning-posture", "hypothesize-simulate")
     assert report.context_found is False
@@ -371,7 +944,14 @@ async def test_collapsed_rail_does_not_fall_back_to_badges(monkeypatch) -> None:
         "claude_bundles.chat_context_skills.scrape_chat_turn_loaded_skills",
         should_not_run,
     )
-    page = _BadgeTurnPage(turn_text="Loaded the reasoning-posture skill.")
+    page = _BadgeTurnPage(
+        captions=[
+            {
+                "node_id": "item:t1",
+                "text": "Loaded the reasoning-posture skill.",
+            }
+        ]
+    )
     with pytest.raises(ChatContextSkillsError, match="still collapsed"):
         await scrape_loaded_skills(page)
 
@@ -395,7 +975,9 @@ async def test_scrape_loaded_skills_session_activity_live_path(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_scrape_loaded_skills_fails_closed_when_no_skill_signal(monkeypatch) -> None:
+async def test_scrape_loaded_skills_fails_closed_when_no_skill_signal(
+    monkeypatch,
+) -> None:
     async def refuse_expand(_page) -> bool:
         raise ChatContextSkillsError(
             "Context list is not on the rail \u2014 scrape refused until it is expanded"
@@ -404,6 +986,6 @@ async def test_scrape_loaded_skills_fails_closed_when_no_skill_signal(monkeypatc
     monkeypatch.setattr(
         "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
     )
-    page = _BadgeTurnPage(turn_text="Loaded skill\nReply body.")
+    page = _BadgeTurnPage(captions=[{"node_id": "item:t1", "text": "Loaded skill"}])
     with pytest.raises(ChatContextSkillsError, match="not on the rail"):
         await scrape_loaded_skills(page)

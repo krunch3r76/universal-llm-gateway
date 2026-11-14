@@ -19,6 +19,7 @@ from playwright.async_api import Page
 from claude_bundles.chat_context_skills import (
     ChatContextSkillsError,
     LoadedSkillsReport,
+    SkillInductionSnapshot,
     scrape_loaded_skills,
 )
 from claude_bundles.cowork_skill_delivery import (
@@ -79,6 +80,7 @@ async def wait_for_induction_panel(
     timeout_s: float = INDUCTION_PANEL_TIMEOUT_S,
     interval_ms: int = INDUCTION_PANEL_INTERVAL_MS,
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
+    snapshot: SkillInductionSnapshot | None = None,
 ) -> LoadedSkillsReport:
     """Return the first open-grid scrape that lists every required slug.
 
@@ -87,7 +89,8 @@ async def wait_for_induction_panel(
     (``streaming`` / ``stop`` / ``tool_pause``) or the open Context grid text
     changes. Only continuous quiet with the rail still pre-use may emit
     ``pre_use_timeout``; post-use quiet with missing slugs emits
-    ``missing_required_slugs``.
+    ``missing_required_slugs``. When ``snapshot`` is supplied, only slugs new
+    since that pre-submit snapshot satisfy ``required``.
     """
     idle_deadline = time.monotonic() + max(timeout_s, 0.0)
     started = time.monotonic()
@@ -104,7 +107,11 @@ async def wait_for_induction_panel(
     while True:
         attempts += 1
         try:
-            report = await scrape_loaded_skills(page)
+            report = (
+                await scrape_loaded_skills(page)
+                if snapshot is None
+                else await scrape_loaded_skills(page, snapshot=snapshot)
+            )
         except ChatContextSkillsError as exc:
             if "not on the rail" not in str(exc):
                 raise

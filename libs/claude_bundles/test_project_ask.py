@@ -1298,3 +1298,190 @@ async def test_unmarked_panel_runtime_error_raises_skill_delivery_error() -> Non
         with pytest.raises(SkillDeliveryError, match="panel detached"):
             await send_prompt(page, "attach channel body\n")
     assert submit.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_warm_followup_stale_turn1_slug_refuses_then_new_caption_passes() -> None:
+    """R3 F2 e2e: project_followup_on_page snapshots before submit and refuses stale turn-1."""
+    from claude_bundles.chat_context_skills import ChatContextSkillsError
+    from claude_bundles.cowork_output_download import HarvestBody
+    from claude_bundles.project_ask_conversation import project_followup_on_page
+
+    prompt = "<!--cdp-required-skills:reasoning-posture-->\nFollow-up question\n"
+    composer = AsyncMock()
+    events: list[str] = []
+
+    class _WarmFollowupPage:
+        url = "https://claude.ai/chat/c1bb5193-9607-4b8b-81ac-5d4aeea0867c"
+
+        def __init__(self, *, mount_new_caption_on_submit: bool) -> None:
+            self._mount_new = mount_new_caption_on_submit
+            self._submitted = False
+            self._liveness_polls = 0
+            self.keyboard = AsyncMock()
+
+        async def wait_for_timeout(self, _ms: int) -> None:
+            return None
+
+        async def evaluate(self, js: str) -> dict:
+            if "context_skills" in js:
+                events.append("snapshot_before_submit")
+                return {
+                    "session_labels": ["Skills: reasoning-posture"],
+                    "captions": [
+                        {
+                            "node_id": "item:turn-1",
+                            "text": "Loaded the reasoning-posture skill",
+                        }
+                    ],
+                    "context_skills": [],
+                }
+            if "Session activity panel" in js:
+                captions = [
+                    {
+                        "node_id": "item:turn-1",
+                        "text": "Loaded the reasoning-posture skill",
+                    }
+                ]
+                if self._submitted and self._mount_new:
+                    captions.append(
+                        {
+                            "node_id": "item:turn-2",
+                            "text": "Used reasoning-posture",
+                        }
+                    )
+                return {
+                    "session_labels": ["Skills: reasoning-posture"],
+                    "captions": captions,
+                }
+            self._liveness_polls += 1
+            return {
+                "streaming": self._liveness_polls == 1,
+                "stop": False,
+                "tool_pause": False,
+                "url": self.url,
+            }
+
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    stale_page = _WarmFollowupPage(mount_new_caption_on_submit=False)
+
+    async def mark_submit_stale(*_a, **_kw) -> None:
+        events.append("submit")
+        stale_page._submitted = True
+
+    with (
+        patch("claude_bundles.composer_session_skills.require_compose_surface"),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=composer),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified", new=AsyncMock()
+        ),
+        patch(
+            "claude_bundles.project_ask._submit_composer_draft",
+            side_effect=mark_submit_stale,
+        ),
+        patch(
+            "claude_bundles.chat_context_skills.expand_context_frame",
+            side_effect=refuse_expand,
+        ),
+        patch("claude_bundles.skill_induction_panel.emit_skill_fetch_decision"),
+        patch("claude_bundles.cowork_skill_delivery.emit_skill_delivery_attested"),
+        patch(
+            "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"n": 1, "body_len": 20}),
+        ),
+        patch(
+            "claude_bundles.project_ask.wait_assistant_reply",
+            new=AsyncMock(
+                return_value={
+                    "body": "Loaded the reasoning-posture skill.\n\nWarm reply body long enough.",
+                    "url": stale_page.url,
+                    "model_label": "Model: Opus 5.5 High",
+                }
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask._attest_model",
+            return_value="Model: Opus 5.5 High",
+        ),
+    ):
+        stale_res = await project_followup_on_page(
+            stale_page, prompt, model="opus-5.5", project_uuid=""
+        )
+
+    assert events[:2] == ["snapshot_before_submit", "submit"]
+    assert stale_res.ok is False
+    assert (stale_res.error or "").startswith("skill_receipt_unverified:")
+
+    fresh_page = _WarmFollowupPage(mount_new_caption_on_submit=True)
+
+    async def mark_submit_fresh(*_a, **_kw) -> None:
+        fresh_page._submitted = True
+
+    with (
+        patch("claude_bundles.composer_session_skills.require_compose_surface"),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=composer),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified", new=AsyncMock()
+        ),
+        patch(
+            "claude_bundles.project_ask._submit_composer_draft",
+            side_effect=mark_submit_fresh,
+        ),
+        patch(
+            "claude_bundles.chat_context_skills.expand_context_frame",
+            side_effect=refuse_expand,
+        ),
+        patch("claude_bundles.skill_induction_panel.emit_skill_fetch_decision"),
+        patch("claude_bundles.cowork_skill_delivery.emit_skill_delivery_attested"),
+        patch(
+            "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"n": 1, "body_len": 20}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=AsyncMock(
+                return_value={
+                    "body": "Warm reply body after fresh skill caption.",
+                    "url": fresh_page.url,
+                    "model_label": "Model: Opus 5.5 High",
+                }
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.resolve_harvest_body",
+            new=AsyncMock(
+                return_value=HarvestBody(
+                    content="Warm reply body after fresh skill caption.",
+                    provenance="chat",
+                )
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._attest_model",
+            return_value="Model: Opus 5.5 High",
+        ),
+    ):
+        fresh_res = await project_followup_on_page(
+            fresh_page, prompt, model="opus-5.5", project_uuid=""
+        )
+
+    assert fresh_res.ok is True
+    assert fresh_res.error is None

@@ -626,7 +626,11 @@ async def send_prompt(
     (a:37267). On the combined message it returns None: the reply to that
     message is the work reply. Paste-half leaves it false.
     """
-    from claude_bundles.chat_context_skills import ChatContextSkillsError
+    from claude_bundles.chat_context_skills import (
+        ChatContextSkillsError,
+        SkillInductionSnapshot,
+        snapshot_skill_induction_before_submit,
+    )
     from claude_bundles.composer_session_skills import require_compose_surface
     from claude_bundles.cowork_skill_delivery import (
         SkillDeliveryError,
@@ -670,11 +674,14 @@ async def send_prompt(
     async def _induction_observed_after_submit(
         induction_slugs: list[str],
         attached_out: list[str],
+        *,
+        snapshot: SkillInductionSnapshot | None = None,
     ) -> list[str]:
         try:
-            panel = await wait_for_induction_panel(
-                page, induction_slugs, on_harvest=on_harvest
-            )
+            wait_kw: dict[str, Any] = {"on_harvest": on_harvest}
+            if snapshot is not None:
+                wait_kw["snapshot"] = snapshot
+            panel = await wait_for_induction_panel(page, induction_slugs, **wait_kw)
             return list(panel.skills)
         except ChatContextSkillsError as exc:
             from claude_bundles.context_rail_absence import (
@@ -757,6 +764,11 @@ async def send_prompt(
             inline_observed=inline_observed_pre,
         )
         await page.wait_for_timeout(600)
+        pre_submit_snapshot = (
+            await snapshot_skill_induction_before_submit(page)
+            if surf_norm != "code"
+            else None
+        )
         await _submit_composer_draft(
             page,
             composer=composer,
@@ -773,7 +785,9 @@ async def send_prompt(
             else:
                 inline_observed_post = None
                 induction_observed = await _induction_observed_after_submit(
-                    induction_slugs, attached_out
+                    induction_slugs,
+                    attached_out,
+                    snapshot=pre_submit_snapshot,
                 )
             attest_delivery_channels(
                 required_for_induction,
@@ -802,6 +816,7 @@ async def send_prompt(
             await page.wait_for_timeout(200)
             await page.keyboard.insert_text(induction_text)
             await page.wait_for_timeout(600)
+            pre_submit_snapshot = await snapshot_skill_induction_before_submit(page)
             await _submit_composer_draft(
                 page,
                 composer=composer,
@@ -810,7 +825,9 @@ async def send_prompt(
                 compose_receipt=compose_receipt,
             )
             induction_observed = await _induction_observed_after_submit(
-                induction_slugs, []
+                induction_slugs,
+                [],
+                snapshot=pre_submit_snapshot,
             )
             if await_induction_reply:
                 from claude_bundles.induction_reply_baseline import (
