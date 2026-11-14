@@ -54,7 +54,10 @@ _POLL_MS = 400
 # all, just a bare "Auto"/"Manual"/"Skip" button label.
 _AUTO_ARIA_RE = re.compile(r"Automatically approve|^Auto$", re.I)
 _MANUAL_ARIA_RE = re.compile(r"Manually approve|^Manual$", re.I)
-_SKIP_ARIA_RE = re.compile(r"Skip all approvals|Never pause|^Skip$", re.I)
+_SKIP_ARIA_RE = re.compile(
+    r"Skip all approvals|Never pause|^Skip$|Permission mode:\s*Skip",
+    re.I,
+)
 _SUBMIT_ROLE = {
     "cowork": re.compile(r"start task", re.I),
     "chat": re.compile(r"send message", re.I),
@@ -87,10 +90,20 @@ async def compose_mode_fingerprint(page) -> dict[str, Any]:
               };
             }
           }
+          function labelledByText(el) {
+            const ids = (el.getAttribute('aria-labelledby') || '').trim().split(/\\s+/);
+            return ids.filter(Boolean).map((id) => {
+              const n = document.getElementById(id);
+              return n ? (n.innerText || n.textContent || '').trim() : '';
+            }).filter(Boolean).join(' ');
+          }
           for (const el of els) {
             const text = (el.innerText || '').trim().replace(/\\s+/g, ' ');
             if (text.length > 0 && text.length <= 12 && /^(auto|manual|skip)/i.test(text)) {
-              return { aria: '', text, via: 'text' };
+              const labelledby = labelledByText(el);
+              const out = { aria: '', text, via: 'text' };
+              if (labelledby) out.labelledby = labelledby.slice(0, 120);
+              return out;
             }
           }
           return null;
@@ -107,7 +120,12 @@ async def compose_mode_fingerprint(page) -> dict[str, Any]:
     elif re.search(r"new session", title, re.I):
         mode = None
         title_fp = "new_session"
-    out: dict[str, Any] = {"title": title, "mode": mode, "approval": approval, "url": page.url}
+    out: dict[str, Any] = {
+        "title": title,
+        "mode": mode,
+        "approval": approval,
+        "url": page.url,
+    }
     if title_fp is not None:
         out["title_fingerprint"] = title_fp
     readiness = await compose_readiness_attestation(page)
@@ -127,7 +145,12 @@ def approval_label(fp: dict[str, Any]) -> str:
     if not isinstance(approval, dict):
         return ""
     aria = str(approval.get("aria") or "")
-    return aria or str(approval.get("text") or "")
+    if aria:
+        return aria
+    labelledby = str(approval.get("labelledby") or "")
+    if labelledby:
+        return labelledby
+    return str(approval.get("text") or "")
 
 
 def _approval_aria(fp: dict[str, Any]) -> str:
@@ -214,10 +237,10 @@ def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:
     if _MANUAL_ARIA_RE.search(aria):
         return (
             f"cowork dispatch refused: approval {seen!r} "
-            "(need Permission mode Auto)"
+            "(need Permission mode Skip or Auto)"
         )
     return (
-        "cowork dispatch refused: Permission mode Auto not attested "
+        "cowork dispatch refused: Permission mode Skip or Auto not attested "
         f"(mode={mode!r} approval={fp.get('approval')!r})"
     )
 

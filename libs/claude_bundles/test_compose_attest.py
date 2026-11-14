@@ -323,8 +323,17 @@ async def test_compose_mode_fingerprint_falls_back_to_text_when_aria_absent() ->
 def test_approval_label_prefers_aria_falls_back_to_text() -> None:
     aria_fp = {"approval": {"aria": "Automatically approve", "text": "Auto"}}
     text_fp = {"approval": {"aria": "", "text": "Auto"}}
+    skip_lb_fp = {
+        "approval": {
+            "aria": "",
+            "text": "Skip",
+            "labelledby": "Permission mode: Skip all approvals",
+            "via": "text",
+        }
+    }
     assert approval_label(aria_fp) == "Automatically approve"
     assert approval_label(text_fp) == "Auto"
+    assert approval_label(skip_lb_fp) == "Permission mode: Skip all approvals"
     assert approval_label({"approval": None}) == ""
 
 
@@ -363,7 +372,7 @@ def test_cowork_auto_refuse_reason_text_only_manual_still_refuses() -> None:
     assert _compose_attested(fp, "cowork") is False
     reason = cowork_auto_refuse_reason(fp)
     assert reason is not None
-    assert "Permission mode Auto" in reason
+    assert "Permission mode Skip or Auto" in reason
 
 
 def _approval_fp(
@@ -430,7 +439,7 @@ def test_approval_mode_chip_unknown_vs_absent() -> None:
     assert approval_mode_chip(fp) == "unknown"
     reason = dispatch_approval_refuse_reason(fp, surface="code")
     assert reason is not None
-    assert "Permission mode Auto not attested" in reason
+    assert "Permission mode Skip or Auto not attested" in reason
 
 
 def test_code_manual_refusal_message_names_surface_and_chip() -> None:
@@ -481,17 +490,82 @@ document.getElementById('row-auto').addEventListener('click', setAuto);
 </body></html>
 """
 
-_PERM_V2_AUTO_HTML = _PERM_V2_MANUAL_HTML.replace(
-    'style="width:68.125px;height:28px">Manual</button>',
-    'style="width:68.125px;height:28px">Auto</button>',
-).replace('aria-checked="true">Manual', 'aria-checked="false">Manual', 1).replace(
-    'aria-checked="false">Auto', 'aria-checked="true">Auto', 1
+_PERM_V2_AUTO_HTML = (
+    _PERM_V2_MANUAL_HTML.replace(
+        'style="width:68.125px;height:28px">Manual</button>',
+        'style="width:68.125px;height:28px">Auto</button>',
+    )
+    .replace('aria-checked="true">Manual', 'aria-checked="false">Manual', 1)
+    .replace('aria-checked="false">Auto', 'aria-checked="true">Auto', 1)
 )
 
 _PERM_V2_SET_FAIL_HTML = _PERM_V2_MANUAL_HTML.replace(
     "document.getElementById('row-auto').addEventListener('click', setAuto);",
     "document.getElementById('row-auto').addEventListener('click', () => {});",
 )
+
+# cortex://notes/tmp/dom-samples/claude.ai/chat/permission-chip/2026-11-13/existing-chat-skip-probe (5e26ea76)
+_PERM_V2_SKIP_HTML = """
+<!doctype html><html><head><title>Chat - Claude</title></head><body>
+<div data-testid="chat-input" contenteditable="true"></div>
+<span id="perm-chip-label" class="sr-only">Permission mode: Skip all approvals</span>
+<button id="perm" type="button" data-cds="Button" aria-haspopup="menu" aria-expanded="false"
+  aria-labelledby="perm-chip-label" tabindex="0" style="width:52px;height:28px">Skip</button>
+</body></html>
+"""
+
+
+def test_v2_skip_labelledby_passes_ship_gate() -> None:
+    fp = {
+        "title": "Chat - Claude",
+        "mode": "chat",
+        "approval": {
+            "aria": "",
+            "text": "Skip",
+            "labelledby": "Permission mode: Skip all approvals",
+            "via": "text",
+        },
+        "url": "https://claude.ai/chat/x",
+    }
+    assert approval_mode_chip(fp) == "skip"
+    assert cowork_auto_refuse_reason(fp) is None
+    assert _compose_attested(fp, "cowork") is True
+
+
+@pytest.mark.asyncio
+async def test_compose_mode_fingerprint_v2_existing_chat_skip_probe() -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_PERM_V2_SKIP_HTML)
+            fp = await compose_mode_fingerprint(page)
+            assert fp["approval"] is not None
+            assert fp["approval"]["text"] == "Skip"
+            assert fp["approval"]["labelledby"] == "Permission mode: Skip all approvals"
+            assert cowork_auto_refuse_reason(fp) is None
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_ensure_approval_auto_v2_already_skip_noop() -> None:
+    from claude_bundles.chat_cowork_mode import ensure_approval_auto
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_PERM_V2_SKIP_HTML)
+            before = (await page.locator("#perm").inner_text()).strip()
+            result = await ensure_approval_auto(page)
+            after = (await page.locator("#perm").inner_text()).strip()
+            assert result["ok"] is True
+            assert result["step"] == "permission_skip"
+            assert before == after == "Skip"
+            assert cowork_auto_refuse_reason(result["after"]) is None
+        finally:
+            await browser.close()
 
 
 @pytest.mark.asyncio
@@ -537,7 +611,7 @@ async def test_cowork_submit_refuses_when_permission_stays_manual() -> None:
             await page.set_content(_PERM_V2_SET_FAIL_HTML)
             from claude_bundles.project_ask import _submit_composer_draft
 
-            with pytest.raises(RuntimeError, match="Permission mode Auto"):
+            with pytest.raises(RuntimeError, match="Permission mode Skip or Auto"):
                 await _submit_composer_draft(
                     page,
                     composer=page.locator("[data-testid=chat-input]"),
@@ -630,7 +704,7 @@ async def test_compose_receipt_approval_mode_only_on_pass_not_refusal(
     from claude_bundles.project_ask import _submit_composer_draft
 
     receipt: dict = {"model_ran": "Sonnet"}
-    with pytest.raises(RuntimeError, match="Permission mode Auto"):
+    with pytest.raises(RuntimeError, match="Permission mode Skip or Auto"):
         await _submit_composer_draft(
             AsyncMock(),
             composer=AsyncMock(),

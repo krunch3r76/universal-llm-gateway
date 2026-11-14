@@ -65,6 +65,11 @@ _COMPOSE_V2_QUOTA_96_HTML = _COMPOSE_V2_HTML.replace(
     "91% of your weekly limit", "96% of your weekly limit"
 )
 
+_COMPOSE_V2_SKIP_CHIP_HTML = _COMPOSE_V2_HTML.replace(
+    'style="width:72px;height:28px">Manual</button>',
+    'style="width:52px;height:28px">Skip</button>',
+)
+
 
 @pytest.mark.asyncio
 async def test_ensure_permission_mode_manual_to_auto() -> None:
@@ -140,6 +145,21 @@ async def test_ensure_cowork_auto_compose_v2_success_91_pct() -> None:
             assert result["step"] == "compose_v2"
             assert result["quota_weekly_pct"] == 91
             assert result["permission"]["ok"] is True
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_ensure_cowork_auto_preserves_existing_skip_chip() -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_COMPOSE_V2_SKIP_CHIP_HTML)
+            result = await ensure_cowork_auto(page)
+            assert result["ok"] is True
+            assert result["permission"]["step"] == "already_skip"
+            assert (await page.locator("#perm").inner_text()).strip() == "Skip"
         finally:
             await browser.close()
 
@@ -434,11 +454,13 @@ document.getElementById('row-auto').addEventListener('click', setAuto);
 </body></html>
 """
 
-_PERM_V2_DOM_AUTO_HTML = _PERM_V2_DOM_MANUAL_HTML.replace(
-    'style="width:68.125px;height:28px">Manual</button>',
-    'style="width:68.125px;height:28px">Auto</button>',
-).replace('aria-checked="true">Manual', 'aria-checked="false">Manual', 1).replace(
-    'aria-checked="false">Auto', 'aria-checked="true">Auto', 1
+_PERM_V2_DOM_AUTO_HTML = (
+    _PERM_V2_DOM_MANUAL_HTML.replace(
+        'style="width:68.125px;height:28px">Manual</button>',
+        'style="width:68.125px;height:28px">Auto</button>',
+    )
+    .replace('aria-checked="true">Manual', 'aria-checked="false">Manual', 1)
+    .replace('aria-checked="false">Auto', 'aria-checked="true">Auto', 1)
 )
 
 _PERM_V2_DOM_SET_FAIL_HTML = _PERM_V2_DOM_MANUAL_HTML.replace(

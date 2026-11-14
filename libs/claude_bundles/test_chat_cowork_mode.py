@@ -119,7 +119,7 @@ def test_compose_attested_cowork_manual_must_fail() -> None:
     reason = cowork_auto_refuse_reason(fp)
     assert reason is not None
     assert "Manual" in reason
-    assert "Permission mode Auto" in reason
+    assert "Permission mode Skip or Auto" in reason
 
 
 def test_cowork_auto_refuse_reason_skip_and_auto_pass_ship_gate() -> None:
@@ -288,6 +288,10 @@ async def test_ensure_cowork_auto_fails_closed_when_permission_menu_missing(
     monkeypatch.setattr(
         "claude_bundles.chat_cowork_mode.compose_readiness_attestation",
         AsyncMock(return_value=readiness_ok),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode._permission_mode_button_label",
+        AsyncMock(return_value={"found": False}),
     )
     monkeypatch.setattr(
         "claude_bundles.chat_cowork_mode.ensure_permission_mode",

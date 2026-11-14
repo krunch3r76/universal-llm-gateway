@@ -51,7 +51,7 @@ DEFAULT_QUOTA_NEAR_THRESHOLD = 95
 
 _QUOTA_WEEKLY_PCT_RE = re.compile(r"(\d{1,3})\s*%\s+of\s+your\s+weekly\s+limit", re.I)
 
-_PERMISSION_BUTTON_RE = re.compile(r"^(Manual|Auto)$", re.I)
+_PERMISSION_BUTTON_RE = re.compile(r"^(Manual|Auto|Skip)$", re.I)
 _PERMISSION_ITEM = {
     "Auto": re.compile(r"^Auto\b", re.I),
     "Manual": re.compile(r"^Manual\b", re.I),
@@ -644,7 +644,7 @@ async def _permission_chip_snapshot(page) -> dict[str, Any]:
     """Permission-mode chip census for failure payloads (DOM sample a:43854-d)."""
     raw = await page.evaluate(
         """() => {
-          const re = /^(manual|auto)$/i;
+          const re = /^(manual|auto|skip)$/i;
           function pickIn(root) {
             let best = null;
             for (const el of root.querySelectorAll('button, [role="button"]')) {
@@ -709,7 +709,7 @@ async def _permission_mode_button_label(page) -> dict[str, Any]:
     """Read the compact Manual/Auto permission-mode trigger, if present."""
     raw = await page.evaluate(
         """() => {
-          const re = /^(manual|auto)$/i;
+          const re = /^(manual|auto|skip)$/i;
           function pickIn(root) {
             let best = null;
             for (const el of root.querySelectorAll('button, [role="button"]')) {
@@ -754,7 +754,7 @@ async def _permission_mode_button_label(page) -> dict[str, Any]:
 async def _click_permission_mode_button(page) -> bool:
     clicked = await page.evaluate(
         """() => {
-          const re = /^(manual|auto)$/i;
+          const re = /^(manual|auto|skip)$/i;
           function pickIn(root) {
             let best = null;
             for (const el of root.querySelectorAll('button, [role="button"]')) {
@@ -798,7 +798,7 @@ async def _open_permission_menu(page) -> dict[str, Any]:
                 "menu": waited.get("menu"),
                 "polled_ms": waited.get("polled_ms"),
             }
-    for pat in (r"^Manual\b", r"^Auto\b"):
+    for pat in (r"^Manual\b", r"^Auto\b", r"^Skip\b"):
         loc = page.locator('button, [role="button"]').filter(
             has_text=re.compile(pat, re.I)
         )
@@ -1383,7 +1383,21 @@ async def ensure_cowork_auto(
             "radiogroup_names": list(rg.get("radiogroup_names") or []),
         }
 
-    permission = await ensure_permission_mode(page, "Auto")
+    perm_before = await _permission_mode_button_label(page)
+    if (
+        perm_before.get("found")
+        and str(perm_before.get("text") or "").strip().lower() == "skip"
+    ):
+        permission = {
+            "ok": True,
+            "step": "already_skip",
+            "button_label": perm_before.get("text"),
+            "before": perm_before,
+            "after": perm_before,
+            "skipped_downgrade": True,
+        }
+    else:
+        permission = await ensure_permission_mode(page, "Auto")
     quota = await read_quota_weekly_pct(page)
     out: dict[str, Any] = {
         "ok": True,
@@ -1435,11 +1449,29 @@ async def ensure_approval_auto(page) -> dict[str, Any]:
     before = await compose_mode_fingerprint(page)
     perm_btn = await _permission_mode_button_label(page)
     if perm_btn.get("found"):
+        if str(perm_btn.get("text") or "").strip().lower() == "skip":
+            after = await compose_mode_fingerprint(page)
+            return {
+                "ok": True,
+                "step": "permission_skip",
+                "skipped": True,
+                "before": before,
+                "after": after,
+                "permission": {
+                    "ok": True,
+                    "step": "already_skip",
+                    "button_label": perm_btn.get("text"),
+                    "before": perm_btn,
+                    "after": perm_btn,
+                },
+            }
         permission = await ensure_permission_mode(page, "Auto")
         after = await compose_mode_fingerprint(page)
         out: dict[str, Any] = {
             "ok": bool(permission.get("ok")),
-            "step": "permission_auto" if permission.get("ok") else "permission_auto_failed",
+            "step": "permission_auto"
+            if permission.get("ok")
+            else "permission_auto_failed",
             "before": before,
             "after": after,
             "permission": permission,

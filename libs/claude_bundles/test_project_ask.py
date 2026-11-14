@@ -383,7 +383,8 @@ async def test_submit_composer_draft_manual_refuses(
     page = AsyncMock()
     page.url = "https://claude.ai/new"
     with pytest.raises(
-        RuntimeError, match=r"cowork dispatch refused.*\(need Permission mode Auto\)"
+        RuntimeError,
+        match=r"cowork dispatch refused.*\(need Permission mode Skip or Auto\)",
     ):
         await _submit_composer_draft(page, composer=AsyncMock(), draft_text="hi")
     click.assert_not_awaited()
