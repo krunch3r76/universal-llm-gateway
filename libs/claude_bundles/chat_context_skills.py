@@ -351,6 +351,27 @@ def _captions_to_slugs(
     return _ordered_unique_slugs(tuple(slugs))
 
 
+async def _context_grid_read(page: Page) -> tuple[bool, bool]:
+    """Whether the Context disclosure is on the rail and expanded (readable grid).
+
+    Returns ``(found, readable)``. Uses the same ``disclosure_is_expanded`` test
+    as ``expand_context_frame`` / ``_read_disclosure`` — not the snapshot JS
+    ``textContent === 'Context'`` or ``aria-expanded === 'true'``-only checks.
+    """
+    from claude_bundles.chat_context_disclosure import (
+        _aria,
+        _read_disclosure,
+        disclosure_is_expanded,
+    )
+
+    state = await _read_disclosure(page, "Context")
+    found = bool(state.get("found"))
+    readable = found and disclosure_is_expanded(
+        _aria(state), list_visible=bool(state.get("list_visible"))
+    )
+    return found, readable
+
+
 async def _expand_context_for_snapshot(page: Page) -> None:
     """Open the Cowork Context header when present — no ``/code`` sidebar fallback."""
     from claude_bundles.chat_context_disclosure import (
@@ -381,13 +402,12 @@ async def snapshot_skill_induction_before_submit(
     raw = await page.evaluate(_SKILL_INDUCTION_SNAPSHOT_JS)
     if not isinstance(raw, dict):
         return SkillInductionSnapshot()
-    context_header_found = bool(raw.get("context_header_found"))
-    context_grid_read = bool(raw.get("context_grid_read"))
-    grid_unread = context_header_found and not context_grid_read
+    found, context_grid_read = await _context_grid_read(page)
+    grid_unread = found and not context_grid_read
     panel: set[str] = set()
     for label in raw.get("session_labels") or []:
         panel.update(parse_session_activity_skills(str(label)))
-    if not grid_unread:
+    if context_grid_read:
         for slug in raw.get("context_skills") or []:
             norm = str(slug).strip().lower()
             if _SLUG_RE.fullmatch(norm):
@@ -629,7 +649,11 @@ async def scrape_loaded_skills(
     )
     if snapshot is not None and snapshot.grid_unread:
         skills = ()
-    if snapshot is not None and (snapshot.panel_slugs or snapshot.caption_node_ids):
+    if snapshot is not None and (
+        snapshot.grid_unread
+        or snapshot.panel_slugs
+        or snapshot.caption_node_ids
+    ):
         fresh_panel = tuple(s for s in skills if s not in snapshot.panel_slugs)
         raw_turn = await page.evaluate(_ASSISTANT_TURN_BADGE_JS)
         fresh_captions = (
