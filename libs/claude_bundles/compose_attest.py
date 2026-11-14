@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from claude_bundles.chat_session_hygiene import in_active_chat
 from claude_bundles.compose_chip_probe import compose_readiness_attestation
@@ -192,8 +193,18 @@ def approval_mode_chip(fp: dict[str, Any]) -> ApprovalMode:
 _COMPOSE_SURFACE_TITLE_FPS = frozenset({"new_session", "new_chat", "new_task"})
 
 
+def _url_path_is_claude_code_compose(url: str) -> bool:
+    """``claude.ai`` ``/code`` compose (not ``/codex`` or ``/code-foo``)."""
+    parsed = urlparse(url)
+    host = (parsed.netloc or "").lower()
+    if host and host not in ("claude.ai", "www.claude.ai"):
+        return False
+    path = (parsed.path or "").lower()
+    return path == "/code" or path.startswith("/code/")
+
+
 def _is_compose_surface_fingerprint(fp: dict[str, Any]) -> bool:
-    """True when *fp* is on a compose surface (``new_*`` title or ``/new`` URL).
+    """True when *fp* is on a compose surface (``new_*`` title, ``/new``, or ``/code`` URL).
 
     Keys missing-chip refusal on compose surface identity rather than ``mode`` so
     v2 ``/new`` tabs with ``title_fingerprint=='new_session'`` and ``mode=None``
@@ -205,7 +216,9 @@ def _is_compose_surface_fingerprint(fp: dict[str, Any]) -> bool:
         return True
     url = str(fp.get("url") or "").strip()
     path = url.split("?", 1)[0].split("#", 1)[0].rstrip("/").lower()
-    return path.endswith("/new")
+    if path.endswith("/new"):
+        return True
+    return _url_path_is_claude_code_compose(url)
 
 
 def dispatch_approval_refuse_reason(
@@ -217,8 +230,8 @@ def dispatch_approval_refuse_reason(
 
     ``surface=None`` preserves Cowork/Chat behavior via
     ``cowork_auto_refuse_reason``. ``surface='code'`` accepts Skip or Auto;
-    Manual is refused, and missing chips on compose surfaces (``new_*`` title
-    or ``/new`` URL) also refuse. Callers on ``/code`` must not flip the chip
+    Manual is refused, and missing chips on compose surfaces (``new_*`` title,
+    ``/new``, or ``/code`` URL) also refuse. Callers on ``/code`` must not flip the chip
     to Skip.
     """
     surf = (surface or "").strip().lower() or None
@@ -251,7 +264,7 @@ def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:
 
     Callers (``send_prompt``) raise this string so Manual or missing chips
     cannot ship on compose surfaces (``title_fingerprint`` in
-    ``{new_session, new_chat, new_task}`` or URL ``/new``). None iff the chip
+    ``{new_session, new_chat, new_task}`` or URL ``/new`` or ``/code``). None iff the chip
     reads Auto (v2 Permission mode) or legacy Skip-all, or on project-shell
     rows without chips (named skip, not a silent waiver on ``/new``).
     """

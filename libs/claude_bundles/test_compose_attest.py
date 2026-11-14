@@ -428,8 +428,25 @@ def _approval_fp(
     }
 
 
-def _code_fp(*, text: str | None) -> dict:
-    return _approval_fp(text=text, mode=None, url="https://claude.ai/code")
+def _code_fp(*, text: str | None, url: str = "https://claude.ai/code") -> dict:
+    return _approval_fp(text=text, mode=None, url=url)
+
+
+@pytest.mark.parametrize(
+    "code_url",
+    [
+        "https://claude.ai/code",
+        "https://claude.ai/code/",
+        "https://claude.ai/code?foo=1",
+        "https://claude.ai/code/019f6917-2ab2-772c-a1ec-f88434b08e32",
+    ],
+)
+def test_dispatch_approval_refuse_code_bare_urls_no_chip_refuses(code_url: str) -> None:
+    fp = _code_fp(text=None, url=code_url)
+    reason = dispatch_approval_refuse_reason(fp, surface="code")
+    assert reason is not None
+    assert "Permission mode Skip or Auto not attested" in reason
+    assert approval_mode_chip(fp) == "absent"
 
 
 @pytest.mark.parametrize(
@@ -460,12 +477,6 @@ def test_dispatch_approval_refuse_table_cowork_and_code(
             assert "cowork dispatch refused" in reason
     else:
         assert reason is None
-
-
-def test_dispatch_approval_refuse_code_no_chip_passes() -> None:
-    fp = _code_fp(text=None)
-    assert dispatch_approval_refuse_reason(fp, surface="code") is None
-    assert approval_mode_chip(fp) == "absent"
 
 
 def test_approval_mode_chip_unknown_vs_absent() -> None:
