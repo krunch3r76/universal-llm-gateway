@@ -356,6 +356,22 @@ def test_approval_label_prefers_aria_falls_back_to_text() -> None:
     assert approval_label({"approval": None}) == ""
 
 
+@pytest.mark.parametrize("mode", ["chat", "cowork"])
+def test_compose_attested_no_chip_refuses_require_auto(mode: str) -> None:
+    fp = {
+        "title": f"New {'chat' if mode == 'chat' else 'task'} - Claude",
+        "mode": mode,
+        "approval": None,
+        "url": "https://claude.ai/new",
+    }
+    assert _compose_attested(fp, mode, require_auto=True) is False
+    assert _compose_attested(fp, mode, require_auto=False) is True
+    reason = cowork_auto_refuse_reason(fp)
+    assert reason is not None
+    assert "Permission mode Skip or Auto not attested" in reason
+    assert dispatch_approval_refuse_reason(fp) == reason
+
+
 def test_compose_attested_cowork_skip_text_only_legacy_still_passes() -> None:
     """Legacy Skip-all still satisfies the ship gate."""
     fp = {

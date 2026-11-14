@@ -156,15 +156,16 @@ def test_compose_attested_project_shell_without_chips_skips() -> None:
     assert cowork_auto_refuse_reason(fp) is None
 
 
-def test_compose_attested_chat_without_approval_skips() -> None:
+def test_compose_attested_chat_without_approval_skips_require_auto_false() -> None:
     fp = {
         "title": "New chat - Claude",
         "mode": "chat",
         "approval": None,
         "url": "https://claude.ai/new",
     }
-    assert _compose_attested(fp, "chat") is True
-    assert cowork_auto_refuse_reason(fp) is None
+    assert _compose_attested(fp, "chat", require_auto=False) is True
+    assert _compose_attested(fp, "chat", require_auto=True) is False
+    assert cowork_auto_refuse_reason(fp) is not None
 
 
 def test_approval_aria_patterns_match_short_text_labels() -> None:

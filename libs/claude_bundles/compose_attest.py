@@ -2,11 +2,12 @@
 
 Dual-primary (friction 25051/25052): selector repair + poll-until-attest, not
 poll-only. Chip toggle may attest Cowork while approval is still Manual.
-Ship gate (Start task / warm Send): compose v2 requires Permission mode
-``Auto`` (aria-less chip text ``Auto`` counts). Legacy Cowork chrome may
-still show ``Skip all approvals`` or ``Skip`` — both pass the gate.
-Chat success: ``mode==chat`` and approval is None. Project-shell rows without
-chips are a named skip, not a silent Skip waiver on ``/new``.
+Ship gate (Start task / warm Send): chat and cowork are unified —
+``require_auto=True`` requires Permission mode ``Auto`` (aria-less chip text
+``Auto`` counts) or legacy ``Skip all approvals`` / ``Skip``; a missing approval
+chip refuses. ``require_auto=False`` keeps mode-only attestation for chip toggle
+(chat may pass without a chip). Project-shell rows without chips are a named
+skip, not a silent Skip waiver on ``/new``.
 
 a:31319 (2026-08-30): Anthropic dropped the descriptive aria-label on the
 approval chip — a live census against a fresh ``/new`` tab found a bare
@@ -205,9 +206,12 @@ def dispatch_approval_refuse_reason(
 
     aria = _approval_aria(fp)
     mode = fp.get("mode")
-    if mode == "chat" and not aria:
-        return None
-    if not aria and mode != "cowork":
+    if mode in ("chat", "cowork") and not fp.get("approval"):
+        return (
+            "cowork dispatch refused: Permission mode Skip or Auto not attested "
+            f"(mode={mode!r} approval={fp.get('approval')!r})"
+        )
+    if not aria and mode not in ("chat", "cowork"):
         return None
     chip = approval_mode_chip(fp)
     if chip in ("skip", "auto"):
@@ -226,14 +230,17 @@ def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:
 
     Callers (``send_prompt``) raise this string so Manual cannot ship.
     None iff the chip reads Auto (v2 Permission mode) or legacy Skip-all.
-    Chat (no approval chrome) and Project-shell rows without chips return
-    None — named skip, not a silent waiver on ``/new`` or ``/cowork/cse_``.
+    Chat/Cowork without an approval chip refuse. Project-shell rows without
+    chips return None — named skip, not a silent waiver on ``/new``.
     """
     aria = _approval_aria(fp)
     mode = fp.get("mode")
-    if mode == "chat" and not aria:
-        return None
-    if not aria and mode != "cowork" and not fp.get("approval"):
+    if mode in ("chat", "cowork") and not fp.get("approval"):
+        return (
+            "cowork dispatch refused: Permission mode Skip or Auto not attested "
+            f"(mode={mode!r} approval={fp.get('approval')!r})"
+        )
+    if not aria and mode not in ("chat", "cowork"):
         return None
     seen = str(fp.get("approval", {}).get("text") or aria).strip() or aria
     if _AUTO_ARIA_RE.search(aria):
@@ -257,17 +264,17 @@ def _compose_attested(
     *,
     require_auto: bool = True,
 ) -> bool:
-    """Cowork ship-attest. ``require_auto=True`` requires Permission Auto (v2)
-    or legacy Skip-all.
+    """Ship-attest for chat and cowork. ``require_auto=True`` requires Permission
+    Auto (v2) or legacy Skip-all; missing approval chrome refuses.
 
     ``require_auto=False`` is chip/title only so the Cowork chip can attest
     before the radio flip (Manual or Auto ok at that step).
     """
-    if require_auto and fp.get("approval"):
+    if require_auto:
+        if not fp.get("approval"):
+            return False
         return _approval_is_auto(fp) or _approval_is_skip(fp)
     if mode == "cowork":
-        if require_auto:
-            return fp.get("mode") == "cowork"
         return fp.get("mode") == "cowork" or bool(fp.get("approval"))
     if fp.get("mode") == "chat" and not fp.get("approval"):
         return True
