@@ -84,6 +84,11 @@ def test_specimen_12887_progress_is_chrome_only() -> None:
     assert substantive_reply_body(SPECIMEN_12887_PROGRESS_BODY) == ""
 
 
+def test_strip_chrome_drops_bare_loaded_skill_line() -> None:
+    text = "Loaded skill\n\nSMOKE_OK line one"
+    assert strip_chrome(text) == "SMOKE_OK line one"
+
+
 def test_strip_chrome_drops_named_loaded_skills_badge() -> None:
     text = (
         "Loaded the reasoning-posture and hypothesize-simulate skills\n\n"

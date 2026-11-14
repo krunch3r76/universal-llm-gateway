@@ -9,6 +9,7 @@ from claude_bundles.chat_context_skills import (
     ChatContextSkillsError,
     LoadedSkillsReport,
     parse_loaded_skills_from_turn_badges,
+    parse_session_activity_skills,
     parse_skills_from_context_section,
     require_chat_surface,
     scrape_chat_turn_loaded_skills,
@@ -212,6 +213,25 @@ async def test_expand_context_frame_stays_collapsed_after_one_click() -> None:
     assert len(click_calls) == 1
 
 
+def test_parse_session_activity_skills_aria_label_single_and_multi() -> None:
+    assert parse_session_activity_skills("Skills: reasoning-posture") == (
+        "reasoning-posture",
+    )
+    assert parse_session_activity_skills(
+        "Skills: reasoning-posture, hypothesize-simulate"
+    ) == ("reasoning-posture", "hypothesize-simulate")
+    assert parse_session_activity_skills(
+        "Skills: reasoning-posture and hypothesize-simulate"
+    ) == ("reasoning-posture", "hypothesize-simulate")
+
+
+def test_parse_session_activity_skills_truncate_fallback() -> None:
+    assert parse_session_activity_skills("reasoning-posture") == ("reasoning-posture",)
+    assert parse_session_activity_skills(
+        "reasoning-posture, hypothesize-simulate"
+    ) == ("reasoning-posture", "hypothesize-simulate")
+
+
 def test_parse_loaded_skills_from_turn_badges_single_and_multi() -> None:
     single = "Loaded the reasoning-posture skill."
     multi = "Loaded the reasoning-posture and hypothesize-simulate skills"
@@ -230,16 +250,69 @@ def test_parse_loaded_skills_from_turn_badges_single_and_multi() -> None:
 class _BadgeTurnPage:
     url = "https://claude.ai/chat/c1bb5193-9607-4b8b-81ac-5d4aeea0867c"
 
-    def __init__(self, *, turn_text: str) -> None:
-        self._turn_text = turn_text
+    def __init__(
+        self,
+        *,
+        turn_text: str = "",
+        session_labels: list[str] | None = None,
+        truncate_texts: list[str] | None = None,
+        cds_subjects: list[str] | None = None,
+    ) -> None:
+        self._payload = {
+            "session_labels": session_labels or [],
+            "truncate_texts": truncate_texts or [],
+            "turn_text": turn_text,
+            "cds_subjects": cds_subjects or [],
+        }
 
-    async def evaluate(self, js: str) -> str:
-        if "assistant-message" in js or "assistant-turn" in js:
-            return self._turn_text
-        return ""
+    async def evaluate(self, js: str) -> dict[str, object]:
+        if "Session activity panel" in js or "session_labels" in js:
+            return dict(self._payload)
+        return {}
 
     async def wait_for_timeout(self, _ms: int) -> None:
         return None
+
+
+@pytest.mark.asyncio
+async def test_scrape_chat_turn_loaded_skills_reads_session_activity_aria_label() -> None:
+    page = _BadgeTurnPage(session_labels=["Skills: reasoning-posture"])
+    assert await scrape_chat_turn_loaded_skills(page) == ("reasoning-posture",)
+
+
+@pytest.mark.asyncio
+async def test_scrape_chat_turn_loaded_skills_prefers_panel_then_caption() -> None:
+    page = _BadgeTurnPage(
+        session_labels=[],
+        truncate_texts=[],
+        turn_text="Loaded the hypothesize-simulate skill.",
+    )
+    assert await scrape_chat_turn_loaded_skills(page) == ("hypothesize-simulate",)
+
+
+@pytest.mark.asyncio
+async def test_scrape_chat_turn_loaded_skills_panel_wins_over_caption_order() -> None:
+    page = _BadgeTurnPage(
+        session_labels=["Skills: reasoning-posture"],
+        turn_text="Loaded the hypothesize-simulate skill.",
+    )
+    assert await scrape_chat_turn_loaded_skills(page) == (
+        "reasoning-posture",
+        "hypothesize-simulate",
+    )
+
+
+@pytest.mark.asyncio
+async def test_scrape_chat_turn_loaded_skills_empty_fails_closed() -> None:
+    page = _BadgeTurnPage(turn_text="Loaded skill\nSome reply prose.")
+    assert await scrape_chat_turn_loaded_skills(page) == ()
+
+
+@pytest.mark.asyncio
+async def test_scrape_chat_turn_loaded_skills_does_not_trust_user_skills_line() -> None:
+    """User-turn ``Skills: <slug>`` prose must not count as a load receipt."""
+    page = _BadgeTurnPage(turn_text="Skills: reasoning-posture\nLoaded skill")
+    assert await scrape_chat_turn_loaded_skills(page) == ()
 
 
 @pytest.mark.asyncio
@@ -278,6 +351,7 @@ async def test_scrape_loaded_skills_falls_back_to_assistant_badge_when_rail_abse
     assert report.skills == ("reasoning-posture", "hypothesize-simulate")
     assert report.context_found is False
     assert report.skills_rail_post_use is True
+    assert any("Session activity panel" in s for s in report.selectors)
 
 
 @pytest.mark.asyncio
@@ -299,4 +373,37 @@ async def test_collapsed_rail_does_not_fall_back_to_badges(monkeypatch) -> None:
     )
     page = _BadgeTurnPage(turn_text="Loaded the reasoning-posture skill.")
     with pytest.raises(ChatContextSkillsError, match="still collapsed"):
+        await scrape_loaded_skills(page)
+
+
+@pytest.mark.asyncio
+async def test_scrape_loaded_skills_session_activity_live_path(monkeypatch) -> None:
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    page = _BadgeTurnPage(
+        session_labels=["Skills: reasoning-posture, hypothesize-simulate"]
+    )
+    report = await scrape_loaded_skills(page)
+    assert report.skills == ("reasoning-posture", "hypothesize-simulate")
+    assert report.context_found is False
+
+
+@pytest.mark.asyncio
+async def test_scrape_loaded_skills_fails_closed_when_no_skill_signal(monkeypatch) -> None:
+    async def refuse_expand(_page) -> bool:
+        raise ChatContextSkillsError(
+            "Context list is not on the rail \u2014 scrape refused until it is expanded"
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_context_skills.expand_context_frame", refuse_expand
+    )
+    page = _BadgeTurnPage(turn_text="Loaded skill\nReply body.")
+    with pytest.raises(ChatContextSkillsError, match="not on the rail"):
         await scrape_loaded_skills(page)

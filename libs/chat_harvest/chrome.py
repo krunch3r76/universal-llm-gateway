@@ -15,7 +15,7 @@ import re
 # "Ran a command, loaded tools" is a progress badge, not the reply (12887 turn 27).
 _TOOL_BADGE_SEGMENT = (
     r"(searched the web|used toys integration|used a skill|used \d+ skills?|"
-    r"used \d+ tools?|loaded tools|loaded a skill|loaded \d+ skills?|"
+    r"used \d+ tools?|loaded tools|loaded (?:a )?skill|loaded \d+ skills?|"
     r"loaded the [a-z0-9-]+(?:(?:\s*,\s*|\s+and\s+)[a-z0-9-]+)* skills?|"
     r"ran a command|ran \d+ commands?)"
 )

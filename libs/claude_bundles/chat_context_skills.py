@@ -36,6 +36,11 @@ _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)+$")
 _LOADED_NAMED_SKILL_LINE = re.compile(r"^loaded\s+the\s+(.+?)\s+skills?\.?$", re.I)
 _LOADED_SKILL_LIST_SPLIT = re.compile(r"\s*,\s*|\s+and\s+", re.I)
 _BADGE_SELECTOR = "assistant-turn badge: Loaded the <slug> skill(s)"
+_SESSION_ACTIVITY_SELECTOR = (
+    'aside[aria-label="Session activity panel"] [data-kind-row="skills"]'
+)
+_SESSION_ACTIVITY_FALLBACK = '[data-activity-peek-zone] [data-kind-row="skills"]'
+_SKILLS_PANEL_PREFIX = re.compile(r"^Skills:\s*", re.I)
 # ``/cowork/local_<uuid>`` is the session Cowork opens after the induction
 # submit (thread 12831). ``cse_`` is the older session id. Both are compose.
 _COMPOSE_URL = re.compile(
@@ -100,6 +105,34 @@ _SELECTORS_USED = (
 )
 
 
+def _ordered_unique_slugs(slugs: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for slug in slugs:
+        if slug in seen:
+            continue
+        seen.add(slug)
+        out.append(slug)
+    return tuple(out)
+
+
+def parse_session_activity_skills(raw: str) -> tuple[str, ...]:
+    """Parse kebab slugs from Session activity skills row text or aria-label."""
+    text = raw.strip()
+    if not text:
+        return ()
+    text = _SKILLS_PANEL_PREFIX.sub("", text).strip()
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in _LOADED_SKILL_LIST_SPLIT.split(text):
+        slug = part.strip().lower()
+        if not _SLUG_RE.fullmatch(slug) or slug in seen:
+            continue
+        seen.add(slug)
+        out.append(slug)
+    return tuple(out)
+
+
 def parse_loaded_skills_from_turn_badges(text: str) -> tuple[str, ...]:
     """Parse kebab slugs from assistant skill-load badge lines (offline-safe)."""
     out: list[str] = []
@@ -118,6 +151,29 @@ def parse_loaded_skills_from_turn_badges(text: str) -> tuple[str, ...]:
 
 
 _ASSISTANT_TURN_BADGE_JS = """() => {
+  const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
+  const skillRowsIn = (root) =>
+    Array.from(root.querySelectorAll('[data-kind-row="skills"]'));
+  const sessionAside = document.querySelector(
+    'aside[aria-label="Session activity panel"]'
+  );
+  let skillRows = sessionAside ? skillRowsIn(sessionAside) : [];
+  if (!skillRows.length) {
+    const peek = document.querySelector('[data-activity-peek-zone]');
+    if (peek) skillRows = skillRowsIn(peek);
+  }
+  const session_labels = [];
+  const truncate_texts = [];
+  for (const row of skillRows) {
+    const al = row.getAttribute('aria-label');
+    if (al) session_labels.push(al.trim());
+    const tr = row.querySelector('span.truncate');
+    if (tr) {
+      const t = (tr.textContent || '').trim();
+      if (t) truncate_texts.push(t);
+    }
+  }
+
   const pick = [
     '[data-testid="assistant-message"]',
     '[data-testid="assistant-turn"]',
@@ -125,21 +181,48 @@ _ASSISTANT_TURN_BADGE_JS = """() => {
   ].join(',');
   const nodes = Array.from(document.querySelectorAll(pick));
   const parts = [];
+  const cds_subjects = [];
   for (const node of nodes) {
     if (node.closest('[data-testid="user-message"], [data-testid="human-turn"]')) continue;
     if (node.matches('[contenteditable="true"]') || node.closest('[contenteditable="true"]')) continue;
+    const steps = node.querySelectorAll(
+      '[data-cds="TurnStatusStep"] [data-cds-row-subject], [data-cds="TurnStatusStep"] [data-cds-row-title]'
+    );
+    for (const el of steps) {
+      const t = (el.textContent || '').trim().toLowerCase();
+      if (slugRe.test(t)) cds_subjects.push(t);
+    }
     const t = (node.innerText || '').trim();
     if (t) parts.push(t);
   }
-  return parts.join('\\n');
+  return {
+    session_labels,
+    truncate_texts,
+    turn_text: parts.join('\\n'),
+    cds_subjects,
+  };
 }"""
 
 
 async def scrape_chat_turn_loaded_skills(page: Page) -> tuple[str, ...]:
-    """Skill slugs from assistant-turn load badges when the Context rail is absent."""
+    """Skill slugs from session activity + turn badges when the Context rail is absent."""
     raw = await page.evaluate(_ASSISTANT_TURN_BADGE_JS)
-    text = raw if isinstance(raw, str) else ""
-    return parse_loaded_skills_from_turn_badges(text)
+    if not isinstance(raw, dict):
+        return ()
+    session_slugs: list[str] = []
+    for label in raw.get("session_labels") or []:
+        session_slugs.extend(parse_session_activity_skills(str(label)))
+    for text in raw.get("truncate_texts") or []:
+        session_slugs.extend(parse_session_activity_skills(str(text)))
+    session_tuple = _ordered_unique_slugs(tuple(session_slugs))
+    from_badges = parse_loaded_skills_from_turn_badges(str(raw.get("turn_text") or ""))
+    cds_slugs: list[str] = []
+    for item in raw.get("cds_subjects") or []:
+        slug = str(item).strip().lower()
+        if _SLUG_RE.fullmatch(slug):
+            cds_slugs.append(slug)
+    cds_tuple = _ordered_unique_slugs(tuple(cds_slugs))
+    return _ordered_unique_slugs(session_tuple + from_badges + cds_tuple)
 
 
 def parse_skills_from_context_section(section_text: str) -> tuple[str, ...]:
@@ -224,7 +307,12 @@ async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
                 context_found=False,
                 skills_heading_found=False,
                 model_label=None,
-                selectors=(*_SELECTORS_USED, _BADGE_SELECTOR),
+                selectors=(
+                    *_SELECTORS_USED,
+                    _SESSION_ACTIVITY_SELECTOR,
+                    _SESSION_ACTIVITY_FALLBACK,
+                    _BADGE_SELECTOR,
+                ),
                 raw_section_text="",
             )
         raise
