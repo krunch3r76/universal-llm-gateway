@@ -281,6 +281,27 @@ async def test_select_compose_mode_polls_until_chip_click_succeeds(
     assert result["step"] != "chip_missing"
 
 
+_NEW_SESSION_TITLE_HTML = """
+<!doctype html><html><head><title>New session - Claude</title></head><body>
+<button>Skip</button>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_compose_mode_fingerprint_accepts_new_session_title() -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_NEW_SESSION_TITLE_HTML)
+            fp = await compose_mode_fingerprint(page)
+            assert fp["title"] == "New session - Claude"
+            assert fp.get("title_fingerprint") == "new_session"
+        finally:
+            await browser.close()
+
+
 @pytest.mark.asyncio
 async def test_compose_mode_fingerprint_falls_back_to_text_when_aria_absent() -> None:
     """a:31319 — aria-less "Auto" button must still fingerprint as approval."""

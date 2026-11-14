@@ -70,24 +70,89 @@ async def collect_chip_candidates(page, label: str) -> list[dict[str, Any]]:
     return list(raw or [])
 
 
+def compose_ui_drift_detected(rg: dict[str, Any]) -> bool:
+    """True when sidebar Mode radiogroup exists but Surface/Cowork compose chrome does not.
+
+    TODO(selector): if production stabilizes on a new Cowork toggle outside Surface,
+    use ``ui_census`` here to pick a selector — do not guess without census.
+    """
+    if int(rg.get("surface_radiogroup_count") or 0) > 0:
+        return False
+    names = {str(n).strip().lower() for n in (rg.get("radiogroup_names") or []) if n}
+    if "mode" not in names:
+        return False
+    mode_controls = list(rg.get("mode_controls") or [])
+    for row in mode_controls:
+        blob = f"{row.get('aria') or ''} {row.get('text') or ''}".strip()
+        if re.search(r"\bcowork\b", blob, re.I):
+            return False
+    return int(rg.get("radiogroup_count") or 0) > 0
+
+
+def ui_census_from_radiogroup_evidence(rg: dict[str, Any]) -> dict[str, Any]:
+    """Compact census blob for failure payloads (radiogroups + mode-matching controls)."""
+    return {
+        "document_title": str(rg.get("document_title") or ""),
+        "radiogroups": list(rg.get("radiogroups") or []),
+        "mode_controls": list(rg.get("mode_controls") or []),
+        "radiogroup_names": list(rg.get("radiogroup_names") or []),
+        "surface_radiogroup_count": int(rg.get("surface_radiogroup_count") or 0),
+        "radiogroup_count": int(rg.get("radiogroup_count") or 0),
+    }
+
+
 async def collect_radiogroup_evidence(page) -> dict[str, Any]:
-    """Surface radiogroup count + accessible names for joinable failure dumps."""
+    """Radiogroup census + mode-matching controls for joinable failure dumps."""
     raw = await page.evaluate(
         """() => {
           const groups = [...document.querySelectorAll('[role=radiogroup]')];
-          const names = groups.map((g) => {
-            const labelled = g.getAttribute('aria-label')
-              || (g.getAttribute('aria-labelledby')
-                    ? (document.getElementById(g.getAttribute('aria-labelledby')) || {}).innerText
-                    : '')
-              || '';
-            return (labelled || '').trim().slice(0, 80);
-          }).filter(Boolean);
+          const radiogroups = groups.map((g) => {
+            const ariaLabel = (g.getAttribute('aria-label') || '').trim();
+            let labelled = ariaLabel;
+            if (!labelled && g.getAttribute('aria-labelledby')) {
+              const ref = document.getElementById(g.getAttribute('aria-labelledby'));
+              labelled = ((ref && ref.innerText) || '').trim();
+            }
+            const radios = [...g.querySelectorAll('[role=radio]')].map((r) => ({
+              label: ((r.getAttribute('aria-label') || (r.innerText || '').trim()) || '').slice(0, 80),
+              role: r.getAttribute('role') || 'radio',
+              aria_checked: r.getAttribute('aria-checked') || '',
+            }));
+            return { aria_label: labelled.slice(0, 120), radios };
+          });
+          const names = radiogroups.map((g) => g.aria_label).filter(Boolean);
           const surface = groups.filter((g) => {
             const n = (g.getAttribute('aria-label') || '').toLowerCase();
             return n === 'surface';
           }).length;
-          return {radiogroup_names: names, surface_radiogroup_count: surface, radiogroup_count: groups.length};
+          const wanted = /cowork|task|session|chat/i;
+          const mode_controls = [];
+          const seen = new Set();
+          for (const el of document.querySelectorAll(
+            'button,[role=button],[role=radio],[role=tab],span,div'
+          )) {
+            const aria = el.getAttribute('aria-label') || '';
+            const text = (el.innerText || '').trim().replace(/\\s+/g, ' ');
+            if (!wanted.test(aria) && !wanted.test(text)) continue;
+            const key = el.tagName + '|' + aria + '|' + text.slice(0, 40);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            mode_controls.push({
+              tag: el.tagName,
+              role: el.getAttribute('role') || '',
+              aria,
+              text: text.slice(0, 80),
+              aria_checked: el.getAttribute('aria-checked') || '',
+            });
+          }
+          return {
+            radiogroup_names: names,
+            surface_radiogroup_count: surface,
+            radiogroup_count: groups.length,
+            radiogroups,
+            mode_controls,
+            document_title: document.title || '',
+          };
         }"""
     )
     if not isinstance(raw, dict):
@@ -95,11 +160,17 @@ async def collect_radiogroup_evidence(page) -> dict[str, Any]:
             "radiogroup_names": [],
             "surface_radiogroup_count": 0,
             "radiogroup_count": 0,
+            "radiogroups": [],
+            "mode_controls": [],
+            "document_title": "",
         }
     return {
         "radiogroup_names": list(raw.get("radiogroup_names") or []),
         "surface_radiogroup_count": int(raw.get("surface_radiogroup_count") or 0),
         "radiogroup_count": int(raw.get("radiogroup_count") or 0),
+        "radiogroups": list(raw.get("radiogroups") or []),
+        "mode_controls": list(raw.get("mode_controls") or []),
+        "document_title": str(raw.get("document_title") or ""),
     }
 
 

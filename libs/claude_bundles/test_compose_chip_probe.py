@@ -6,9 +6,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from claude_bundles.chat_cowork_mode import select_compose_mode
 from claude_bundles.compose_chip_probe import (
     _size_reject,
     collect_effort_candidates,
+    collect_radiogroup_evidence,
     try_click_compose_chip,
 )
 from claude_bundles.events_compose_attest import (
@@ -215,3 +217,107 @@ async def test_try_click_records_size_gate_reject() -> None:
     assert any(r.get("reason") == "size" for r in probe["gate_rejects"])
     assert probe["surface_radiogroup_count"] == 1
     assert "Surface" in probe["radiogroup_names"]
+
+
+_OLD_SURFACE_COMPOSE_HTML = """
+<!doctype html><html><head><title>New chat - Claude</title></head><body>
+<div role="radiogroup" aria-label="Surface" style="display:inline-flex;gap:8px">
+  <button role="radio" aria-checked="true" aria-label="Chat"
+    style="display:inline-block;width:64px;height:28px">Chat</button>
+  <button role="radio" aria-checked="false" aria-label="Cowork"
+    style="display:inline-block;width:72px;height:28px">Cowork</button>
+</div>
+</body></html>
+"""
+
+_DRIFT_SIDEBAR_MODE_ONLY_HTML = """
+<!doctype html><html><head><title>New session - Claude</title></head><body>
+<div role="radiogroup" aria-label="Mode">
+  <div role="radio" aria-checked="true" aria-label="Home">Home</div>
+  <div role="radio" aria-checked="false" aria-label="Code">Code</div>
+</div>
+</body></html>
+"""
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_collect_radiogroup_evidence_old_surface_layout() -> None:
+    pytest.importorskip("playwright")
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_OLD_SURFACE_COMPOSE_HTML)
+            rg = await collect_radiogroup_evidence(page)
+            assert rg["surface_radiogroup_count"] == 1
+            assert "Surface" in rg["radiogroup_names"]
+            assert rg["document_title"] == "New chat - Claude"
+            surface = next(g for g in rg["radiogroups"] if g["aria_label"] == "Surface")
+            labels = {r["label"] for r in surface["radios"]}
+            assert labels == {"Chat", "Cowork"}
+        finally:
+            await browser.close()
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_select_compose_mode_old_layout_surface_still_selects_cowork(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("playwright")
+    from playwright.async_api import async_playwright
+
+    async def _attest_ok(_page, _mode, **kwargs):
+        from claude_bundles.compose_attest import compose_mode_fingerprint
+
+        fp = await compose_mode_fingerprint(_page)
+        return {"ok": True, "fingerprint": fp, "step": "attested_cowork"}
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.await_compose_attest",
+        _attest_ok,
+    )
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_OLD_SURFACE_COMPOSE_HTML)
+            result = await select_compose_mode(page, "cowork")
+            assert result["ok"] is True
+            assert result["step"] == "selected_cowork"
+            assert result["step"] != "ui_drift"
+        finally:
+            await browser.close()
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_select_compose_mode_drifted_sidebar_mode_raises_ui_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("playwright")
+    from playwright.async_api import async_playwright
+
+    monkeypatch.setattr("claude_bundles.chat_cowork_mode._CHIP_POLL_TIMEOUT_S", 0.0)
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_DRIFT_SIDEBAR_MODE_ONLY_HTML)
+            result = await select_compose_mode(page, "cowork")
+            assert result["ok"] is False
+            assert result["step"] == "ui_drift"
+            census = result.get("ui_census") or {}
+            group_labels = [g.get("aria_label") for g in census.get("radiogroups") or []]
+            assert "Mode" in group_labels
+            mode_group = next(g for g in census["radiogroups"] if g["aria_label"] == "Mode")
+            radio_labels = {r["label"] for r in mode_group["radios"]}
+            assert radio_labels == {"Home", "Code"}
+            assert census.get("document_title") == "New session - Claude"
+        finally:
+            await browser.close()

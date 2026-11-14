@@ -32,7 +32,9 @@ from claude_bundles.compose_chip_probe import (
     collect_approval_candidates,
     collect_chip_candidates,
     collect_radiogroup_evidence,
+    compose_ui_drift_detected,
     try_click_compose_chip,
+    ui_census_from_radiogroup_evidence,
 )
 
 # Harvest mints sync_restart for cdp_ask when this module lands (ensure_cowork_auto path).
@@ -241,21 +243,29 @@ async def _chip_missing_payload(
     label = "Cowork" if mode == "cowork" else "Chat"
     candidates = await collect_chip_candidates(page, label)
     probe = dict(click_probe or {})
+    rg = await collect_radiogroup_evidence(page)
     if "radiogroup_names" not in probe:
-        probe.update(await collect_radiogroup_evidence(page))
-    return {
+        probe.update(rg)
+    ui_census = ui_census_from_radiogroup_evidence(rg)
+    ui_drift = compose_ui_drift_detected(rg)
+    step = "ui_drift" if ui_drift else "chip_missing"
+    out: dict[str, Any] = {
         "ok": False,
-        "step": "chip_missing",
+        "step": step,
         "wanted": mode,
         "before": before,
         "compose_mode_fingerprint": fp,
         "candidates": candidates,
         "click_probe": probe,
+        "ui_census": ui_census,
         "surface_radiogroup_count": int(probe.get("surface_radiogroup_count") or 0),
         "radiogroup_names": list(probe.get("radiogroup_names") or []),
         "gate_rejects": list(probe.get("gate_rejects") or []),
         "polled_ms": polled_ms,
     }
+    if ui_drift:
+        out["failure_class"] = "ui_drift"
+    return out
 
 
 async def _poll_for_chip_or_attest(

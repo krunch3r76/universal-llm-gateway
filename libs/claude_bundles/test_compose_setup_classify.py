@@ -145,3 +145,23 @@ def test_chip_missing_payload_includes_fingerprint_and_candidates() -> None:
     assert payload["surface_radiogroup_count"] == 1
     assert payload["radiogroup_names"] == ["Surface"]
     assert payload["failure_class"] == "toggle"
+
+
+def test_ui_drift_classifies_distinct_from_toggle() -> None:
+    mode = {
+        "ok": False,
+        "step": "ui_drift",
+        "failure_class": "ui_drift",
+        "ui_census": {
+            "document_title": "New session - Claude",
+            "radiogroup_names": ["Mode"],
+            "radiogroups": [{"aria_label": "Mode", "radios": []}],
+        },
+    }
+    classified = classify_compose_setup_failure(
+        {"ok": False, "step": "cowork", "mode": mode},
+        url="https://claude.ai/new",
+        on_new=True,
+    )
+    assert classified["failure_class"] == "ui_drift"
+    assert classified["hint"] == "new_compose_ui_drift"

@@ -344,6 +344,15 @@ def classify_compose_setup_failure(result: dict, *, url: str, on_new: bool) -> d
     )
 
     if mode is not None and not mode.get("ok"):
+        inner_step = str(mode.get("step") or "")
+        inner_fc = str(mode.get("failure_class") or "")
+        if inner_step == "ui_drift" or inner_fc == "ui_drift":
+            return {
+                "failure_class": "ui_drift",
+                "hint": "new_compose_ui_drift",
+                "failing_block": "mode",
+                "mode": mode,
+            }
         hint = (
             "new_compose_toggle_failed"
             if on_new
@@ -449,6 +458,7 @@ def _compose_setup_error(
                 "radiogroup_names": mode_block.get("radiogroup_names"),
                 "gate_rejects": mode_block.get("gate_rejects"),
                 "polled_ms": mode_block.get("polled_ms"),
+                "ui_census": mode_block.get("ui_census"),
             }
         )
     # Keep nested mode/approval when both exist so readers see the successful

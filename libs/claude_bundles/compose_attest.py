@@ -96,11 +96,20 @@ async def compose_mode_fingerprint(page) -> dict[str, Any]:
         }"""
     )
     mode: str | None = None
+    title_fp: str | None = None
     if re.search(r"new task", title, re.I):
         mode = "cowork"
+        title_fp = "new_task"
     elif re.search(r"new chat", title, re.I):
         mode = "chat"
-    return {"title": title, "mode": mode, "approval": approval, "url": page.url}
+        title_fp = "new_chat"
+    elif re.search(r"new session", title, re.I):
+        mode = None
+        title_fp = "new_session"
+    out: dict[str, Any] = {"title": title, "mode": mode, "approval": approval, "url": page.url}
+    if title_fp is not None:
+        out["title_fingerprint"] = title_fp
+    return out
 
 
 def approval_label(fp: dict[str, Any]) -> str:
