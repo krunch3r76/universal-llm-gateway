@@ -394,49 +394,40 @@ async def test_submit_composer_draft_manual_refuses(
 async def test_submit_composer_draft_auto_passes_ship_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Permission Auto passes the ship gate; mode_locked path clicks Start task."""
+    """Permission Auto passes the ship gate; /new uses live_discover submit."""
     fp = {
         "title": "New session - Claude",
-        "mode": "cowork",
-        "approval": {"aria": "", "text": "Auto", "via": "text"},
+        "mode": "chat",
+        "title_fingerprint": "new_session",
+        "approval": {
+            "aria": "",
+            "text": "Auto",
+            "via": "text",
+            "labelledby": "Permission mode: Auto",
+        },
         "url": "https://claude.ai/new",
+        "compose_readiness": {"ready": True},
     }
 
     async def fake_ensure(_page) -> dict:
         return {"ok": True, "after": fp}
 
+    submit = AsyncMock()
     monkeypatch.setattr(
         "claude_bundles.chat_cowork_mode.ensure_approval_auto",
         fake_ensure,
     )
     monkeypatch.setattr(
-        "claude_bundles.project_ask.await_compose_attest",
-        AsyncMock(return_value={"ok": True, "fingerprint": fp}),
-    )
-    monkeypatch.setattr(
-        "claude_bundles.project_ask.await_submit_visible",
-        AsyncMock(return_value={"ok": True}),
-    )
-    click = AsyncMock(return_value=True)
-    monkeypatch.setattr(
-        "claude_bundles.composer_submit.click_submit_button",
-        click,
-    )
-    monkeypatch.setattr(
-        "claude_bundles.composer_submit.prove_composer_submitted",
-        AsyncMock(),
+        "claude_bundles.composer_submit.submit_composer_content",
+        submit,
     )
     from claude_bundles.project_ask import _submit_composer_draft
 
     page = MagicMock()
     page.url = "https://claude.ai/new"
-    loc = MagicMock()
-    loc.count = AsyncMock(return_value=1)
-    loc.first = MagicMock()
-    page.get_by_role.return_value = loc
 
     await _submit_composer_draft(page, composer=AsyncMock(), draft_text="hi")
-    click.assert_awaited_once_with(loc.first)
+    submit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

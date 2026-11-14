@@ -263,17 +263,17 @@ def _compose_attested(
     ``require_auto=False`` is chip/title only so the Cowork chip can attest
     before the radio flip (Manual or Auto ok at that step).
     """
+    if require_auto and fp.get("approval"):
+        return _approval_is_auto(fp) or _approval_is_skip(fp)
     if mode == "cowork":
         if require_auto:
-            if fp.get("approval"):
-                return _approval_is_auto(fp) or _approval_is_skip(fp)
             return fp.get("mode") == "cowork"
         return fp.get("mode") == "cowork" or bool(fp.get("approval"))
     if fp.get("mode") == "chat" and not fp.get("approval"):
         return True
     readiness = fp.get("compose_readiness")
     if isinstance(readiness, dict) and readiness.get("ready"):
-        return True
+        return not fp.get("approval") or not require_auto
     return False
 
 
@@ -381,14 +381,21 @@ def resolve_submit_strategy(
 ) -> SubmitStrategy:
     """Pick submit path from URL lifecycle and compose surface.
 
-    Warm chat/CSE URLs and ``surface='code'`` use live DOM submit discovery;
-    bare ``/new`` Cowork first-send keeps mode-locked re-attest + Start task.
+    Warm chat/CSE URLs, compose v2 ``/new``, and ``surface='code'`` use live
+    DOM submit discovery (``Send message`` or legacy ``Start task``).
     """
-    _ = fp  # reserved — URL is the lifecycle signal (tier1-anchors / A bind)
     surf = (surface or "").strip().lower() or None
     if surf == "code":
         return "live_discover"
     if in_active_chat(url or ""):
+        return "live_discover"
+    fp = fp if isinstance(fp, dict) else {}
+    if (fp.get("compose_readiness") or {}).get("ready") or fp.get(
+        "title_fingerprint"
+    ) == "new_session":
+        return "live_discover"
+    path = (url or "").split("?", 1)[0].rstrip("/")
+    if path.endswith("/new"):
         return "live_discover"
     return "mode_locked"
 

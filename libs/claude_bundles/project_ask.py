@@ -55,7 +55,6 @@ from claude_bundles.chat_session_hygiene import (
 from claude_bundles.compose_attest import (
     approval_mode_chip,
     await_compose_attest,
-    await_submit_visible,
     compose_mode_fingerprint,
     dispatch_approval_refuse_reason,
     resolve_submit_strategy,
@@ -406,12 +405,6 @@ async def find_composer(page: Page):
     return None
 
 
-# Cowork /new submit control is "Start task"; Chat is "Send message" (24609).
-_SUBMIT_ROLE_RES = (
-    re.compile(r"start task", re.I),
-    re.compile(r"send message", re.I),
-)
-_SUBMIT_ARIA_SUBSTRS = ("Start task", "Send")
 _UNDELIVERED_RE = re.compile(r"undelivered=(\[[^\]]*\])")
 
 
@@ -570,44 +563,14 @@ async def _submit_composer_draft(
 
             await assert_committed_user_turn(page, draft_text, composer=composer)
     else:
-        mode: str = fp.get("mode") or ("cowork" if fp.get("approval") else "chat")
-        if mode not in ("chat", "cowork"):
-            mode = "cowork" if fp.get("approval") else "chat"
+        mode: str = "cowork" if fp.get("approval") else (fp.get("mode") or "chat")
         attest = await await_compose_attest(page, mode, timeout_s=4.0)  # type: ignore[arg-type]
         if not attest.get("ok"):
             raise RuntimeError(
                 f"compose re-attest failed before send: mode={mode!r} "
                 f"fingerprint={attest.get('fingerprint')}"
             )
-
-        submit = await await_submit_visible(page, mode, timeout_s=8.0)
-        clicked = False
-        if submit.get("ok"):
-            from claude_bundles.composer_submit import click_submit_button
-
-            role_re = _SUBMIT_ROLE_RES[0 if mode == "cowork" else 1]
-            loc = page.get_by_role("button", name=role_re)
-            if await loc.count():
-                clicked = await click_submit_button(loc.first)
-            if not clicked:
-                aria = _SUBMIT_ARIA_SUBSTRS[0 if mode == "cowork" else 1]
-                loc = page.locator(f"button[aria-label*='{aria}' i]")
-                if await loc.count():
-                    clicked = await click_submit_button(loc.first)
-        if not clicked:
-            from claude_bundles.composer_submit import is_generation_active
-
-            if await is_generation_active(page):
-                await submit_composer_content(page, draft_text, composer=composer)
-            else:
-                raise RuntimeError(
-                    "submit control missing: need visible Start task (Cowork) or "
-                    "Send message (Chat) on a non-streaming surface"
-                )
-        else:
-            from claude_bundles.composer_submit import prove_composer_submitted
-
-            await prove_composer_submitted(page, draft_text)
+        await submit_composer_content(page, draft_text, composer=composer)
 
     if compose_receipt is not None and surf == "code":
         compose_receipt["approval_mode"] = approval_mode_chip(fp)

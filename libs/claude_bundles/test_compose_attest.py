@@ -82,7 +82,25 @@ def test_resolve_submit_strategy_warm_chat() -> None:
 def test_resolve_submit_strategy_bare_new() -> None:
     assert (
         resolve_submit_strategy("https://claude.ai/new", {"mode": "cowork"})
-        == "mode_locked"
+        == "live_discover"
+    )
+
+
+def test_resolve_submit_strategy_v2_new_session_uses_live_discover() -> None:
+    assert (
+        resolve_submit_strategy(
+            "https://claude.ai/new",
+            {
+                "title_fingerprint": "new_session",
+                "mode": "chat",
+                "compose_readiness": {"ready": True},
+            },
+        )
+        == "live_discover"
+    )
+    assert (
+        resolve_submit_strategy("https://claude.ai/new", {"mode": "cowork"})
+        == "live_discover"
     )
 
 
@@ -576,6 +594,55 @@ def test_v2_manual_labelledby_classified_as_manual_not_unknown() -> None:
 
 def test_auto_aria_re_does_not_match_automate_prefix() -> None:
     assert not _AUTO_ARIA_RE.search("Automate")
+
+
+def test_compose_attested_chat_with_manual_chip_and_readiness_refuses() -> None:
+    fp = {
+        "mode": "chat",
+        "approval": {
+            "aria": "",
+            "text": "Manual",
+            "labelledby": "Permission mode: Manual",
+            "via": "text",
+        },
+        "compose_readiness": {"ready": True},
+    }
+    assert _compose_attested(fp, "chat", require_auto=True) is False
+    assert _compose_attested(fp, "chat", require_auto=False) is True
+
+
+@pytest.mark.parametrize(
+    ("fp", "expect"),
+    [
+        (
+            {
+                "mode": "chat",
+                "approval": {
+                    "aria": "",
+                    "text": "Skip",
+                    "labelledby": "Permission mode: Skip all approvals",
+                    "via": "text",
+                },
+                "compose_readiness": {"ready": True},
+            },
+            True,
+        ),
+        (_A84028F3_AUTO_LABELLEDBY_FP, True),
+        (_V2_MANUAL_LABELLEDBY_FP, False),
+        (
+            {
+                "mode": "cowork",
+                "approval": {"aria": "", "text": "", "via": "text"},
+                "compose_readiness": {"ready": True},
+            },
+            False,
+        ),
+    ],
+)
+def test_compose_attested_ship_gate_with_readiness(
+    fp: dict, expect: bool
+) -> None:
+    assert _compose_attested(fp, "cowork", require_auto=True) is expect
 
 
 def test_v2_skip_labelledby_passes_ship_gate() -> None:
