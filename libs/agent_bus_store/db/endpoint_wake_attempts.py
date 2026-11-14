@@ -55,6 +55,27 @@ def ledger_cols(conn: sqlite3.Connection) -> set[str]:
     return {str(r[1]) for r in conn.execute("PRAGMA table_info(endpoint_wake_ledger)")}
 
 
+def wake_detail_from_display_body(body: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Extract attempt telemetry keys echoed by display-chat-wake."""
+    if not isinstance(body, dict):
+        return None
+    detail: dict[str, Any] = {}
+    for key in (
+        "channel",
+        "generating",
+        "composer_draft",
+        "run_state",
+        "mid_stream",
+        "release_claim_for_retry",
+        "composer_defer_reason",
+    ):
+        if key in body:
+            detail[key] = body[key]
+    if "wake_detail" in body and isinstance(body["wake_detail"], dict):
+        detail.update(body["wake_detail"])
+    return detail or None
+
+
 def gate_fields_from_wake_detail(detail: dict[str, Any] | None) -> dict[str, Any]:
     d = dict(detail or {})
     out: dict[str, Any] = {}

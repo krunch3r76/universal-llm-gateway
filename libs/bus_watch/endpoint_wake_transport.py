@@ -12,7 +12,15 @@ from giw_endpoint import git_integration_worker_base_url
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
 _COMPOSER_DEFER_DISPLAY = frozenset(
-    {"active_chat_busy", "composer_busy", "composer_not_empty"}
+    {
+        "active_chat_busy",
+        "agent_running",
+        "composer_busy",
+        "composer_not_empty",
+        "grok_composing",
+        "grok_idle_unstable",
+        "grok_roster_unreadable",
+    }
 )
 _RETRIABLE_DISPLAY = {
     "agent_running",

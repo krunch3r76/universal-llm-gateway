@@ -17,6 +17,10 @@ COMPOSER_DEFER_REASONS = frozenset(
         "composer_busy",
         "active_chat_busy",
         "non_empty_composer",
+        "grok_composing",
+        "grok_idle_unstable",
+        "grok_roster_unreadable",
+        "agent_running",
     }
 )
 COMPOSER_DEFER_ARMED = "composer_defer:armed"

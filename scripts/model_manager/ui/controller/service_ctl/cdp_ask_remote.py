@@ -219,11 +219,6 @@ async def _nfs_checkout_ready() -> bool:
     return code == 0 and "nfs_ok" in text
 
 
-async def nfs_checkout_ready(root: Path) -> bool:  # noqa: ARG001
-    """Public NFS probe for fleet cdp-ask ownership (AC1); ``root`` is hub tree."""
-    return await _nfs_checkout_ready()
-
-
 async def _rsync_home_checkout(root: Path) -> str | None:
     """Push satellite paths into ``~/universal-llm-gateway``. None = ok."""
     target = _ssh_target()

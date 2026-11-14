@@ -1,0 +1,6 @@
+# propagation_residue — lane-23681 a:43821 isRunning gate (display-chat-wake)
+restart_owed:
+  - service: stargate
+    reason: grok roster paste gate in wake_delivery + display_post wake_detail echo
+  - service: agent_bus
+    reason: composer_defer reason set extended (agent_running, grok_composing, grok_idle_unstable, grok_roster_unreadable)

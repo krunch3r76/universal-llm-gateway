@@ -30,7 +30,6 @@ from .manage_events import (
     ManageServiceFailed,
     ManageServiceRequested,
 )
-from .manage_lifecycle_observability import peer_credentials_from_socket
 
 if TYPE_CHECKING:
     from .controller.service_ctl.core import ServiceController
@@ -165,13 +164,9 @@ class ManageAPIServer:
             # In-flight count gates exit: the drain loop waits for this to reach 0
             # before tearing down the listener, so the response below is never
             # truncated mid-write by an exit.
-            peer_sock = writer.get_extra_info("socket")
-            peer_pid, peer_uid = peer_credentials_from_socket(peer_sock)
             self._shutdown_gate.enter_request()
             try:
-                result, err = await self._dispatch(
-                    method, params, peer_pid=peer_pid, peer_uid=peer_uid
-                )
+                result, err = await self._dispatch(method, params)
             finally:
                 self._shutdown_gate.leave_request()
 
@@ -200,12 +195,7 @@ class ManageAPIServer:
                 await writer.wait_closed()
 
     async def _dispatch(
-        self,
-        method: str,
-        params: dict[str, Any],
-        *,
-        peer_pid: int | None = None,
-        peer_uid: int | None = None,
+        self, method: str, params: dict[str, Any]
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         """Route method to ServiceController; emit before/after events."""
         service = params.get("service", "")
@@ -217,13 +207,7 @@ class ManageAPIServer:
 
         try:
             result = await execute(
-                self._controller,
-                method,
-                service,
-                params,
-                event_bus=self._event_bus,
-                peer_pid=peer_pid,
-                peer_uid=peer_uid,
+                self._controller, method, service, params, event_bus=self._event_bus
             )
         except ValueError as exc:
             duration = round(time.monotonic() - t0, 3)

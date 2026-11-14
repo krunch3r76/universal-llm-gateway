@@ -35,38 +35,6 @@ _RECONNECT_DELAY = 5.0
 _SEND_TIMEOUT = 2.0
 
 
-def _parse_tcp_target(raw: str) -> tuple[str, int] | None:
-    text = raw.strip()
-    if not text or ":" not in text:
-        return None
-    host, _, port_s = text.rpartition(":")
-    host = host.strip()
-    if not host or not port_s.strip().isdigit():
-        return None
-    return host, int(port_s)
-
-
-def _resolve_tcp_target() -> tuple[str, int] | None:
-    """AC4: Jupiter cdp-ask sets ``EVENTS_INGEST_TCP`` — prefer hub TCP ingest."""
-    combined = os.environ.get("EVENTS_INGEST_TCP", "").strip()
-    if combined:
-        return _parse_tcp_target(combined)
-    host = (
-        os.environ.get("EVENT_SERVICE_INGEST_HOST", "").strip()
-        or os.environ.get("EVENTS_INGEST_HOST", "").strip()
-    )
-    if not host:
-        return None
-    port_s = (
-        os.environ.get("EVENTS_INGEST_PORT", "").strip()
-        or os.environ.get("EVENT_INGEST_TCP_PORT", "").strip()
-        or "7101"
-    )
-    if not port_s.isdigit():
-        return None
-    return host, int(port_s)
-
-
 class _UDSPublisher:
     """Thread-based UDS publisher with bounded queue and auto-reconnect.
 
@@ -76,10 +44,9 @@ class _UDSPublisher:
 
     def __init__(self, sock_path: str) -> None:
         self._sock_path = sock_path
-        self._tcp_target = _resolve_tcp_target()
         self._q: queue.Queue[str] = queue.Queue(maxsize=_QUEUE_MAX)
         self._thread = threading.Thread(
-            target=self._run, daemon=True, name="cortex-api-events-ingest"
+            target=self._run, daemon=True, name="cortex-api-events-uds"
         )
         self._thread.start()
 
@@ -98,35 +65,20 @@ class _UDSPublisher:
                     "cortex-api event publisher queue full; event dropped",
                 )
 
-    def _connect(self) -> socket.socket:
-        """Open the ingest socket; a failed connect closes it here and re-raises.
-
-        The caller's ``sock`` stays ``None`` on failure, so cleanup must live
-        here — closing in ``_run`` raised AttributeError and killed the thread.
-        """
-        if self._tcp_target is not None:
-            host, port = self._tcp_target
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            target: Any = (host, port)
-        else:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            target = self._sock_path
-        try:
-            sock.settimeout(_SEND_TIMEOUT)
-            sock.connect(target)
-        except OSError:
-            sock.close()
-            raise
-        return sock
-
     def _run(self) -> None:
         sock: socket.socket | None = None
         while True:
             if sock is None:
                 try:
-                    sock = self._connect()
+                    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    sock.settimeout(_SEND_TIMEOUT)
+                    sock.connect(self._sock_path)
                 except OSError as e:
                     logger.warning("cortex-api event publisher connect error: %s", e)
+                    try:
+                        sock.close()
+                    except OSError:
+                        pass
                     sock = None
                     time.sleep(_RECONNECT_DELAY)
                     continue

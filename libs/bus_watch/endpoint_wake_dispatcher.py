@@ -2100,25 +2100,25 @@ def _display_post_maybe_missed(
     *,
     paste_text: str = "",
     wake_groups: list[dict[str, Any]] | None = None,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict[str, Any] | None]:
     text, missed_ids = _preview_missed_paste(sub, paste_text)
     has_text = bool((text or "").strip())
     if wake_groups is not None:
         if has_text:
-            state, reason = _display_post(
+            state, reason, detail = _display_post(
                 primary, sub, turn_arg, text=text, wake_groups=wake_groups
             )
         else:
-            state, reason = _display_post(
+            state, reason, detail = _display_post(
                 primary, sub, turn_arg, wake_groups=wake_groups
             )
     elif has_text:
-        state, reason = _display_post(primary, sub, turn_arg, text=text)
+        state, reason, detail = _display_post(primary, sub, turn_arg, text=text)
     else:
-        state, reason = _display_post(primary, sub, turn_arg)
+        state, reason, detail = _display_post(primary, sub, turn_arg)
     if state == "delivered":
         _stamp_missed_after_deliver(sub, missed_ids)
-    return state, reason
+    return state, reason, detail
 
 
 def _display_post(
@@ -2128,7 +2128,7 @@ def _display_post(
     *,
     text: str = "",
     wake_groups: list[dict[str, Any]] | None = None,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict[str, Any] | None]:
     _display_started = time.monotonic()
     try:
         return _display_post_body(row, sub, turn, text=text, wake_groups=wake_groups)
@@ -2145,7 +2145,7 @@ def _display_post_body(
     *,
     text: str = "",
     wake_groups: list[dict[str, Any]] | None = None,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict[str, Any] | None]:
     options = {
         "display": sub.get("display"),
         "app": sub.get("surface"),
@@ -2178,11 +2178,17 @@ def _display_post_body(
             parsed = json.loads(content) if isinstance(content, str) else content
         except (KeyError, IndexError, TypeError, json.JSONDecodeError, ValueError):
             parsed = None
-        return classify_display(response.status_code, parsed, None)
+        from agent_bus_store.db.endpoint_wake_attempts import (
+            wake_detail_from_display_body,
+        )
+
+        state, reason = classify_display(response.status_code, parsed, None)
+        return state, reason, wake_detail_from_display_body(parsed)
     except httpx.ConnectError as exc:
-        return classify_display(0, None, exc)
+        state, reason = classify_display(0, None, exc)
+        return state, reason, None
     except Exception as exc:  # noqa: BLE001 — table classifies; never raise
-        return "unknown", type(exc).__name__
+        return "unknown", type(exc).__name__, None
 
 
 def _cse_agree(holder: dict[str, Any], dry: dict[str, Any]) -> bool:
@@ -3345,7 +3351,7 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         else ",".join(str(n) for n in primary_nums)
     )
     if len(by_thread) > 1:
-        state, reason = _display_post_maybe_missed(
+        state, reason, post_detail = _display_post_maybe_missed(
             primary, sub, turn_arg, paste_text="", wake_groups=wake_groups
         )
     elif (
@@ -3354,19 +3360,19 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         and str(sub.get("surface") or "") == "cursor"
     ):
         paste_text = exchange_lines(rows)
-        state, reason = _display_post_maybe_missed(
+        state, reason, post_detail = _display_post_maybe_missed(
             primary, sub, turn_arg, paste_text=paste_text
         )
     else:
-        state, reason = _display_post_maybe_missed(primary, sub, turn_arg)
+        state, reason, post_detail = _display_post_maybe_missed(primary, sub, turn_arg)
     from bus_watch.endpoint_wake_composer_defer import is_composer_defer_reason
 
-    wake_detail: dict[str, Any] | None = None
+    wake_detail: dict[str, Any] | None = dict(post_detail) if post_detail else None
     if state == "pending" and is_composer_defer_reason(reason):
-        wake_detail = {
-            "release_claim_for_retry": True,
-            "composer_defer_reason": reason,
-        }
+        merged = dict(wake_detail or {})
+        merged.setdefault("release_claim_for_retry", True)
+        merged["composer_defer_reason"] = reason
+        wake_detail = merged
     display_reachable_age = _note_display_post_reason(reason)
     if _update_no_composer_streak_and_gate_unsubscribe(
         sub, thread, reason, display_reachable_age=display_reachable_age

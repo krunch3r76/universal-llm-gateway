@@ -17,7 +17,6 @@ from universal_logging import get_logger
 
 from scripts.model_manager.observation_event import emit_fleet_relay_status
 
-from .fleet_decision_events import record_fleet_cdp_ask_restart_decision
 from .operation_log import tee_with_summary
 from .restart_drain import HttpActiveWorkProbe
 from .service_config import (
@@ -25,7 +24,6 @@ from .service_config import (
     is_cdp_ask_manage_enabled,
     resolve_cdp_ask_remote_target,
 )
-from .service_ctl.cdp_ask_remote import nfs_checkout_ready, sync_restart_cdp_ask_remote
 from .topology import (
     deploy_remote,
     gateway_image_mismatch_warnings,
@@ -328,40 +326,16 @@ async def _maybe_restart_remote_cdp_ask(
 ) -> None:
     """When cdp-ask is enabled for this remote, sync+restart after fleet deploy."""
     if not is_cdp_ask_manage_enabled():
-        await record_fleet_cdp_ask_restart_decision(
-            phase="remote",
-            action="skip",
-            reason="cdp_ask_manage_disabled",
-            hostname=hostname,
-        )
         return
     cfg = cdp_ask_url_config()
     if cfg is None:
-        await record_fleet_cdp_ask_restart_decision(
-            phase="remote",
-            action="skip",
-            reason="not_remote_target",
-            hostname=hostname,
-        )
         return
     url_host, _port, _base = cfg
     resolved = resolve_cdp_ask_remote_target(url_host)
     if resolved is None:
-        await record_fleet_cdp_ask_restart_decision(
-            phase="remote",
-            action="skip",
-            reason="not_remote_target",
-            hostname=hostname,
-        )
         return
     remote_hostname, _address, _ssh_user = resolved
     if remote_hostname != hostname:
-        await record_fleet_cdp_ask_restart_decision(
-            phase="remote",
-            action="skip",
-            reason="not_remote_target",
-            hostname=hostname,
-        )
         return
     _host, _port, base = cfg
     work = None
@@ -387,26 +361,8 @@ async def _maybe_restart_remote_cdp_ask(
             preview = ", ".join(ids[:3])
             suffix = "…" if len(ids) > 3 else ""
             sink.line(hostname, f"    execution_ids: {preview}{suffix}")
-        await record_fleet_cdp_ask_restart_decision(
-            phase="remote",
-            action="skip",
-            reason="drain_busy_deferred",
-            hostname=hostname,
-        )
         return
-    # AC1: local fleet phase already stopped/started cdp-ask on shared NFS — once only.
-    if await nfs_checkout_ready(root):
-        sink.line(
-            hostname,
-            "  ○ cdp_ask remote restart skipped (local phase + shared NFS checkout)",
-        )
-        await record_fleet_cdp_ask_restart_decision(
-            phase="remote",
-            action="skip",
-            reason="nfs_local_phase_owns",
-            hostname=hostname,
-        )
-        return
+    from .service_ctl.cdp_ask_remote import sync_restart_cdp_ask_remote
 
     try:
         msg = await sync_restart_cdp_ask_remote(root)
@@ -414,18 +370,6 @@ async def _maybe_restart_remote_cdp_ask(
         sink.line(hostname, f"  {'✓' if ok else '✗'} cdp_ask sync_restart")
         if not ok:
             sink.line(hostname, f"    {msg.splitlines()[0]}")
-        await record_fleet_cdp_ask_restart_decision(
-            phase="remote",
-            action="restart",
-            reason="rsync_remote_phase_owns",
-            hostname=hostname,
-        )
     except Exception as exc:
         logger.exception("cdp_ask fleet restart failed for %s", hostname)
         sink.line(hostname, f"  ✗ cdp_ask sync_restart: {exc}")
-        await record_fleet_cdp_ask_restart_decision(
-            phase="remote",
-            action="restart",
-            reason="rsync_remote_phase_owns",
-            hostname=hostname,
-        )

@@ -109,13 +109,7 @@ async def emit_build_image_mismatch(
 
 
 async def emit_fleet_operation_started(
-    *,
-    operation: str,
-    build: bool,
-    scope: str,
-    remotes: list[str],
-    caller: str | None = None,
-    reason: str | None = None,
+    *, operation: str, build: bool, scope: str, remotes: list[str]
 ) -> None:
     """Emitted when Sync+Restart All or Rebuild+Deploy All begins."""
     await _emit(
@@ -125,71 +119,6 @@ async def emit_fleet_operation_started(
             "build": build,
             "scope": scope,
             "remotes": remotes,
-            "caller": caller,
-            "reason": reason,
-        },
-    )
-
-
-async def emit_fleet_operation_rejected(
-    *,
-    operation: str,
-    running_operation: str,
-    caller: str | None,
-    reason: str | None,
-) -> None:
-    """Emitted when single-flight rejects a second concurrent fleet operation."""
-    await _emit(
-        "fleet.operation.rejected",
-        {
-            "operation": operation,
-            "running_operation": running_operation,
-            "caller": caller,
-            "reason": reason,
-        },
-    )
-
-
-async def emit_fleet_cdp_ask_restart_decision(
-    *,
-    phase: str,
-    action: str,
-    reason: str,
-    hostname: str | None = None,
-) -> None:
-    await _emit(
-        "fleet.cdp_ask.restart_decision",
-        {
-            "phase": phase,
-            "action": action,
-            "reason": reason,
-            "hostname": hostname,
-        },
-    )
-
-
-async def emit_manage_lifecycle_requested(
-    *,
-    action: str,
-    service: str | None,
-    reason: str | None,
-    caller: str | None,
-    caller_thread_id: str | None,
-    force: bool | None,
-    peer_pid: int | None,
-    peer_uid: int | None,
-) -> None:
-    await _emit(
-        "manage.lifecycle.requested",
-        {
-            "action": action,
-            "service": service,
-            "reason": reason,
-            "caller": caller,
-            "caller_thread_id": caller_thread_id,
-            "force": force,
-            "peer_pid": peer_pid,
-            "peer_uid": peer_uid,
         },
     )
 
@@ -201,8 +130,6 @@ async def emit_fleet_operation_completed(
     success: bool,
     duration_s: float,
     failures: list[str],
-    caller: str | None = None,
-    reason: str | None = None,
 ) -> None:
     await _emit(
         "fleet.operation.completed",
@@ -212,8 +139,6 @@ async def emit_fleet_operation_completed(
             "success": success,
             "duration_s": round(duration_s, 3),
             "failures": failures,
-            "caller": caller,
-            "reason": reason,
         },
     )
 
