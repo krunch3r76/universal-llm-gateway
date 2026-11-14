@@ -11,6 +11,7 @@ from claude_bundles.chat_cowork_mode import (  # noqa: E402
     ensure_compose_model_chip,
     ensure_cowork_auto,
     ensure_permission_mode,
+    read_compose_model_chip,
     read_quota_weekly_pct,
 )
 
@@ -225,6 +226,74 @@ document.getElementById('row-auto').addEventListener('click', () => {
 </script>
 </body></html>
 """
+
+
+# Live /new census (opus smoke 295ffcc7): compose chip has PUA chevron, no
+# data-testid="model-selector-dropdown"; Project chip sits beside Opus.
+_COMPOSE_V2_LIVE_CHIP_HTML = """
+<!doctype html><html><head><title>New session - Claude</title></head><body>
+<div role="radiogroup" aria-label="Mode">
+  <div role="radio" aria-checked="true" aria-label="Claude">Claude</div>
+  <div role="radio" aria-checked="false" aria-label="Code">Code</div>
+</div>
+<section class="compose-shell">
+  <div data-testid="chat-input" contenteditable="true"></div>
+  <button id="project" style="width:72px;height:28px">Project</button>
+  <button id="model" aria-label="Opus 5.5" style="width:90px;height:28px">Opus 5.5\ue003</button>
+  <button id="perm" style="width:72px;height:28px">Auto</button>
+  <div id="menu" role="menu" style="display:none">
+    <div role="menuitemradio" id="row-opus" aria-checked="true" aria-label="Opus 5.5 High">
+      Opus 5.5 High</div>
+  </div>
+</section>
+<script>
+document.getElementById('model').addEventListener('click', () => {
+  document.getElementById('menu').style.display = 'block';
+});
+</script>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_compose_model_chip_live_census_pua_no_testid() -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_COMPOSE_V2_LIVE_CHIP_HTML)
+            chip = await read_compose_model_chip(page)
+            assert chip["model_label"] == "Opus 5.5"
+            assert chip.get("model_chip_lookup") == "chat_input_region"
+            result = await ensure_compose_model_chip(
+                page, model_request="opus-5.5", effort="high"
+            )
+            assert result["ok"] is True
+            assert result["step"] == "already_model"
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_compose_model_chip_missing_attaches_candidates() -> None:
+    html = _COMPOSE_V2_NO_MENU_HTML.replace(
+        "<button style=", '<button id="decoy" style='
+    )
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(html)
+            result = await ensure_compose_model_chip(page, model_request="opus-5.5")
+            assert result["ok"] is False
+            assert result["step"] == "model_chip_missing"
+            census = result.get("ui_census") or {}
+            assert "model_chip_candidates" in census
+            assert any(
+                c.get("text") == "Manual" for c in census["model_chip_candidates"]
+            )
+        finally:
+            await browser.close()
 
 
 @pytest.mark.asyncio

@@ -888,27 +888,273 @@ async def read_quota_weekly_pct(page) -> dict[str, Any]:
     return {"pct": pct, "banner_text": text}
 
 
-async def read_compose_model_chip(page) -> dict[str, Any]:
-    """Read model picker label and separate effort chip when present."""
-    from claude_bundles.chat_model_select import current_model_label
+_COMPOSE_MODEL_CHIP_JS = """() => {
+  const PUA = /[\\uE000-\\uF8FF]/g;
+  const strip = (s) => (s || '').replace(PUA, '').replace(/\\s+/g, ' ').trim();
+  const familyRe = /^(Opus|Sonnet|Haiku|Fable)\\b/i;
+  const effortRe = /\\b(low|medium|high|extra|max|extended)\\b/i;
+  const permRe = /^(manual|auto)$/i;
 
-    label = await current_model_label(page)
-    effort = await page.evaluate(
+  function composeRoot() {
+    const chat = document.querySelector('[data-testid="chat-input"]');
+    if (!chat) return null;
+    return (
+      chat.closest('form, main, section, [class*="compose"]') || chat.parentElement
+    );
+  }
+
+  function candidateRow(el) {
+    const r = el.getBoundingClientRect();
+    return {
+      text: (el.innerText || '').trim().slice(0, 120),
+      aria_label: (el.getAttribute('aria-label') || '').slice(0, 120),
+      data_testid: el.getAttribute('data-testid') || '',
+      x: r.x,
+      y: r.y,
+      w: r.width,
+      h: r.height,
+      offset_parent: !!el.offsetParent,
+    };
+  }
+
+  function modelLabelFrom(aria, text) {
+    const blob = strip(aria || text);
+    if (!blob) return '';
+    const m = blob.match(
+      /^(Opus|Sonnet|Haiku|Fable)(?:\\s+(\\d+(?:\\.\\d+)?))?/i
+    );
+    if (!m) return blob.split(/\\n/)[0].trim();
+    const ver = m[2] || '';
+    return ver ? `${m[1]} ${ver}` : m[1];
+  }
+
+  function pickModel(root) {
+    let best = null;
+    for (const el of root.querySelectorAll('button, [role="button"]')) {
+      if (!el.offsetParent) continue;
+      const aria = (el.getAttribute('aria-label') || '').trim();
+      const rawText = (el.innerText || '').trim();
+      const text = strip(rawText);
+      const blob = strip(aria || text);
+      if (!familyRe.test(blob)) continue;
+      if (permRe.test(text) || permRe.test(strip(aria))) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 28 || r.width > 200 || r.height < 14 || r.height > 52) {
+        continue;
+      }
+      if (!best || r.width < best.w) {
+        const label = modelLabelFrom(aria, text);
+        let effort = null;
+        const effMatch = (aria + '\\n' + rawText).match(effortRe);
+        if (effMatch) effort = effMatch[1];
+        best = {el, w: r.width, label, effort, lookup: 'chat_input_region'};
+      }
+    }
+    return best;
+  }
+
+  function pickEffort(root, skipEl) {
+    for (const el of root.querySelectorAll('button, [role="button"], span')) {
+      if (skipEl && el === skipEl) continue;
+      if (!el.offsetParent) continue;
+      const t = strip((el.innerText || '').trim());
+      if (!/^(low|medium|high|extra|max|extended)$/i.test(t)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 12 || r.width > 120 || r.height < 12 || r.height > 48) {
+        continue;
+      }
+      return t;
+    }
+    return null;
+  }
+
+  const root = composeRoot();
+  const candidates = [];
+  if (root) {
+    for (const el of root.querySelectorAll('button, [role="button"]')) {
+      candidates.push(candidateRow(el));
+    }
+  }
+
+  const testid = document.querySelector('[data-testid="model-selector-dropdown"]');
+  let model_label = '';
+  let effort = null;
+  let lookup = '';
+  let chip_el = null;
+
+  if (testid && testid.offsetParent) {
+    const aria = (testid.getAttribute('aria-label') || '').trim();
+    const text = strip(testid.innerText || '');
+    model_label = modelLabelFrom(aria, text);
+    lookup = 'model_selector_testid';
+    chip_el = testid;
+    const em = (aria + '\\n' + (testid.innerText || '')).match(effortRe);
+    if (em) effort = em[1];
+  } else if (root) {
+    const picked = pickModel(root);
+    if (picked) {
+      model_label = picked.label;
+      effort = picked.effort;
+      lookup = picked.lookup;
+      chip_el = picked.el;
+    }
+  }
+
+  if (root && !effort) {
+    effort = pickEffort(root, chip_el);
+  }
+
+  return {
+    model_label,
+    effort,
+    lookup,
+    model_chip_candidates: candidates,
+    compose_root: !!root,
+  };
+}"""
+
+_EFFORT_CHIP_STANDALONE_JS = """() => {
+  const strip = (s) => (s || '').replace(/[\\uE000-\\uF8FF]/g, '').trim();
+  const chat = document.querySelector('[data-testid="chat-input"]');
+  const root = chat
+    ? chat.closest('form, main, section, [class*="compose"]') || chat.parentElement
+    : document.body;
+  if (!root) return '';
+  for (const el of root.querySelectorAll('button, [role=button], span')) {
+    const t = strip((el.innerText || '').trim());
+    if (!/^(low|medium|high|extra|max|extended)$/i.test(t) || !el.offsetParent) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 12 || r.width > 120 || r.height < 12 || r.height > 48) continue;
+    return t;
+  }
+  return '';
+}"""
+
+
+def _normalize_compose_effort(raw: str | None) -> str | None:
+    text = str(raw or "").strip()
+    return text or None
+
+
+async def _open_compose_model_menu(page) -> None:
+    """Open the model picker from testid dropdown or compose-region family chip."""
+    from claude_bundles.chat_model_select import _open_picker
+
+    btn = page.locator('[data-testid="model-selector-dropdown"]')
+    if await btn.count():
+        await _open_picker(page)
+        return
+    opened = await page.evaluate(
         """() => {
-          for (const el of document.querySelectorAll('button,[role=button],span')) {
-            const t = (el.innerText || '').trim();
-            if (!/^(low|medium|high|extra|max)$/i.test(t) || !el.offsetParent) continue;
+          const PUA = /[\\uE000-\\uF8FF]/g;
+          const strip = (s) => (s || '').replace(PUA, '').replace(/\\s+/g, ' ').trim();
+          const familyRe = /^(Opus|Sonnet|Haiku|Fable)\\b/i;
+          const permRe = /^(manual|auto)$/i;
+          const chat = document.querySelector('[data-testid="chat-input"]');
+          if (!chat) return false;
+          const root =
+            chat.closest('form, main, section, [class*="compose"]') ||
+            chat.parentElement;
+          if (!root) return false;
+          let best = null;
+          for (const el of root.querySelectorAll('button, [role="button"]')) {
+            if (!el.offsetParent) continue;
+            const aria = strip(el.getAttribute('aria-label') || '');
+            const text = strip((el.innerText || '').trim());
+            const blob = aria || text;
+            if (!familyRe.test(blob) || permRe.test(text)) continue;
             const r = el.getBoundingClientRect();
-            if (r.width < 12 || r.width > 120 || r.height < 12 || r.height > 48) continue;
-            return t;
+            if (r.width < 28 || r.width > 200 || r.height < 14 || r.height > 52) {
+              continue;
+            }
+            if (!best || r.width < best.w) best = {el, w: r.width};
           }
-          return '';
+          if (!best) return false;
+          best.el.click();
+          return true;
         }"""
     )
+    if opened:
+        await page.wait_for_timeout(600)
+
+
+async def _read_compose_effort_from_picker(page) -> str | None:
+    """Read effort for the checked model row when it is not on the compact chip."""
+    await _open_compose_model_menu(page)
+    raw = await page.evaluate(
+        """() => {
+          const checked = document.querySelector(
+            '[role=menuitemradio][aria-checked="true"]'
+          );
+          if (!checked) return '';
+          return (
+            checked.getAttribute('aria-label') || checked.innerText || ''
+          ).trim();
+        }"""
+    )
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(200)
+    if not raw:
+        return None
+    from claude_bundles.composer_skill_match import strip_pua
+
+    text = strip_pua(str(raw))
+    for token in ("extended", "extra", "max", "high", "medium", "low"):
+        if re.search(rf"\b{re.escape(token)}\b", text, re.I):
+            return token.title() if token != "extra" else "Extra"
+    return None
+
+
+async def _probe_compose_model_chip(page) -> dict[str, Any]:
+    raw = await page.evaluate(_COMPOSE_MODEL_CHIP_JS)
+    if not isinstance(raw, dict):
+        return {
+            "model_label": "",
+            "effort": None,
+            "lookup": "",
+            "model_chip_candidates": [],
+        }
     return {
-        "model_label": (label or "").strip(),
-        "effort": str(effort or "").strip() or None,
+        "model_label": str(raw.get("model_label") or "").strip(),
+        "effort": _normalize_compose_effort(raw.get("effort")),
+        "lookup": str(raw.get("lookup") or ""),
+        "model_chip_candidates": list(raw.get("model_chip_candidates") or []),
     }
+
+
+async def _ui_census_with_model_chip(page) -> dict[str, Any]:
+    rg = await collect_radiogroup_evidence(page)
+    base = ui_census_from_radiogroup_evidence(rg)
+    probe = await _probe_compose_model_chip(page)
+    base["model_chip_candidates"] = probe.get("model_chip_candidates") or []
+    if probe.get("lookup"):
+        base["model_chip_lookup"] = probe["lookup"]
+    return base
+
+
+async def read_compose_model_chip(
+    page, *, fill_effort_from_menu: bool = False
+) -> dict[str, Any]:
+    """Read model picker label and separate effort chip when present."""
+    probe = await _probe_compose_model_chip(page)
+    label = probe.get("model_label") or ""
+    effort = probe.get("effort")
+    if not label:
+        from claude_bundles.chat_model_select import current_model_label
+
+        label = (await current_model_label(page)).strip()
+    if not effort:
+        standalone = await page.evaluate(_EFFORT_CHIP_STANDALONE_JS)
+        effort = _normalize_compose_effort(standalone)
+    if fill_effort_from_menu and not effort:
+        effort = await _read_compose_effort_from_picker(page)
+    out: dict[str, Any] = {
+        "model_label": label,
+        "effort": effort,
+    }
+    if probe.get("lookup"):
+        out["model_chip_lookup"] = probe["lookup"]
+    return out
 
 
 async def ensure_compose_model_chip(
@@ -918,15 +1164,14 @@ async def ensure_compose_model_chip(
     from claude_bundles.chat_model_match import label_satisfies_request
     from claude_bundles.chat_model_select import select_model
 
-    before = await read_compose_model_chip(page)
+    before = await read_compose_model_chip(page, fill_effort_from_menu=bool(effort))
     label = before.get("model_label") or ""
     if not label:
-        rg = await collect_radiogroup_evidence(page)
         return {
             "ok": False,
             "step": "model_chip_missing",
             "before": before,
-            "ui_census": ui_census_from_radiogroup_evidence(rg),
+            "ui_census": await _ui_census_with_model_chip(page),
             "failure_class": "ui_drift",
         }
     if label_satisfies_request(label, model_request) and (
@@ -940,7 +1185,7 @@ async def ensure_compose_model_chip(
             "requested": model_request,
         }
     picked = await select_model(page, model_request)
-    after = await read_compose_model_chip(page)
+    after = await read_compose_model_chip(page, fill_effort_from_menu=bool(effort))
     ok = bool(picked.get("ok")) and label_satisfies_request(
         after.get("model_label") or "", model_request
     )
@@ -955,8 +1200,7 @@ async def ensure_compose_model_chip(
         "pick": picked,
     }
     if not ok:
-        rg = await collect_radiogroup_evidence(page)
-        result["ui_census"] = ui_census_from_radiogroup_evidence(rg)
+        result["ui_census"] = await _ui_census_with_model_chip(page)
         result["failure_class"] = "ui_drift"
     return result
 
