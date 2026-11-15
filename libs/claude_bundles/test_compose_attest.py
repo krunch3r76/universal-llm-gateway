@@ -450,6 +450,34 @@ def test_dispatch_approval_refuse_code_bare_urls_no_chip_refuses(code_url: str) 
 
 
 @pytest.mark.parametrize(
+    "code_url",
+    [
+        "https://claude.ai:443/code",
+        "https://claude.ai:443/code/",
+        "https://www.claude.ai:443/code/session-id",
+    ],
+)
+def test_dispatch_approval_refuse_code_default_port_host_matches(code_url: str) -> None:
+    """a:43854-h — :443 netloc must not bypass compose /code host matching."""
+    fp = _code_fp(text=None, url=code_url)
+    assert approval_mode_chip(fp) == "absent"
+    reason = dispatch_approval_refuse_reason(fp, surface="code")
+    assert reason is not None
+    assert reason.startswith("code dispatch refused:")
+    assert "Permission mode Skip or Auto not attested" in reason
+
+
+def test_dispatch_approval_refuse_code_unknown_chip_explicit_refuse() -> None:
+    """a:43854-h — unknown Permission chip on code surface fails closed explicitly."""
+    fp = _code_fp(text="Prompt me")
+    assert approval_mode_chip(fp) == "unknown"
+    reason = dispatch_approval_refuse_reason(fp, surface="code")
+    assert reason is not None
+    assert reason.startswith("code dispatch refused:")
+    assert "Permission mode Skip or Auto not attested" in reason
+
+
+@pytest.mark.parametrize(
     ("surface", "chip_text", "mode", "expect_refuse"),
     [
         ("cowork", "Skip", "cowork", False),

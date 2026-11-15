@@ -193,10 +193,15 @@ def approval_mode_chip(fp: dict[str, Any]) -> ApprovalMode:
 _COMPOSE_SURFACE_TITLE_FPS = frozenset({"new_session", "new_chat", "new_task"})
 
 
+def _claude_ai_host(url: str) -> str:
+    """Lowercase hostname without default-port suffix (``claude.ai:443`` → ``claude.ai``)."""
+    return (urlparse(url).hostname or "").lower()
+
+
 def _url_path_is_claude_code_compose(url: str) -> bool:
     """``claude.ai`` ``/code`` compose (not ``/codex`` or ``/code-foo``)."""
     parsed = urlparse(url)
-    host = (parsed.netloc or "").lower()
+    host = _claude_ai_host(url)
     if host and host not in ("claude.ai", "www.claude.ai"):
         return False
     path = (parsed.path or "").lower()
@@ -238,16 +243,16 @@ def dispatch_approval_refuse_reason(
     if surf != "code":
         return cowork_auto_refuse_reason(fp)
 
-    aria = _approval_aria(fp)
+    chip = approval_mode_chip(fp)
     mode = fp.get("mode")
-    if not aria:
+    aria = _approval_aria(fp)
+    if chip == "absent":
         if _is_compose_surface_fingerprint(fp):
             return (
                 "code dispatch refused: Permission mode Skip or Auto not attested "
                 f"(mode={mode!r} approval={fp.get('approval')!r})"
             )
         return None
-    chip = approval_mode_chip(fp)
     if chip in ("skip", "auto"):
         return None
     if chip == "manual":
@@ -256,7 +261,12 @@ def dispatch_approval_refuse_reason(
             f"code dispatch refused: surface=code approval {seen!r} "
             "(code accepts skip, auto)"
         )
-    return cowork_auto_refuse_reason(fp)
+    if chip == "unknown":
+        return (
+            "code dispatch refused: Permission mode Skip or Auto not attested "
+            f"(mode={mode!r} approval={fp.get('approval')!r})"
+        )
+    return None
 
 
 def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:
