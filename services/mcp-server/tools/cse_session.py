@@ -64,7 +64,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
         min_receipt: Literal[
             "dom_paste", "dom_committed", "human_visible"
         ] = "dom_paste",
-        dry_run: bool = False,
+        dry_run: bool | None = None,
         caller_agent: str | None = None,
     ) -> dict[str, Any]:
         """CSE provenance, harvest, hop-pair paste, warm followup, attended resolve.
@@ -86,6 +86,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
         operator-visible. New CDP consults use ``team_dispatch(model=cdp/…)``.
         IF6 submit is CLI. See agent_skill:claude-ai-cdp-navigation.
         """
+        resolved_dry_run = False if dry_run is None else dry_run
         if op == "provenance":
             params = {
                 k: v
@@ -175,6 +176,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                     "code": "identity_required",
                     "error": "bind_address requires registration_id and chat_url",
                 }
+            bind_dry_run = True if dry_run is None else bool(dry_run)
             body = {
                 k: v
                 for k, v in {
@@ -182,13 +184,11 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                     "chat_url": chat_url,
                     "parent_thread": parent_thread,
                     "reason": (reason or "repair_bind_address").strip(),
-                    "dry_run": dry_run,
                     "caller_agent": caller_agent,
                 }.items()
-                if v is not None and v is not False
+                if v is not None and v != ""
             }
-            if "dry_run" not in body:
-                body["dry_run"] = True
+            body["dry_run"] = bind_dry_run
             result = _relay(
                 "POST",
                 "/v1/cse-session/bind-address",
@@ -216,7 +216,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                     "registration_id": registration_id,
                     "chat_url": chat_url,
                     "reason": (reason or "sanctioned_dormant_retire").strip(),
-                    "dry_run": dry_run,
+                    "dry_run": resolved_dry_run,
                     "caller_agent": caller_agent,
                 }.items()
                 if v is not None and v is not False

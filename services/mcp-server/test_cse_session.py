@@ -190,6 +190,92 @@ def test_relay_module_has_no_bundle_imports() -> None:
         assert not any(m and m.startswith("cdp_ask") for m in import_from)
 
 
+def test_bind_address_dry_run_omitted_relays_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tools.relay as relay_mod
+
+    captured: dict = {}
+
+    def _capture_relay(method: str, path: str, **kwargs):  # noqa: ANN001
+        captured["body"] = dict(kwargs.get("json_body") or {})
+        return {"ok": True, "dry_run": True, "would_write": True}
+
+    monkeypatch.setattr(relay_mod, "_relay", _capture_relay)
+    from server import _build_server
+
+    mcp, _, _ = _build_server("code")
+    tools = asyncio.run(mcp.list_tools())
+    cse_tool = next(t for t in tools if t.name == "cse_session")
+    cse_tool.fn(
+        op="bind_address",
+        registration_id="reg-1",
+        chat_url="https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86",
+    )
+    assert captured["body"]["dry_run"] is True
+
+
+def test_bind_address_dry_run_true_relays_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    import tools.relay as relay_mod
+
+    captured: dict = {}
+
+    def _capture_relay(method: str, path: str, **kwargs):  # noqa: ANN001
+        captured["body"] = dict(kwargs.get("json_body") or {})
+        return {"ok": True, "dry_run": True}
+
+    monkeypatch.setattr(relay_mod, "_relay", _capture_relay)
+    from server import _build_server
+
+    mcp, _, _ = _build_server("code")
+    tools = asyncio.run(mcp.list_tools())
+    cse_tool = next(t for t in tools if t.name == "cse_session")
+    cse_tool.fn(
+        op="bind_address",
+        registration_id="reg-1",
+        chat_url="https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86",
+        dry_run=True,
+    )
+    assert captured["body"]["dry_run"] is True
+
+
+def test_retire_binding_dry_run_default_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tools.relay as relay_mod
+
+    captured: dict = {}
+
+    def _capture_relay(method: str, path: str, **kwargs):  # noqa: ANN001
+        captured["body"] = dict(kwargs.get("json_body") or {})
+        return {"ok": True, "outcome": "preview"}
+
+    monkeypatch.setattr(relay_mod, "_relay", _capture_relay)
+    from server import _build_server
+
+    mcp, _, _ = _build_server("code")
+    tools = asyncio.run(mcp.list_tools())
+    cse_tool = next(t for t in tools if t.name == "cse_session")
+    cse_tool.fn(
+        op="retire_binding",
+        registration_id="reg-1",
+        chat_url="https://claude.ai/cowork/cse_retire",
+    )
+    assert "dry_run" not in captured["body"]
+
+
+def test_bind_address_identity_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server import _build_server
+
+    mcp, _, _ = _build_server("code")
+    tools = asyncio.run(mcp.list_tools())
+    cse_tool = next(t for t in tools if t.name == "cse_session")
+    missing_reg = cse_tool.fn(op="bind_address", chat_url="https://claude.ai/cowork/cse_x")
+    assert missing_reg.get("code") == "identity_required"
+    missing_url = cse_tool.fn(op="bind_address", registration_id="reg-1")
+    assert missing_url.get("code") == "identity_required"
+
+
 def test_bind_address_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
     import tools.relay as relay_mod
 
@@ -212,6 +298,30 @@ def test_bind_address_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
         dry_run=True,
     )
     assert result["would_write"] is True
+
+
+def test_bind_address_dry_run_false_relays_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    import tools.relay as relay_mod
+
+    captured: dict = {}
+
+    def _capture_relay(method: str, path: str, **kwargs):  # noqa: ANN001
+        captured["body"] = dict(kwargs.get("json_body") or {})
+        return {"ok": True, "dry_run": captured["body"].get("dry_run")}
+
+    monkeypatch.setattr(relay_mod, "_relay", _capture_relay)
+    from server import _build_server
+
+    mcp, _, _ = _build_server("code")
+    tools = asyncio.run(mcp.list_tools())
+    cse_tool = next(t for t in tools if t.name == "cse_session")
+    cse_tool.fn(
+        op="bind_address",
+        registration_id="reg-1",
+        chat_url="https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86",
+        dry_run=False,
+    )
+    assert captured["body"]["dry_run"] is False
 
 
 def test_bind_address_refusals(monkeypatch: pytest.MonkeyPatch) -> None:

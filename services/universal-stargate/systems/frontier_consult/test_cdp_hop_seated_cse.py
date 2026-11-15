@@ -17,6 +17,7 @@ from systems.frontier_consult import cdp_hop_cse_bind
 from systems.frontier_consult.cdp_hop_cse_bind import associate_hop_seated_cse
 
 _SUCCESSOR = "https://claude.ai/cowork/cse_01Cir4NQUXr8sPrwmGJhXyak"
+_UNIFIED_CHAT = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
 _REG = "5381d87f06824ced9e9052a94f9934c2"
 
 
@@ -68,6 +69,79 @@ def test_non_hop_child_lane_without_houseless_shape_does_not_associate(
             mailbox_thread=child_id,
         )
     associate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unified_chat_on_url_bound_stamps(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A generate poll snapshot with unified chat seats once: associate + stamp."""
+    from agent_bus_store.db import create_thread, get_turns
+    from agent_bus_store.db.cse_associations import get_current_cse
+
+    from systems.frontier_consult import cdp_generate_worker as worker_mod
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    detail = create_thread(thread_id=None, slug="unified-on-url-bound")
+    assert detail is not None
+    thread_id = str(detail["id"])
+    exec_id = "f1f2f3f4-1111-4222-8333-444455556666"
+    url_bound_calls = 0
+
+    def _fake_generate(**kwargs: Any) -> CdpGenerateResult:
+        nonlocal url_bound_calls
+        kwargs["on_url_bound"](_UNIFIED_CHAT, _REG, 1)
+        url_bound_calls += 1
+        return CdpGenerateResult(
+            ok=True,
+            body="ok",
+            execution_id=str(kwargs["execution_id"]),
+            satellite_execution_id=None,
+            prompt_uri=str(kwargs["prompt_uri"]),
+            picker_model="opus-5",
+        )
+
+    monkeypatch.setattr(worker_mod, "run_cdp_generate", _fake_generate)
+    monkeypatch.setattr(worker_mod, "publish_cdp_kwargs", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.maybe_expand_cdp_prompt",
+        lambda **kwargs: kwargs["prompt_uri"],
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.finalize_cdp_generate",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.threads_atomic.update_dispatch_link_chat_url",
+        lambda **kwargs: None,
+    )
+    cdp_hop_cse_bind._STAMP_POSTED.clear()
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        await worker_mod.run_cdp_worker(
+            execution_id=exec_id,
+            model_id="cdp/opus-5.5",
+            thread_id=thread_id,
+            caller_agent="seat-mailbox",
+            prompt_uri="cortex://notes/system/ephemeral/prompt.md",
+            request_id="req-unified-url-bound",
+            purpose="houseless",
+            mailbox_thread=thread_id,
+        )
+        import asyncio
+
+        await asyncio.sleep(0.05)
+    assert url_bound_calls == 1
+    cse = get_current_cse(thread_id=thread_id)
+    assert cse["cse_chat_url"] == _UNIFIED_CHAT
+    stamp_turns = [
+        t
+        for t in get_turns(thread=thread_id, last=5)
+        if str(t.get("body") or "").startswith("TYPE: SEAT_REGISTRATION")
+    ]
+    assert len(stamp_turns) == 1
+    assert _UNIFIED_CHAT in stamp_turns[0]["body"]
 
 
 def test_houseless_first_seat_associates_and_stamps(
@@ -248,9 +322,11 @@ def test_seated_houseless_does_not_rebind_on_non_houseless_consult(
     assert cse["cse_chat_url"] == _SUCCESSOR
     assert cse["bound_by"] == HOUSELESS_FIRST_SEATED_BOUND_BY
     turns = get_turns(thread=thread_id, last=10)
-    assert sum(
-        1 for t in turns if str(t.get("body") or "").startswith("TYPE: SEAT_REGISTRATION")
-    ) == 1
+    stamp_prefix = "TYPE: SEAT_REGISTRATION"
+    stamp_count = sum(
+        1 for t in turns if str(t.get("body") or "").startswith(stamp_prefix)
+    )
+    assert stamp_count == 1
 
 
 _U2_HOP_AFTER_HOUSELESS = (
