@@ -425,6 +425,7 @@ def _assert_hermetic_path(path: Path) -> None:
 def _prepare_hermetic_sync_workspace(tmp_path: Path) -> Path:
     """Minimal fake hub tree for --dry-run; all files live under tmp_path."""
     workspace = tmp_path / "sync-workspace"
+    _assert_hermetic_path(workspace)
     script_dest = workspace / "scripts" / "sync-and-restart-mcp.sh"
     script_dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(_SCRIPT, script_dest)
@@ -432,7 +433,6 @@ def _prepare_hermetic_sync_workspace(tmp_path: Path) -> Path:
     hub_file = workspace / mount_rel
     hub_file.parent.mkdir(parents=True, exist_ok=True)
     hub_file.write_text("hub-forwarder\n", encoding="utf-8")
-    _assert_hermetic_path(hub_file)
     for root in ("libs", "services", "config", "pipelines"):
         marker_dir = workspace / root
         marker_dir.mkdir(parents=True, exist_ok=True)
@@ -440,7 +440,6 @@ def _prepare_hermetic_sync_workspace(tmp_path: Path) -> Path:
             (marker_dir / "_hermetic_marker.py").write_text("x = 1\n", encoding="utf-8")
         else:
             (marker_dir / "marker").write_text("m\n", encoding="utf-8")
-    _assert_hermetic_path(workspace)
     return workspace
 
 
@@ -1656,8 +1655,6 @@ def test_dry_run_reports_mount_inside_synced_tree(tmp_path: Path) -> None:
     """
     mount_rel = "libs/cursor_bridge/cdp_gateway_forwarder.py"
     workspace = _prepare_hermetic_sync_workspace(tmp_path)
-    hub_file = workspace / mount_rel
-    _assert_hermetic_path(hub_file)
     secret = tmp_path / "mount_secret"
     secret.write_text("hub-forwarder\n", encoding="utf-8")
     stub = _stub_docker_dir(
@@ -1674,6 +1671,8 @@ def test_dry_run_reports_mount_inside_synced_tree(tmp_path: Path) -> None:
     assert "/app/libs/cursor_bridge/cdp_gateway_forwarder.py" in combined, combined
     assert "MOUNT_HASH libs/cursor_bridge/cdp_gateway_forwarder.py: MATCH" in combined
     assert "Copy set paths" in combined
-    assert mount_rel not in combined.split("Copy set paths", 1)[-1], combined
+    copy_set_tail = combined.split("Copy set paths", 1)[-1]
+    assert "libs/_hermetic_marker.py" in copy_set_tail, combined
+    assert mount_rel not in copy_set_tail, combined
     assert "STAMP_WRITE" not in log, log
     assert "stop " not in log, log
