@@ -126,3 +126,27 @@ def _display_chat_paste_routes_hub_httpx_recorder(
         "cdp_ask.grok_operator_actuation.httpx.AsyncClient",
         _RecordingAsyncClient,
     )
+
+
+_PROJECT_SELECT_TESTS = "test_project_select.py"
+
+
+def _targets_project_select_tests(request: pytest.FixtureRequest) -> bool:
+    node_path = getattr(request.node, "fspath", None)
+    if node_path is None:
+        return False
+    return node_path.basename == _PROJECT_SELECT_TESTS
+
+
+@pytest.fixture(autouse=True)
+def _offline_bypass_project_select(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hermetic runner tests skip live CDP project listing unless under project_select."""
+    if _targets_project_select_tests(request):
+        return
+
+    async def _noop(req: object, **_kwargs: object) -> object:
+        return req
+
+    monkeypatch.setattr("cdp_ask.runner.apply_project_select", _noop)

@@ -41,6 +41,7 @@ from cortex_store.files_path_normalize import normalize_cortex_files_path
 
 from cdp_ask.models import SubmitProjectAskRequest, classify_stall_stage
 from cdp_ask.overlay_effort_retry import run_with_overlay_retry
+from cdp_ask.project_select import apply_project_select
 from cdp_ask.page_liveness import (
     LadderAdvanceState,
     LadderCallbacks,
@@ -811,6 +812,7 @@ async def run_execution(
     holder = req.holder.strip() or "cdp-ask-satellite"
     prompts = await asyncio.to_thread(resolve_prompt, req)
     reg = await asyncio.to_thread(bind_execution_lane, req, holder=holder)
+    req = await apply_project_select(req, cdp_url=reg.cdp_url)
     if on_registered is not None:
         on_registered(reg.registration_id)
     on_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None = None

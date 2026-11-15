@@ -93,6 +93,14 @@ class SubmitProjectAskRequest(BaseModel):
     converse: bool = False
     no_project_uuid: bool = False
     project_uuid: str = ""
+    claude_project_name: str = Field(
+        default="test",
+        description=(
+            "Display name of the claude.ai Project to bind before compose submit "
+            "when ``project_uuid`` is omitted. Fail closed when the name is missing "
+            "from the account org list."
+        ),
+    )
     ensure_cowork_auto: bool = True
     claude_surface: Literal["cowork", "code"] = Field(
         default="cowork",
