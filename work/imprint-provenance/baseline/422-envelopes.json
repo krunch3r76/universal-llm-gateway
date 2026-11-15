@@ -1,0 +1,63 @@
+{
+  "propose": [
+    200,
+    {
+      "normalized_patch": {
+        "@context": "cortex.life/v1",
+        "@graph": [
+          {
+            "@id": "todo:new-item",
+            "@type": "todo",
+            "name": "New item"
+          }
+        ]
+      },
+      "op_plan": [
+        {
+          "op": "entity_create",
+          "args": {
+            "id": "todo:new-item",
+            "type": "todo",
+            "name": "New item"
+          }
+        }
+      ],
+      "rejects": [],
+      "candidates": [],
+      "proposal_id": "23f831d9-3881-452c-965d-24308061e275",
+      "context": "cortex.life/v1",
+      "already_known": false,
+      "matched_assertion_id": null,
+      "known_state_reason": null
+    }
+  ],
+  "commit": [
+    422,
+    {
+      "code": "apply_failed",
+      "message": "{'error': 'density_triage_required', 'field': 'attributes.density_triage', 'message': 'todo:new-item: density_triage is unset \u2014 accepted todo values: mechanical (bypass implement-ready gates); judgment_required (implement_ready assertion required; axis-2 only when check_requested=true (else skip / recon_waived / skeptic_ratified)); recon_pending (blocked until re-triage after two-axis recon). Densify via a reasoning tier before implement dispatch when unset.', 'accepted': ['judgment_required', 'mechanical', 'recon_pending']}",
+      "source": "cortex-api",
+      "retryable": false,
+      "data": {
+        "op_index": 0,
+        "op": "entity_create",
+        "detail": "{'error': 'density_triage_required', 'field': 'attributes.density_triage', 'message': 'todo:new-item: density_triage is unset \u2014 accepted todo values: mechanical (bypass implement-ready gates); judgment_required (implement_ready assertion required; axis-2 only when check_requested=true (else skip / recon_waived / skeptic_ratified)); recon_pending (blocked until re-triage after two-axis recon). Densify via a reasoning tier before implement dispatch when unset.', 'accepted': ['judgment_required', 'mechanical', 'recon_pending']}"
+      }
+    }
+  ],
+  "remember": [
+    422,
+    {
+      "code": "apply_failed",
+      "message": "{'error': 'density_triage_required', 'field': 'attributes.density_triage', 'message': 'todo:new-item: density_triage is unset \u2014 accepted todo values: mechanical (bypass implement-ready gates); judgment_required (implement_ready assertion required; axis-2 only when check_requested=true (else skip / recon_waived / skeptic_ratified)); recon_pending (blocked until re-triage after two-axis recon). Densify via a reasoning tier before implement dispatch when unset.', 'accepted': ['judgment_required', 'mechanical', 'recon_pending']}",
+      "source": "cortex-api",
+      "retryable": false,
+      "data": {
+        "op_index": 0,
+        "op": "entity_create",
+        "detail": "{'error': 'density_triage_required', 'field': 'attributes.density_triage', 'message': 'todo:new-item: density_triage is unset \u2014 accepted todo values: mechanical (bypass implement-ready gates); judgment_required (implement_ready assertion required; axis-2 only when check_requested=true (else skip / recon_waived / skeptic_ratified)); recon_pending (blocked until re-triage after two-axis recon). Densify via a reasoning tier before implement dispatch when unset.', 'accepted': ['judgment_required', 'mechanical', 'recon_pending']}",
+        "proposal_id": "23f831d9-3881-452c-965d-24308061e275"
+      }
+    }
+  ]
+}
