@@ -9,9 +9,8 @@ from claude_bundles.project_chrome import (
 )
 from claude_bundles.skills_ui_panel import connect_cdp
 
+from cdp_ask.claude_project_defaults import DEFAULT_CLAUDE_PROJECT_NAME
 from cdp_ask.models import SubmitProjectAskRequest
-
-DEFAULT_CLAUDE_PROJECT_NAME = "test"
 
 __all__ = [
     "DEFAULT_CLAUDE_PROJECT_NAME",
@@ -43,14 +42,32 @@ async def apply_project_select(
     """Select the named Project on the CDP lane and pin ``project_uuid`` on *req*."""
     if not project_select_needed(req):
         return req
-    name = (req.claude_project_name or DEFAULT_CLAUDE_PROJECT_NAME).strip()
-    pw, _browser, _context, page = await connect_cdp(cdp_url)
+    raw = req.claude_project_name
+    if raw is None:
+        name = DEFAULT_CLAUDE_PROJECT_NAME
+    else:
+        name = raw.strip()
+        if not name:
+            raise ClaudeProjectSelectError("claude project name is required")
+    pw = None
     try:
-        project_uuid = await resolve_project_uuid_by_name(page, name, org_id=org_id)
-    except ClaudeProjectNotFoundError as exc:
-        raise ClaudeProjectSelectError(str(exc)) from exc
+        pw, _browser, _context, page = await connect_cdp(cdp_url)
+    except Exception as exc:
+        raise ClaudeProjectSelectError(
+            f"cdp connect for project select failed: {exc}"
+        ) from exc
+    try:
+        try:
+            project_uuid = await resolve_project_uuid_by_name(
+                page, name, org_id=org_id
+            )
+        except ClaudeProjectNotFoundError as exc:
+            raise ClaudeProjectSelectError(str(exc)) from exc
+        except RuntimeError as exc:
+            raise ClaudeProjectSelectError(str(exc)) from exc
     finally:
-        await pw.stop()
+        if pw is not None:
+            await pw.stop()
     return req.model_copy(
         update={
             "project_uuid": project_uuid,

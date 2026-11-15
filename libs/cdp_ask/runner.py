@@ -812,7 +812,6 @@ async def run_execution(
     holder = req.holder.strip() or "cdp-ask-satellite"
     prompts = await asyncio.to_thread(resolve_prompt, req)
     reg = await asyncio.to_thread(bind_execution_lane, req, holder=holder)
-    req = await apply_project_select(req, cdp_url=reg.cdp_url)
     if on_registered is not None:
         on_registered(reg.registration_id)
     on_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None = None
@@ -853,6 +852,10 @@ async def run_execution(
             )
             code_surface_extra = {"project_uuid_ignored_for_code_surface": True}
     try:
+        req = await apply_project_select(req, cdp_url=reg.cdp_url)
+        if surface != "code":
+            run_no_project = req.no_project_uuid
+            run_project_uuid = req.project_uuid
         if effective_converse:
             delete_after = (
                 bool(req.delete_after) if req.delete_after is not None else False

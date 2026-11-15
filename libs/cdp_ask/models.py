@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from cdp_ask.claude_project_defaults import DEFAULT_CLAUDE_PROJECT_NAME
+
 ExecutionStatus = Literal["pending", "running", "completed", "failed", "aborted"]
 
 CompletionPhase = Literal[
@@ -94,19 +96,20 @@ class SubmitProjectAskRequest(BaseModel):
     no_project_uuid: bool = False
     project_uuid: str = ""
     claude_project_name: str = Field(
-        default="test",
+        default=DEFAULT_CLAUDE_PROJECT_NAME,
         description=(
             "Display name of the claude.ai Project to bind before compose submit "
-            "when ``project_uuid`` is omitted. Fail closed when the name is missing "
-            "from the account org list."
+            "when ``project_uuid`` is omitted. Fail closed when the name is blank "
+            "or missing from the account org list. "
+            "``no_project_uuid`` on cowork is cleared after a successful name resolve."
         ),
     )
     ensure_cowork_auto: bool = True
     claude_surface: Literal["cowork", "code"] = Field(
         default="cowork",
         description=(
-            "Compose surface. ``cowork`` keeps bare /new + ensure_cowork_auto "
-            "for no_project_uuid consult. ``code`` opens claude.ai/code "
+            "Compose surface. ``cowork`` resolves ``claude_project_name`` (default "
+            "test) before compose unless ``project_uuid`` is set. ``code`` opens claude.ai/code "
             "(no Cowork toggle); project_uuid is ignored because claude.ai/code "
             "has no project."
         ),
