@@ -124,62 +124,6 @@ async def get_project(page: Page, *, org_id: str, uuid: str) -> dict[str, Any]:
     return parsed
 
 
-def _projects_from_list_payload(parsed: Any) -> list[dict[str, Any]]:
-    """Normalize org project list responses to ``{uuid, name, ...}`` rows."""
-    if isinstance(parsed, list):
-        return [p for p in parsed if isinstance(p, dict)]
-    if isinstance(parsed, dict):
-        for key in ("data", "projects", "items", "results"):
-            block = parsed.get(key)
-            if isinstance(block, list):
-                return [p for p in block if isinstance(p, dict)]
-    return []
-
-
-async def list_organization_projects(
-    page: Page, *, org_id: str = DEFAULT_ORG_ID
-) -> list[dict[str, Any]]:
-    """List Projects for one org via the authenticated private API."""
-    path = f"/api/organizations/{org_id}/projects"
-    result = await _api_fetch(page, "GET", path)
-    if result.get("status") != 200:
-        raise RuntimeError(f"list projects failed: {json.dumps(result)[:800]}")
-    return _projects_from_list_payload(result.get("parsed"))
-
-
-class ClaudeProjectNotFoundError(RuntimeError):
-    """Named Project missing from the org list — fail closed before compose submit."""
-
-
-async def resolve_project_uuid_by_name(
-    page: Page,
-    name: str,
-    *,
-    org_id: str = DEFAULT_ORG_ID,
-) -> str:
-    """Resolve a Project display name to uuid; refuse ambiguous or missing names."""
-    wanted = (name or "").strip()
-    if not wanted:
-        raise ClaudeProjectNotFoundError("claude project name is required")
-    await ensure_claude_origin(page)
-    projects = await list_organization_projects(page, org_id=org_id)
-    matches = [
-        p
-        for p in projects
-        if str(p.get("name") or "").strip() == wanted and str(p.get("uuid") or "").strip()
-    ]
-    if not matches:
-        raise ClaudeProjectNotFoundError(
-            f"claude project not found: {wanted!r} (org has {len(projects)} project(s))"
-        )
-    if len(matches) > 1:
-        uuids = [str(p.get("uuid")) for p in matches]
-        raise ClaudeProjectNotFoundError(
-            f"claude project name is ambiguous: {wanted!r} matches {uuids}"
-        )
-    return str(matches[0]["uuid"])
-
-
 async def archive_project(page: Page, *, org_id: str, uuid: str) -> None:
     path = f"/api/organizations/{org_id}/projects/{uuid}"
     result = await _api_fetch(page, "PUT", path, {"is_archived": True})

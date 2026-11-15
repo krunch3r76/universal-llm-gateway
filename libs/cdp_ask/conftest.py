@@ -126,24 +126,3 @@ def _display_chat_paste_routes_hub_httpx_recorder(
         "cdp_ask.grok_operator_actuation.httpx.AsyncClient",
         _RecordingAsyncClient,
     )
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line(
-        "markers",
-        "project_select: opt out of runner apply_project_select bypass (hermetic select tests)",
-    )
-
-
-@pytest.fixture(autouse=True)
-def _offline_bypass_project_select(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Hermetic runner tests noop apply_project_select unless marked project_select."""
-    if request.node.get_closest_marker("project_select") is not None:
-        return
-
-    async def _noop(req: object, **_kwargs: object) -> object:
-        return req
-
-    monkeypatch.setattr("cdp_ask.runner.apply_project_select", _noop)
