@@ -1628,7 +1628,9 @@ def maybe_write_hop_admit_probe_failed_sidecar(
     status_code: Any,
 ) -> None:
     """Write a hop-admit sidecar for occupancy probe failures; leave memo unchanged."""
-    from services.git_integration_worker.cursor_sdk_deliverables import write_repo_sidecar
+    from services.git_integration_worker.cursor_sdk_deliverables import (
+        write_repo_sidecar,
+    )
 
     if not _hop_admit_is_occupancy_probe_failure(last_error):
         return

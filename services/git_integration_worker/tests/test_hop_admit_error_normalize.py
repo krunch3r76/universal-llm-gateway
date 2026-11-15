@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from closeout_memo.models import NEXT_RE
+
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_write_hop_admit_probe_failed_sidecar,
 )
