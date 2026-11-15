@@ -10,13 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
 from universal_logging import get_logger
 
 from ..events.cse_bound import emit_cse_bound
 from .connection import connect, write_connect
-
-_CSE_PATH_MARKER = "/cowork/cse_"
 
 # Mint path on cdp.generate.seated. Not a relay agent name. A later
 # non-mint associate must not replace the latest mint URL with a different
@@ -33,11 +31,11 @@ def _normalize_registration_id(raw: str | None) -> str | None:
 
 
 def normalize_cse_bind_url(raw: str | None) -> str | None:
-    """Return a bindable Cowork URL, or None when the value is not a session address."""
-    url = normalize_cse_url(raw or "")
-    if not url or _CSE_PATH_MARKER not in url:
-        return None
-    return url
+    """Return a bindable Cowork or unified chat URL, or None when not a seat address."""
+    bound = canonical_claude_seat_url(raw)
+    if bound:
+        return bound
+    return canonical_claude_seat_url(normalize_cse_url(raw or ""))
 
 
 def _prior_row(conn, *, thread_id: str) -> Any | None:

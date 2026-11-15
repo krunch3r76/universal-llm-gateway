@@ -16,12 +16,15 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from claude_bundles import cdp_registry
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import (
+    canonical_claude_seat_url,
+    is_bindable_claude_seat_url,
+    normalize_cse_url,
+)
 from claude_bundles.skills_ui_panel import connect_cdp
 
 logger = logging.getLogger(__name__)
 
-_CSE_PATH_MARKER = "/cowork/cse_"
 # Fixed cadence for a STATUS_TAB row that still owns the URL. No new deadline:
 # the row's execution TTL is what ends the wait.
 _REOPEN_INFLIGHT_POLL_S = 0.25
@@ -83,9 +86,11 @@ def _lane_order(
 async def _verify_page_url(page: Any, chat_url: str) -> bool:
     """True when the live page URL normalizes to the requested CSE target."""
     url = page.url or ""
-    if _CSE_PATH_MARKER not in url:
+    if not is_bindable_claude_seat_url(url):
         return False
-    return normalize_cse_url(url) == normalize_cse_url(chat_url)
+    return normalize_cse_url(canonical_claude_seat_url(url) or url) == normalize_cse_url(
+        chat_url
+    )
 
 
 async def find_page_on_lane(cdp_url: str, chat_url: str) -> tuple[Any, Any] | None:

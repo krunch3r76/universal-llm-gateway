@@ -9,7 +9,7 @@ from claude_bundles.cse_provenance import (
     append_episode,
     latest_episode,
 )
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
 
 from .cse_lineage_reader import LaneLineageUnreachable, read_lane_lineage
 
@@ -61,8 +61,8 @@ def enrich_request_provenance(
     """
     if not lane_thread or not chat_url:
         return {"ok": False, "reason": "insufficient_identity"}
-    normalized = normalize_cse_url(chat_url)
-    if not normalized or "/cowork/cse_" not in normalized:
+    normalized = canonical_claude_seat_url(chat_url) or normalize_cse_url(chat_url)
+    if not normalized or not canonical_claude_seat_url(normalized):
         return {"ok": False, "reason": "insufficient_identity"}
 
     prior = latest_episode(chat_url=chat_url, registration_id=registration_id)

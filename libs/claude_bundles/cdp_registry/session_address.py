@@ -17,7 +17,13 @@ from universal_protocol.errors import ProtocolError
 
 from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import (
+    BINDABLE_SEAT_KINDS,
+    canonical_claude_seat_url,
+    is_bindable_claude_seat_url,
+    normalize_cse_url,
+    parse_claude_seat_address,
+)
 
 from .attachment_journal import (
     append_attachment_journal,
@@ -37,12 +43,9 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-_CSE_URL_MARKER = "claude.ai/cowork/cse_"
-
-
 def attachment_for_chat_url(chat_url: str) -> Registration | None:
     """Return the sole host-listable row for *chat_url*, or None."""
-    norm = normalize_cse_url(chat_url or "")
+    norm = canonical_claude_seat_url(chat_url) or normalize_cse_url(chat_url or "")
     if not norm:
         return None
     active = _store.load_active()
@@ -71,8 +74,10 @@ def backfill_attachment_from_chat_url(
 ) -> dict[str, Any]:
     """Migration helper: journal ``backfill_url_bound`` without seat changes."""
     url = (chat_url or "").strip()
-    if not url or _CSE_URL_MARKER not in url:
+    parsed = parse_claude_seat_address(url)
+    if parsed is None or parsed.kind not in BINDABLE_SEAT_KINDS:
         return {"dry_run": dry_run, "skipped": "not_cse_url"}
+    url = parsed.canonical_url
     if dry_run:
         return {"dry_run": True, "would_bind": registration_id, "chat_url": url}
     if has_attachment_observed(registration_id, url):
@@ -161,8 +166,10 @@ def bind_session_address(
     for ``commit_reattach_driving_seat``.
     """
     url = (chat_url or "").strip()
-    if not url or "/cowork/cse_" not in url:
+    parsed = parse_claude_seat_address(url)
+    if parsed is None or parsed.kind not in BINDABLE_SEAT_KINDS:
         return False
+    url = parsed.canonical_url
     bound_row: dict[str, Any] | None = None
     released_rows: list[dict[str, Any]] = []
     with _store.ports_lock():
@@ -1089,14 +1096,19 @@ def backfill_orphaned_retry_chat_urls(
             "prior_chat_url": row.get("chat_url"),
         }
         prior = str(row.get("chat_url") or "").strip()
-        if prior and _CSE_URL_MARKER in prior:
+        if prior and is_bindable_claude_seat_url(prior):
             classes["already_bound"].append(entry)
             continue
         port = row.get("port")
         urls: list[str] = []
         if isinstance(port, int):
             with contextlib.suppress(Exception):
-                urls = [u for u in probe(port) if _CSE_URL_MARKER in str(u)]
+                scraped: list[str] = []
+                for u in probe(port):
+                    canon = canonical_claude_seat_url(str(u))
+                    if canon:
+                        scraped.append(canon)
+                urls = scraped
         if urls:
             entry["scraped_chat_url"] = urls[0]
             if dry_run:

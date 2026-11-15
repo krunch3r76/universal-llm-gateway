@@ -33,6 +33,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
             "resolve_attended",
             "detach",
             "retire_binding",
+            "bind_address",
         ],
         reason: str | None = None,
         chat_url: str | None = None,
@@ -164,6 +165,41 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                 "mcp.cse_session.detach",
                 registration_id=registration_id,
                 ok=result.get("registration_id") == registration_id,
+            )
+            return result
+
+        if op == "bind_address":
+            if not registration_id or not chat_url:
+                return {
+                    "ok": False,
+                    "code": "identity_required",
+                    "error": "bind_address requires registration_id and chat_url",
+                }
+            body = {
+                k: v
+                for k, v in {
+                    "registration_id": registration_id,
+                    "chat_url": chat_url,
+                    "parent_thread": parent_thread,
+                    "reason": (reason or "repair_bind_address").strip(),
+                    "dry_run": dry_run,
+                    "caller_agent": caller_agent,
+                }.items()
+                if v is not None and v is not False
+            }
+            if "dry_run" not in body:
+                body["dry_run"] = True
+            result = _relay(
+                "POST",
+                "/v1/cse-session/bind-address",
+                json_body=body,
+                failure_signal=_CSE_RELAY_FAILURE,
+                error_prefix="cse-session",
+            )
+            record(
+                "mcp.cse_session.bind_address",
+                registration_id=result.get("registration_id"),
+                dry_run=result.get("dry_run"),
             )
             return result
 

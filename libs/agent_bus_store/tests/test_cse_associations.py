@@ -13,6 +13,7 @@ from agent_bus_store.db.cse_associations import (
     HOUSELESS_FIRST_SEATED_BOUND_BY,
     associate_cse,
     get_current_cse,
+    normalize_cse_bind_url,
 )
 from agent_bus_store.server import create_app
 from fastapi.testclient import TestClient
@@ -337,3 +338,14 @@ def test_same_successor_url_new_registration_still_appends(
     current = get_current_cse(thread_id=thread_id)
     assert current["cse_chat_url"] == _URL_B
     assert current["cse_registration_id"] == "reg-new-host"
+
+
+_CHAT = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
+
+
+def test_bind_url_unified_chat() -> None:
+    assert normalize_cse_bind_url(_CHAT) == _CHAT
+    assert normalize_cse_bind_url(_URL_A) == _URL_A
+    assert normalize_cse_bind_url("https://claude.ai/new") is None
+    assert normalize_cse_bind_url("https://claude.ai/code") is None
+    assert normalize_cse_bind_url("junk") is None

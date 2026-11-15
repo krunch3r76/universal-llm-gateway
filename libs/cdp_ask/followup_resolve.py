@@ -18,7 +18,7 @@ from claude_bundles import cdp_registry
 from claude_bundles.cdp_registry.session_address import attachment_for_chat_url
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
 from playwright.async_api import async_playwright
 
 from cdp_ask.execution_store import ExecutionStore
@@ -48,7 +48,7 @@ from cdp_ask.operator_seat_resolve import resolve_operator_seat
 
 
 async def scan_lane_cse_urls(reg: cdp_registry.Registration) -> list[str]:
-    """List normalized ``/cowork/cse_`` page URLs currently open on one attached lane."""
+    """List normalized Cowork or unified-chat seat URLs open on one attached lane."""
     pw = await async_playwright().start()
     try:
         browser = await pw.chromium.connect_over_cdp(reg.cdp_url)
@@ -58,8 +58,9 @@ async def scan_lane_cse_urls(reg: cdp_registry.Registration) -> list[str]:
         urls: list[str] = []
         for page in ctx.pages:
             url = page.url or ""
-            if "/cowork/cse_" in url:
-                urls.append(normalize_cse_url(url))
+            canon = canonical_claude_seat_url(url)
+            if canon:
+                urls.append(normalize_cse_url(canon))
         return urls
     finally:
         await pw.stop()

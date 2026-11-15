@@ -37,7 +37,7 @@ DEATH_STALL_STAGES = frozenset(
     }
 )
 
-_CSE_URL_MARKER = "claude.ai/cowork/cse_"
+from claude_bundles.cse_url import canonical_claude_seat_url, is_bindable_claude_seat_url
 
 # Playwright / CDP wording when the Chrome host went away under a live turn
 # (a:36969: compositor Wayland reset → TargetClosedError in harvest). The
@@ -124,7 +124,7 @@ def is_unverifiable_stall(
         return False
     if satellite_execution_id is not _UNSET and satellite_execution_id is None:
         return False
-    return _CSE_URL_MARKER in str(url or "")
+    return is_bindable_claude_seat_url(str(url or ""))
 
 
 def converse_fail_error(last_error: str | None) -> str:
@@ -157,8 +157,10 @@ def transport_miss_fields(
     )
     extras: dict[str, Any] = {}
     raw = str(url or "").strip()
-    if raw and _CSE_URL_MARKER in raw:
-        extras["chat_url"] = raw
+    if raw:
+        canon = canonical_claude_seat_url(raw) or raw
+        if is_bindable_claude_seat_url(canon):
+            extras["chat_url"] = canon
     return {
         "stall_stage": "observer_unverified",
         "error": str(error or ""),
@@ -240,8 +242,10 @@ def failed_snapshot_fields(snapshot: dict[str, Any]) -> dict[str, Any]:
             stall = "observer_unverified"
     extras: dict[str, Any] = {}
     raw = str(url or "").strip()
-    if raw and _CSE_URL_MARKER in raw:
-        extras["chat_url"] = raw
+    if raw:
+        canon = canonical_claude_seat_url(raw) or raw
+        if is_bindable_claude_seat_url(canon):
+            extras["chat_url"] = canon
     return {
         "stall_stage": stall,
         "error": error,

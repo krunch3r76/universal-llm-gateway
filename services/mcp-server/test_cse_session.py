@@ -188,3 +188,49 @@ def test_relay_module_has_no_bundle_imports() -> None:
         assert "cdp_ask" not in imports
         assert not any(m and m.startswith("claude_bundles") for m in import_from)
         assert not any(m and m.startswith("cdp_ask") for m in import_from)
+
+
+def test_bind_address_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    import tools.relay as relay_mod
+
+    payload = {
+        "ok": True,
+        "dry_run": True,
+        "would_write": True,
+        "chat_url": "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86",
+    }
+    monkeypatch.setattr(relay_mod, "_relay", lambda *a, **k: payload)
+    from server import _build_server
+
+    mcp, _, _ = _build_server("code")
+    tools = asyncio.run(mcp.list_tools())
+    cse_tool = next(t for t in tools if t.name == "cse_session")
+    result = cse_tool.fn(
+        op="bind_address",
+        registration_id="reg-1",
+        chat_url="https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86",
+        dry_run=True,
+    )
+    assert result["would_write"] is True
+
+
+def test_bind_address_refusals(monkeypatch: pytest.MonkeyPatch) -> None:
+    import tools.relay as relay_mod
+
+    monkeypatch.setattr(
+        relay_mod,
+        "_relay",
+        lambda *a, **k: {"code": "not_session_address", "ok": False},
+    )
+    from server import _build_server
+
+    mcp, _, _ = _build_server("code")
+    tools = asyncio.run(mcp.list_tools())
+    cse_tool = next(t for t in tools if t.name == "cse_session")
+    result = cse_tool.fn(
+        op="bind_address",
+        registration_id="reg-1",
+        chat_url="https://claude.ai/junk",
+        dry_run=True,
+    )
+    assert result.get("code") == "not_session_address"

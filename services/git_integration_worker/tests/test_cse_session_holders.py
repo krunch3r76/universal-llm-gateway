@@ -476,3 +476,26 @@ def test_boot_reconcile_skips_houseless_registry_adopt(
             summary = boot_reconcile(conn)
     assert summary["adopted"] == 0
     assert adopt_calls == []
+
+
+_CHAT = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
+
+
+def test_upsert_unified_chat_one_row_per_uuid(ledger: CursorDispatchLedger) -> None:
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        first = upsert_holder(
+            conn,
+            chat_url=_CHAT,
+            registration_id="reg-1",
+            execution_id="exec-1",
+        )
+        second = upsert_holder(
+            conn,
+            chat_url=_CHAT,
+            registration_id="reg-2",
+            execution_id="exec-2",
+        )
+    hid = "chat_2762063d-2966-4859-a3ce-23831c6e0c86"
+    assert first["holder_id"] == hid
+    assert second["holder_id"] == hid

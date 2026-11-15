@@ -85,6 +85,18 @@ def test_evaluate_harvest_identity_registration_drift() -> None:
     assert identity["identity_check"] == "registration_drift"
 
 
+def test_drift_unified_chat_primary_id() -> None:
+    chat_a = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
+    chat_b = "https://claude.ai/chat/11111111-1111-4111-8111-111111111111"
+    identity = evaluate_harvest_identity(
+        requested_chat_url=chat_a,
+        requested_registration_id="req",
+        observed_chat_url=chat_b,
+        current_registration_id="req",
+    )
+    assert identity["identity_check"] == "foreign_transcript"
+
+
 def test_evaluate_harvest_identity_unverified_without_page() -> None:
     identity = evaluate_harvest_identity(
         requested_chat_url="https://claude.ai/cowork/cse_x",

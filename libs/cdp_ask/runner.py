@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_bundles import cdp_registry
+from claude_bundles.cse_url import parse_claude_seat_address
 from claude_bundles.cdp_registry.driving_seat import (
     ensure_driving_operator_seat,
     launch_or_defer,
@@ -57,11 +58,6 @@ from cdp_ask.unverifiable import (
 
 logger = logging.getLogger(__name__)
 
-_CSE_URL_MARKER = "claude.ai/cowork/cse_"
-_CODE_SESSION_URL = re.compile(
-    r"https://claude\.ai/code/session_[A-Za-z0-9]+(?:\?|#|$)",
-    re.I,
-)
 _CLAUDE_CODE_COMPOSE_URL = "https://claude.ai/code"
 
 
@@ -266,8 +262,10 @@ def _persist_session_address(
     raw = (url or "").strip()
     if not raw:
         return
-    if _CSE_URL_MARKER not in raw and not _CODE_SESSION_URL.match(raw):
+    parsed = parse_claude_seat_address(raw)
+    if parsed is None or parsed.kind not in ("unified_chat", "cowork_cse", "code_session"):
         return
+    bind_url = parsed.canonical_url
     from claude_bundles.cdp_registry.models import STATUS_TAB
 
     row = cdp_registry._load_active().get(registration_id)
@@ -276,13 +274,13 @@ def _persist_session_address(
 
         set_tab_chat_url(
             registration_id,
-            chat_url=raw,
+            chat_url=bind_url,
             execution_id=execution_id or None,
         )
         return
     cdp_registry.bind_session_address(
         registration_id,
-        chat_url=raw,
+        chat_url=bind_url,
         execution_id=execution_id or None,
     )
 
@@ -301,14 +299,18 @@ def _latch_streaming_attachment(
     )
 
     raw = (url or "").strip()
-    if not raw or _CSE_URL_MARKER not in raw:
+    if not raw:
         return
-    if has_attachment_observed(registration_id, raw):
+    parsed = parse_claude_seat_address(raw)
+    if parsed is None or parsed.kind not in ("unified_chat", "cowork_cse"):
+        return
+    latch_url = parsed.canonical_url
+    if has_attachment_observed(registration_id, latch_url):
         fold_attachment_journal()
         return
     append_attachment_journal(
         registration_id=registration_id,
-        chat_url=raw,
+        chat_url=latch_url,
         attach_proof="streaming",
         execution_id=execution_id or None,
     )

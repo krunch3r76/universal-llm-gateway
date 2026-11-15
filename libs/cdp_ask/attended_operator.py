@@ -16,7 +16,11 @@ from urllib.parse import urlparse
 from claude_bundles import cdp_orphans, cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import (
+    canonical_claude_seat_url,
+    is_bindable_claude_seat_url,
+    normalize_cse_url,
+)
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 
 from cdp_ask.attended_conflict import (
@@ -27,9 +31,6 @@ from cdp_ask.attended_dormant import candidate_dict as dormant_candidate_dict
 from cdp_ask.attended_dormant import dormant_candidates
 
 _SOURCE = "cse-session-registry"
-_CSE_MARKER = "/cowork/cse_"
-
-
 @dataclass(frozen=True)
 class AttendedCandidate:
     """One registry-registered mission-purpose lane with bound chat_url."""
@@ -230,12 +231,12 @@ def build_shadow_urls(
     by_url: dict[str, set[int]] = {}
     for live in ports:
         for url in live.page_urls:
-            if _CSE_MARKER not in url:
+            if not is_bindable_claude_seat_url(url):
                 continue
-            norm = normalize_cse_url(url)
+            norm = normalize_cse_url(canonical_claude_seat_url(url) or url)
             if norm in registered_chat_urls and live.port not in registered_ports:
                 by_url.setdefault(norm, set()).add(live.port)
-            elif norm not in registered_chat_urls and _CSE_MARKER in url:
+            elif norm not in registered_chat_urls and is_bindable_claude_seat_url(url):
                 if live.port not in registered_ports:
                     by_url.setdefault(norm, set()).add(live.port)
 

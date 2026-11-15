@@ -17,7 +17,7 @@ from deploy_identity.code_version import resolve_code_version
 from deploy_identity.tree_state import peek_tree_state, refresh_tree_state
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from universal_protocol.errors import ProtocolError
 
 from cdp_ask.attended_operator import (
@@ -82,6 +82,116 @@ from cdp_ask.standing_pins import (
 )
 
 logger = logging.getLogger(__name__)
+
+_BIND_ADDRESS_BY = "cse_session.bind_address"
+
+
+class BindAddressRequest(BaseModel):
+    """Repair bind: attach a archived seat URL to an existing registration row."""
+
+    registration_id: str = Field(min_length=1)
+    chat_url: str = Field(min_length=1)
+    parent_thread: str | None = None
+    reason: str = Field(min_length=1, default="repair_bind_address")
+    dry_run: bool = True
+    caller_agent: str | None = None
+
+
+def execute_bind_address(req: BindAddressRequest) -> dict[str, object]:
+    """Bind a unified or Cowork seat URL; optional ``parent_thread`` bus associate."""
+    from claude_bundles import cdp_registry_store as store
+    from claude_bundles.cdp_registry.execution_state import row_execution_in_flight
+    from claude_bundles.cdp_registry.session_address import bind_session_address
+    from claude_bundles.cse_url import BINDABLE_SEAT_KINDS, parse_claude_seat_address
+
+    parsed = parse_claude_seat_address(req.chat_url)
+    if parsed is None or parsed.kind not in BINDABLE_SEAT_KINDS:
+        raise ProtocolError(
+            code="not_session_address",
+            message="chat_url is not a Claude session seat address",
+            source="rpc",
+            retryable=False,
+        )
+
+    reg_id = req.registration_id.strip()
+    canonical = parsed.canonical_url
+    row = store.load_active().get(reg_id)
+    if not isinstance(row, dict):
+        return {"ok": False, "code": "missing_row", "registration_id": reg_id}
+
+    prior = str(row.get("chat_url") or "").strip()
+    exec_id = str(row.get("execution_id") or "").strip() or None
+
+    if prior and prior != canonical:
+        raise ProtocolError(
+            code="already_bound",
+            message="registration already bound to a different chat_url",
+            source="rpc",
+            retryable=False,
+            data={"registration_id": reg_id, "chat_url": prior},
+        )
+    if row_execution_in_flight(row) and not prior:
+        raise ProtocolError(
+            code="in_flight",
+            message="registration has an in-flight execution",
+            source="rpc",
+            retryable=False,
+            data={"registration_id": reg_id},
+        )
+
+    preview = {
+        "registration_id": reg_id,
+        "chat_url": canonical,
+        "parent_thread": (req.parent_thread or "").strip() or None,
+        "dry_run": req.dry_run,
+    }
+    if req.dry_run:
+        return {"ok": True, **preview, "would_write": True}
+
+    bound = (
+        True
+        if prior == canonical
+        else bind_session_address(reg_id, chat_url=canonical, execution_id=exec_id)
+    )
+    parent = (req.parent_thread or "").strip()
+    association: dict[str, object] | None = None
+    if parent:
+        from agent_bus_store.db.cse_associations import associate_cse
+
+        association = associate_cse(
+            thread_id=parent,
+            cse_chat_url=canonical,
+            cse_registration_id=reg_id,
+            bound_by=_BIND_ADDRESS_BY,
+            evidence=(req.reason or "repair_bind_address").strip(),
+        )
+        if exec_id:
+            with contextlib.suppress(Exception):
+                from agent_bus_store.db.turns import insert_turn
+                from hop_handoff.body import build_seat_registration_stamp
+
+                body = build_seat_registration_stamp(
+                    successor_birth_id=exec_id,
+                    registration_id=reg_id,
+                    execution_id=exec_id,
+                    parent_thread=parent,
+                    chat_url=canonical,
+                )
+                insert_turn(
+                    thread=parent,
+                    from_agent="cursor-auto",
+                    to_agent="cursor",
+                    subject=f"SEAT_REGISTRATION — {reg_id}",
+                    body=body,
+                )
+    return {
+        "ok": True,
+        "bound": bound,
+        "idempotent": prior == canonical,
+        **preview,
+        "association": association,
+    }
+
 
 _CHAT_SESSION_REFUSE_409 = frozenset(
     {"use_cse_session", "grant_required", "relay_lock_fresh"}
@@ -423,6 +533,17 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             )
         except ProtocolError as exc:
             return JSONResponse(status_code=422, content=exc.to_dict())
+        return JSONResponse(status_code=200, content=body)
+
+    @app.post("/v1/cse-session/bind-address")
+    async def cse_session_bind_address(req: BindAddressRequest) -> JSONResponse:
+        """Repair bind: attach archived unified or Cowork URL to a registration row."""
+        await asyncio.to_thread(verify_harvest_root)
+        try:
+            body = await asyncio.to_thread(execute_bind_address, req)
+        except ProtocolError as exc:
+            status = 409 if exc.code in {"already_bound", "in_flight"} else 422
+            return JSONResponse(status_code=status, content=exc.to_dict())
         return JSONResponse(status_code=200, content=body)
 
     @app.post("/v1/cse-session/detach")

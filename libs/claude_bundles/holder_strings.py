@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from claude_bundles.cse_identity_drift import cse_token_from_url
+from claude_bundles.cse_url import parse_claude_seat_address
 
 COWORK_CSE_PREFIX = "cowork_cse:"
 NEST_CSE_PREFIX = "cse:"
@@ -14,8 +14,15 @@ _SDK_EPOCH_RE = re.compile(r"^\d{10,}$")
 
 
 def holder_id_from_chat_url(chat_url: str) -> str | None:
-    """Return ``cse_<id>`` parsed from a normalized Cowork session URL."""
-    return cse_token_from_url(chat_url)
+    """Return holder primary id: ``chat_<uuid>`` or ``cse_…`` from a seat URL."""
+    parsed = parse_claude_seat_address(chat_url)
+    if parsed is None:
+        return None
+    if parsed.kind == "unified_chat":
+        return f"chat_{parsed.primary_id}"
+    if parsed.kind == "cowork_cse":
+        return parsed.primary_id
+    return None
 
 
 def format_cowork_cse_holder(holder_id: str) -> str:
@@ -23,6 +30,8 @@ def format_cowork_cse_holder(holder_id: str) -> str:
     hid = (holder_id or "").strip()
     if not hid:
         raise ValueError("holder_id required")
+    if not hid.startswith("cse_"):
+        raise ValueError("holder_id must start with cse_")
     return f"{COWORK_CSE_PREFIX}{hid}"
 
 
@@ -42,6 +51,8 @@ def format_nest_under_cse(holder_id: str) -> str:
     hid = (holder_id or "").strip()
     if not hid:
         raise ValueError("holder_id required")
+    if not hid.startswith("cse_"):
+        raise ValueError("holder_id must start with cse_")
     return f"{NEST_CSE_PREFIX}{hid}"
 
 
