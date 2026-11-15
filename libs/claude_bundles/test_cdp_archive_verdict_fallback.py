@@ -401,6 +401,106 @@ def test_terminal_payload_ask_purpose_does_not_promote(tmp_path: Path) -> None:
     assert out["ok"] is False
 
 
+def test_loose_veto_bold_request_changes_with_canonical_approve(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "loose-bold.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "```",
+                "VERDICT: APPROVE",
+                "```",
+                "**VERDICT: REQUEST_CHANGES**",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    assert apply_archive_verdict_fallback(result).ok is False
+
+
+def test_loose_veto_blockquote_and_indented_request_changes(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "loose-forms.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "VERDICT: APPROVE range=a..b head=b",
+                "> VERDICT: REQUEST_CHANGES",
+                "  Verdict: request_changes — footnote",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    assert apply_archive_verdict_fallback(result).ok is False
+
+
+def test_bare_verdict_colon_line_then_approve_does_not_promote(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "bare-colon.md"
+    archive.write_text(
+        "VERDICT:\nVERDICT: APPROVE range=a..b head=b\n",
+        encoding="utf-8",
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    assert apply_archive_verdict_fallback(result).ok is False
+
+
+def test_template_echo_plus_real_approve_does_not_promote(tmp_path: Path) -> None:
+    archive = tmp_path / "template-plus-real.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "VERDICT <APPROVE|REQUEST_CHANGES>",
+                "VERDICT: APPROVE range=a..b head=b",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    assert apply_archive_verdict_fallback(result).ok is False
+
+
 def test_terminal_payload_without_parseable_verdict_stays_failed(
     tmp_path: Path,
 ) -> None:

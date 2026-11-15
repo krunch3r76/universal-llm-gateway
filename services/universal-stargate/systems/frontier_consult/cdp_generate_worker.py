@@ -709,7 +709,12 @@ async def run_cdp_worker(
     # job_unknown); canonical team_dispatch code-review reaches here with
     # purpose=None. Salvage is fail-closed for those dispatches; archive verdicts
     # are read manually, not auto-promoted on this worker path.
-    result = apply_archive_verdict_fallback_gated(result, purpose=purpose)
+    try:
+        result = apply_archive_verdict_fallback_gated(result, purpose=purpose)
+    except Exception:
+        logger.exception(
+            "archive verdict fallback failed execution_id=%s", execution_id
+        )
     await finalize_cdp_generate(
         result=result,
         request_id=request_id,

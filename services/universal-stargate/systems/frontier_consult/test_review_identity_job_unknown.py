@@ -60,6 +60,14 @@ def test_role_reviewer_is_job_unknown() -> None:
     _assert_job_unknown({**_BASE, "role": "reviewer"}, "role")
 
 
+def test_purpose_review_mixed_case_is_job_unknown() -> None:
+    _assert_job_unknown({**_BASE, "purpose": "Review"}, "purpose")
+
+
+def test_role_reviewer_mixed_case_is_job_unknown() -> None:
+    _assert_job_unknown({**_BASE, "role": "Reviewer"}, "role")
+
+
 def _post(body: dict) -> tuple[int, dict, str]:
     client = _client()
     response = client.post("/api/v1/team/dispatch", json=body)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +14,13 @@ logger = logging.getLogger(__name__)
 
 _SKILL_RECEIPT = "skill_receipt_unverified"
 _CANONICAL_VERDICT_LINE_RE = re.compile(
-    r"(?m)^VERDICT:\s*(?P<raw>.+?)\s*$",
+    r"(?m)^VERDICT:[ \t]*(?P<raw>.+?)[ \t]*$",
     re.IGNORECASE,
 )
+_LOOSE_VERDICT_LINE_RE = re.compile(
+    r"(?im)^\W*verdict\W*[:=-]?\s*\**\s*(?P<token>\w+)",
+)
+_PROMPT_ECHO_VERDICT_RE = re.compile(r"(?im)^VERDICT\s*<")
 _ADVANCE_VERDICTS = frozenset({"APPROVE", "APPROVE_WITH_NITS"})
 
 
@@ -83,6 +88,19 @@ def _verdict_advances(token: str | None) -> bool:
     return token in _ADVANCE_VERDICTS if token else False
 
 
+def _normalize_verdict_token(raw: str) -> str:
+    return raw.upper().replace("-", "_")
+
+
+def _loose_veto_blocks_promotion(body: str) -> bool:
+    """Fail-closed when any loose ``verdict`` line names a non-advance token."""
+    for match in _LOOSE_VERDICT_LINE_RE.finditer(body):
+        token = _normalize_verdict_token(match.group("token"))
+        if not _verdict_advances(token):
+            return True
+    return False
+
+
 def _read_archive_text(archive_uri: str | None) -> str | None:
     if not archive_uri:
         return None
@@ -123,23 +141,7 @@ def apply_archive_verdict_fallback_gated(
     extras = dict(out.extras or {})
     if extras.get("harvest_provenance") is None:
         extras["harvest_provenance"] = "chat"
-    return CdpGenerateResult(
-        ok=out.ok,
-        body=out.body,
-        execution_id=out.execution_id,
-        satellite_execution_id=out.satellite_execution_id,
-        prompt_uri=out.prompt_uri,
-        picker_model=out.picker_model,
-        archive_uri=out.archive_uri,
-        content_proof_uri=out.content_proof_uri,
-        content_proof_sha256=out.content_proof_sha256,
-        stall_stage=out.stall_stage,
-        error=out.error,
-        substrate=out.substrate,
-        cost_source=out.cost_source,
-        poll_snapshots=out.poll_snapshots,
-        extras=extras,
-    )
+    return replace(out, extras=extras)
 
 
 def apply_archive_verdict_fallback(result: CdpGenerateResult) -> CdpGenerateResult:
@@ -150,6 +152,10 @@ def apply_archive_verdict_fallback(result: CdpGenerateResult) -> CdpGenerateResu
         return result
     text = _read_archive_text(result.archive_uri)
     if not text:
+        return result
+    if _PROMPT_ECHO_VERDICT_RE.search(text):
+        return result
+    if _loose_veto_blocks_promotion(text):
         return result
     verdict = _unified_advance_verdict(text)
     if not verdict:
@@ -164,21 +170,12 @@ def apply_archive_verdict_fallback(result: CdpGenerateResult) -> CdpGenerateResu
         if preserved_err not in warnings:
             warnings.append(preserved_err)
         extras["warnings"] = warnings
-    return CdpGenerateResult(
+    return replace(
+        result,
         ok=True,
         body=result.body or text,
-        execution_id=result.execution_id,
-        satellite_execution_id=result.satellite_execution_id,
-        prompt_uri=result.prompt_uri,
-        picker_model=result.picker_model,
-        archive_uri=result.archive_uri,
-        content_proof_uri=result.content_proof_uri,
-        content_proof_sha256=result.content_proof_sha256,
         stall_stage=None,
         error=None,
-        substrate=result.substrate,
-        cost_source=result.cost_source,
-        poll_snapshots=result.poll_snapshots,
         extras=extras,
     )
 

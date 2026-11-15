@@ -195,6 +195,66 @@ async def test_cdp_worker_freeform_opus_high_without_proof_does_not_call_fable(
     assert "review_fallback_model" not in final.extras
 
 
+@pytest.mark.asyncio
+async def test_cdp_worker_archive_verdict_gate_exception_still_finalizes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gate crash must not skip finalize or promote on a failed harvest."""
+    from unittest.mock import patch
+
+    from systems.frontier_consult import cdp_generate_worker as worker
+
+    finalize = AsyncMock()
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.finalize_cdp_generate",
+        finalize,
+    )
+    monkeypatch.setattr(worker, "publish_cdp_kwargs", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.attach_satellite_execution_id",
+        lambda **kw: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.maybe_expand_cdp_prompt",
+        lambda **kw: kw["prompt_uri"],
+    )
+
+    failed = _result(
+        stall_stage="observer_unverified",
+        error="skill_receipt_unverified: panel",
+        satellite_execution_id="sat-opus",
+    )
+
+    def _fake_generate(**kwargs: object) -> CdpGenerateResult:
+        return failed
+
+    async def _sync_to_thread(fn, /, *args, **kwargs):  # type: ignore[no-untyped-def]
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(worker.asyncio, "to_thread", _sync_to_thread)
+    monkeypatch.setattr(worker, "run_cdp_generate", _fake_generate)
+
+    with patch(
+        "systems.frontier_consult.cdp_generate_worker.apply_archive_verdict_fallback_gated",
+        side_effect=RuntimeError("gate boom"),
+    ):
+        await run_cdp_worker(
+            execution_id="exec-gate-crash",
+            model_id="cdp/opus-5",
+            thread_id="14685",
+            caller_agent="dispatch",
+            prompt_uri="cortex://notes/prompt.md",
+            request_id="req-gate-crash",
+            contract="freeform",
+        )
+
+    finalize.assert_awaited_once()
+    final = finalize.await_args.kwargs["result"]
+    assert final.ok is False
+    assert final.error == failed.error
+    assert "archive_verdict" not in (final.extras or {})
+
+
 def test_empty_fable_body_is_not_adopted() -> None:
     primary = _result(
         stall_stage="completed_without_proof",
