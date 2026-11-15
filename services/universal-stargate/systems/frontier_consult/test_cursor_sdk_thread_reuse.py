@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
 from .admission import FrontierEndpointError
-import httpx
-
 from .cursor_sdk_thread_reuse import (
     CONDUCTOR_COORD_SPLIT_CODE,
     CONDUCTOR_COORD_SPLIT_HINT,
