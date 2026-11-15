@@ -50,6 +50,30 @@ def parse_canonical_verdict_line(body: str) -> str | None:
     return _token_from_verdict_line_raw(match.group("raw"))
 
 
+def _all_verdict_line_tokens(body: str) -> list[str] | None:
+    """Every ``^VERDICT:`` token in document order; None if any line is unparseable."""
+    tokens: list[str] = []
+    for match in _CANONICAL_VERDICT_LINE_RE.finditer(body):
+        token = _token_from_verdict_line_raw(match.group("raw"))
+        if token is None:
+            return None
+        tokens.append(token)
+    return tokens
+
+
+def _unified_advance_verdict(body: str) -> str | None:
+    """Promote only when every ``^VERDICT:`` line names the same advance token."""
+    tokens = _all_verdict_line_tokens(body)
+    if not tokens:
+        return None
+    if len(set(tokens)) != 1:
+        return None
+    token = tokens[0]
+    if not _verdict_advances(token):
+        return None
+    return token
+
+
 def parse_archive_verdict(body: str) -> str | None:
     """Return canonical ``VERDICT:`` token from archive prose (promotion parser only)."""
     return parse_canonical_verdict_line(body)
@@ -127,11 +151,8 @@ def apply_archive_verdict_fallback(result: CdpGenerateResult) -> CdpGenerateResu
     text = _read_archive_text(result.archive_uri)
     if not text:
         return result
-    verdict = parse_canonical_verdict_line(text)
+    verdict = _unified_advance_verdict(text)
     if not verdict:
-        return result
-    advance = _verdict_advances(verdict)
-    if not advance:
         return result
     preserved_err = result.error
     extras = dict(result.extras or {})

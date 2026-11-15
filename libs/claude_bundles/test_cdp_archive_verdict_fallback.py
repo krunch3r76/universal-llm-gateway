@@ -304,6 +304,65 @@ def test_gated_unknown_purpose_fail_closed(tmp_path: Path) -> None:
     assert out.ok is False
 
 
+def test_disagreeing_verdict_lines_stay_failed(tmp_path: Path) -> None:
+    archive = tmp_path / "split-verdict.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "## Body",
+                "",
+                "Earlier draft quoted:",
+                "VERDICT: APPROVE range=aaa..bbb head=bbb",
+                "",
+                "Final:",
+                "VERDICT: REQUEST_CHANGES range=ccc..ddd head=ddd",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    out = apply_archive_verdict_fallback_gated(result, purpose="review")
+    assert out.ok is False
+    assert "archive_verdict" not in (out.extras or {})
+
+
+def test_repeated_identical_approve_still_promotes(tmp_path: Path) -> None:
+    archive = tmp_path / "repeat-approve.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "VERDICT: APPROVE range=a..b head=b",
+                "",
+                "Recap:",
+                "VERDICT: APPROVE range=a..b head=b",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    out = apply_archive_verdict_fallback_gated(result, purpose="review")
+    assert out.ok is True
+    assert out.extras.get("archive_verdict") == "APPROVE"
+
+
 def test_gated_request_changes_stays_failed(tmp_path: Path) -> None:
     archive = tmp_path / "stargate-rc.md"
     archive.write_text(

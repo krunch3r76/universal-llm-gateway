@@ -705,6 +705,10 @@ async def run_cdp_worker(
                     stall_stage=fallback.stall_stage,
                 )
 
+    # purpose=review is refused at admit (route_models / frontier generate → 422
+    # job_unknown); canonical team_dispatch code-review reaches here with
+    # purpose=None. Salvage is fail-closed for those dispatches; archive verdicts
+    # are read manually, not auto-promoted on this worker path.
     result = apply_archive_verdict_fallback_gated(result, purpose=purpose)
     await finalize_cdp_generate(
         result=result,
