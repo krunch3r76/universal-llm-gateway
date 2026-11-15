@@ -42,6 +42,20 @@ def test_probe_failed_422_normalizes_retryable_true_not_permanent_after_one() ->
     assert _admit_error_permanent({"record_json": record_json}) is False
 
 
+def test_probe_failed_503_normalizes_retryable_true_not_permanent_after_one() -> None:
+    merged = merge_hop_admit_error(
+        None,
+        {
+            "last_error": _PROBE_FAILED,
+            "last_status_code": 503,
+        },
+    )
+    assert merged["retryable"] is True
+    assert merged["attempts"] == 1
+    record_json = merge_hop_patch("", {"hop_admit_error": merged})
+    assert _admit_error_permanent({"record_json": record_json}) is False
+
+
 def test_live_holder_422_overrides_prior_retryable_true_on_merge() -> None:
     prior = merge_hop_admit_error(
         None,

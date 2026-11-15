@@ -10,11 +10,14 @@ from fastapi import Response
 from fastapi.responses import JSONResponse
 
 from .admission import FrontierEndpointError
+import httpx
+
 from .cursor_sdk_thread_reuse import (
     CONDUCTOR_COORD_SPLIT_CODE,
     CONDUCTOR_COORD_SPLIT_HINT,
     CONDUCTOR_SUMMONING_OPERATOR_LANE_CODE,
     CONDUCTOR_SUMMONING_OPERATOR_LANE_HINT,
+    CURSOR_WORKER_OCCUPANCY_PROBE_FAILED,
     CURSOR_WORKER_THREAD_OCCUPIED,
     api_split_warning,
     consolidation_split_warning,
@@ -450,6 +453,132 @@ async def test_refuse_occupied_skips_pending_empty(
     await refuse_occupied_worker_thread(
         request_id="req-empty",
         reuse_thread="9100",
+        nest_under=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_refuse_occupied_probe_transport_error_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        return {"bus_lifecycle_state": "admitted", "turn_count": 4}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params=None):
+            _ = url, params
+            raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.make_async_client",
+        lambda *a, **k: _Client(),
+    )
+    with pytest.raises(FrontierEndpointError) as excinfo:
+        await refuse_occupied_worker_thread(
+            request_id="req-probe-transport",
+            reuse_thread="23783",
+            nest_under=None,
+        )
+    assert excinfo.value.code == CURSOR_WORKER_OCCUPANCY_PROBE_FAILED
+    assert excinfo.value.status_code == 503
+    assert excinfo.value.details is not None
+    assert excinfo.value.details["retryable"] is True
+    assert "GIW occupancy probe failed" in excinfo.value.reason
+
+
+@pytest.mark.asyncio
+async def test_refuse_occupied_probe_http_non_200_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        return {"bus_lifecycle_state": "admitted", "turn_count": 2}
+
+    class _Resp:
+        status_code = 503
+
+        def json(self) -> dict:
+            return {}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params=None):
+            _ = url, params
+            return _Resp()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.make_async_client",
+        lambda *a, **k: _Client(),
+    )
+    with pytest.raises(FrontierEndpointError) as excinfo:
+        await refuse_occupied_worker_thread(
+            request_id="req-probe-http",
+            reuse_thread="23783",
+            nest_under=None,
+        )
+    assert excinfo.value.code == CURSOR_WORKER_OCCUPANCY_PROBE_FAILED
+    assert excinfo.value.status_code == 503
+    assert excinfo.value.details is not None
+    assert excinfo.value.details["retryable"] is True
+    assert "occupancy probe HTTP 503" in excinfo.value.reason
+
+
+@pytest.mark.asyncio
+async def test_refuse_occupied_terminal_status_allows_reuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        return {"bus_lifecycle_state": "admitted", "turn_count": 8}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self) -> dict:
+            return {
+                "status": "completed",
+                "dispatch_id": "6f1a3c3a-old",
+            }
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params=None):
+            _ = url, params
+            return _Resp()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.make_async_client",
+        lambda *a, **k: _Client(),
+    )
+    await refuse_occupied_worker_thread(
+        request_id="req-terminal-reuse",
+        reuse_thread="23783",
         nest_under=None,
     )
 
