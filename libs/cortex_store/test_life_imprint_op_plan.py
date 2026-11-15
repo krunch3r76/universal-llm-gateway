@@ -6,11 +6,12 @@ import sqlite3
 
 import pytest
 
-from cortex_store.life_imprint.op_plan import (
-    IMPRINT_NOTED_DEFAULT_EVIDENCE,
-    build_op_plan,
-)
+from cortex_store.life_imprint.op_plan import build_op_plan
 from cortex_store.life_imprint.registry import load_registry
+
+_NOTED_DEFAULT_EVIDENCE = (
+    "recorded via life imprint noted; caller supplied no evidence"
+)
 
 
 def _seed(conn: sqlite3.Connection) -> None:
@@ -80,7 +81,7 @@ def test_op_plan_assert_noted(seeded_conn: sqlite3.Connection) -> None:
     assert plan[0]["op"] == "assert"
     assert plan[0]["args"]["confidence"] == "believed"
     assert plan[0]["args"]["derivation_type"] == "agent_observation"
-    assert plan[0]["args"]["evidence"] == IMPRINT_NOTED_DEFAULT_EVIDENCE
+    assert plan[0]["args"]["evidence"] == _NOTED_DEFAULT_EVIDENCE
     assert "confidence_score" not in plan[0]["args"]
 
 

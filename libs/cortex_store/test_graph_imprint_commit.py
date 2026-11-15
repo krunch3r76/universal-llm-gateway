@@ -352,6 +352,43 @@ def test_commit_document_issued_by_relationship(
     assert row["to_entity"] == "organization:acme"
 
 
+def test_commit_duplicate_typed_document_id_apply_failed(
+    cortex_client: TestClient, migrated_conn: sqlite3.Connection
+) -> None:
+    """Duplicate typed @id commit outcome unchanged from base (AC4-dup, document fixture)."""
+    patch = {
+        "@context": "cortex.life/v1",
+        "@graph": [
+            {"@id": "document:dup-proof", "@type": "document", "name": "Alpha"},
+            {"@id": "document:dup-proof", "@type": "document", "name": "Beta"},
+        ],
+    }
+    before_entities = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+    before_assertions = migrated_conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[
+        0
+    ]
+    resp = cortex_client.post("/graph/imprint/propose", json={"patch": patch})
+    assert resp.status_code == 200, resp.json()
+    body = resp.json()
+    creates = [e for e in body["op_plan"] if e["op"] == "entity_create"]
+    assert len(creates) == 2
+    proposal_id = body["proposal_id"]
+    assert proposal_id
+
+    commit = cortex_client.post(
+        "/graph/imprint/commit", json={"proposal_id": proposal_id}
+    )
+    assert commit.status_code == 422, commit.json()
+    assert commit.json()["code"] == "apply_failed"
+
+    after_entities = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+    after_assertions = migrated_conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[
+        0
+    ]
+    assert after_entities == before_entities
+    assert after_assertions == before_assertions
+
+
 def test_commit_forward_ref_correspondence(
     cortex_client: TestClient, migrated_conn: sqlite3.Connection
 ) -> None:

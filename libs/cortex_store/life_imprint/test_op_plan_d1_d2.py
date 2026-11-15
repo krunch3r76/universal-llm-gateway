@@ -89,6 +89,31 @@ def test_d2_bare_alias_yields_candidates_not_resolve(
     assert candidates[0]["matches"]
 
 
+def test_ac4_dup_typed_id_emits_two_entity_creates() -> None:
+    """Duplicate typed @id — same entity_create count as base (AC4-dup)."""
+    reg = load_registry()
+
+    class _NoopConn:
+        def execute(self, *args: object) -> None:
+            return None
+
+        def commit(self) -> None:
+            return None
+
+    patch = {
+        "@context": "cortex.life/v1",
+        "@graph": [
+            {"@id": "document:dup-proof", "@type": "document", "name": "Alpha"},
+            {"@id": "document:dup-proof", "@type": "document", "name": "Beta"},
+        ],
+    }
+    plan, candidates = build_op_plan(patch, reg, _NoopConn())  # type: ignore[arg-type]
+    assert candidates == []
+    creates = [entry for entry in plan if entry["op"] == "entity_create"]
+    assert len(creates) == 2
+    assert creates[0]["args"]["id"] == creates[1]["args"]["id"] == "document:dup-proof"
+
+
 def test_d1_forward_ref_planned_ids_prescan_and_ordering(
     seeded_conn: sqlite3.Connection,
 ) -> None:
