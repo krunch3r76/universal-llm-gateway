@@ -383,7 +383,7 @@ def test_falsifier_twelve_sweeps_fixed_clock_never_drops_before_cap(db: None) ->
     assert row["decided_by_rule"] != COMPOSER_DEFER_DROP_NOTICED
 
 
-def test_backoff_steps_allow_one_retry_each_then_cap_drop(db: None) -> None:
+def test_sweep_backoff_cap_drop_with_due_next_attempt_not_null_seed(db: None) -> None:
     from agent_bus_store.db.endpoint_wake_attempts import (
         COMPOSER_DEFER_DROP_NOTICED,
         DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS,
@@ -401,8 +401,8 @@ def test_backoff_steps_allow_one_retry_each_then_cap_drop(db: None) -> None:
             conn.execute(
                 "UPDATE endpoint_wake_ledger SET decided_by_rule=?, "
                 "wake_attempt_count=?, created_at=?, enqueued_at=?, "
-                "wake_next_attempt_at=NULL WHERE thread_id=?",
-                (COMPOSER_DEFER_SWEEP, attempt - 1, stamp, stamp, thread),
+                "wake_next_attempt_at=? WHERE thread_id=?",
+                (COMPOSER_DEFER_SWEEP, attempt - 1, stamp, stamp, stamp, thread),
             )
         advance = display_composer_defer_retry_delay_s(attempt)
         stamp = (
@@ -419,10 +419,11 @@ def test_backoff_steps_allow_one_retry_each_then_cap_drop(db: None) -> None:
     with write_connect() as conn:
         conn.execute(
             "UPDATE endpoint_wake_ledger SET decided_by_rule=?, wake_attempt_count=?, "
-            "created_at=?, enqueued_at=?, wake_next_attempt_at=NULL WHERE thread_id=?",
+            "created_at=?, enqueued_at=?, wake_next_attempt_at=? WHERE thread_id=?",
             (
                 COMPOSER_DEFER_SWEEP,
                 DISPLAY_COMPOSER_DEFER_MAX_ATTEMPTS,
+                stamp,
                 stamp,
                 stamp,
                 thread,

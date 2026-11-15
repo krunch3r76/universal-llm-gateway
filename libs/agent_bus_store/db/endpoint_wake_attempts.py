@@ -245,6 +245,14 @@ def schedule_composer_defer_retry(
     *,
     stamp: str,
 ) -> int:
+    """Return pending rows from sweep scheduling back to reclaimable pending.
+
+    Intended (a:43821 G2 pin): does **not** assign ``wake_next_attempt_at``; values
+    stay NULL or whatever was already on the row. Backoff ``next = stamp + delay(n)``
+    is owned solely by ``record_wake_result`` on the claim/delivery path. A follow-up
+    todo was filed for historical traceability; driver ruling treats this split as
+    intentional, not a defect.
+    """
     updated = 0
     for row in rows:
         rid = int(row["id"])
