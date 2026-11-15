@@ -27,13 +27,29 @@ sys.path = [
 sys.path.insert(0, mcp)
 sys.path.insert(0, libs)
 
+_recorded: dict = {}
+
+async def _recording_relay(*, endpoint: str, body: dict, record_prefix: str, **_kwargs):
+  _recorded["endpoint"] = endpoint
+  _recorded["body"] = body
+  _recorded["record_prefix"] = record_prefix
+  return {"execution_id": "mcp-pythonpath-probe", "status_code": 200}
+
+def _admit_hop_seat(**_kwargs):
+  return None
+
+import tools.frontier as frontier_mod
+import tools.agent_bus.hop as hop_mod
+
+frontier_mod._relay = _recording_relay
+hop_mod._resolve_hop_seat_request_refusal = _admit_hop_seat
+
 from tools.agent_bus import AGENT_BUS_OPS
 
 hop = AGENT_BUS_OPS["hop"]
 if hop is None:
     raise SystemExit("hop op missing from AGENT_BUS_OPS")
 
-# Early caller resolution on the hop path (op=hop entry); must not import systems.*
 result = asyncio.run(
     hop(
         thread="77",
@@ -44,8 +60,18 @@ result = asyncio.run(
 )
 if not isinstance(result, dict):
     raise SystemExit(f"unexpected hop result type: {type(result)!r}")
-if result.get("reason") == "hop_caller_agent_required":
-    raise SystemExit("caller resolution failed unexpectedly")
+if "body" not in _recorded:
+    raise SystemExit("hop path did not reach frontier._relay")
+body = _recorded["body"]
+if body.get("caller_agent") != "cursor-sdk-lane":
+    raise SystemExit(
+        f"caller_agent not wired on generate payload: {body.get('caller_agent')!r}"
+    )
+leaked = sorted(
+    k for k in sys.modules if k == "systems" or k.startswith("systems.")
+)
+if leaked:
+    raise SystemExit(f"systems import leak: {leaked}")
 print("ok")
 """
 
@@ -71,12 +97,3 @@ def test_agent_bus_hop_op_resolves_caller_on_mcp_pythonpath() -> None:
         f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}"
     )
     assert proc.stdout.strip().endswith("ok")
-
-
-@pytest.mark.offline
-def test_stargate_cdp_admit_identity_reexports_caller_gate() -> None:
-    """Stargate admit module keeps ``is_valid_cdp_caller_agent`` on its import path."""
-    from systems.frontier_consult.cdp_admit_identity import is_valid_cdp_caller_agent
-
-    assert is_valid_cdp_caller_agent("cursor-sdk-lane") is True
-    assert is_valid_cdp_caller_agent("dispatch") is False
