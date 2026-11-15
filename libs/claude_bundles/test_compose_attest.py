@@ -989,7 +989,7 @@ async def test_submit_composer_draft_new_session_pre_readiness_no_chip_refuses(
     ],
 )
 def test_project_shell_no_chip_still_returns_none(project_url: str) -> None:
-    """True project-shell URLs (mode=None, no new_* fingerprint) keep returning None."""
+    """True project-shell URLs (mode=None, no new_* fingerprint) keep returning None on cowork."""
     fp = {
         "title": "Project - Claude",
         "mode": None,
@@ -998,7 +998,61 @@ def test_project_shell_no_chip_still_returns_none(project_url: str) -> None:
     }
     assert cowork_auto_refuse_reason(fp) is None
     assert dispatch_approval_refuse_reason(fp, surface="cowork") is None
-    assert dispatch_approval_refuse_reason(fp, surface="code") is None
+    reason = dispatch_approval_refuse_reason(fp, surface="code")
+    assert reason is not None
+    assert "Permission mode Skip or Auto not attested" in reason
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://claude.ai/chat/abc-123",
+        "https://claude.ai/cowork/cse_019f6917-2ab2-772c-a1ec-f88434b08e32",
+        "about:blank",
+    ],
+)
+def test_code_surface_absent_chip_refuses_non_compose_urls(url: str) -> None:
+    """a:43854-h — surface=code refuses absent chip on every URL, not only compose surfaces."""
+    fp = {
+        "title": "Claude",
+        "mode": None,
+        "approval": None,
+        "url": url,
+    }
+    reason = dispatch_approval_refuse_reason(fp, surface="code")
+    assert reason is not None
+    assert reason.startswith("code dispatch refused:")
+    assert "Permission mode Skip or Auto not attested" in reason
+
+
+@pytest.mark.asyncio
+async def test_submit_composer_draft_code_surface_unknown_chip_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown Permission chip on code surface raises before submit_composer_content."""
+    fp = _code_fp(text="Prompt me")
+    assert approval_mode_chip(fp) == "unknown"
+    submit = AsyncMock()
+    monkeypatch.setattr(
+        "claude_bundles.composer_submit.submit_composer_content",
+        submit,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.project_ask.compose_mode_fingerprint",
+        AsyncMock(return_value=fp),
+    )
+    from claude_bundles.project_ask import _submit_composer_draft
+
+    page = AsyncMock()
+    page.url = "https://claude.ai/code"
+    with pytest.raises(RuntimeError, match="Permission mode Skip or Auto not attested"):
+        await _submit_composer_draft(
+            page,
+            composer=AsyncMock(),
+            draft_text="hi",
+            claude_surface="code",
+        )
+    submit.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

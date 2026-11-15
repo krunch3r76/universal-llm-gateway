@@ -235,9 +235,8 @@ def dispatch_approval_refuse_reason(
 
     ``surface=None`` preserves Cowork/Chat behavior via
     ``cowork_auto_refuse_reason``. ``surface='code'`` accepts Skip or Auto;
-    Manual is refused, and missing chips on compose surfaces (``new_*`` title,
-    ``/new``, or ``/code`` URL) also refuse. Callers on ``/code`` must not flip the chip
-    to Skip.
+    Manual is refused; any absent chip refuses regardless of URL. Callers on
+    ``/code`` must not flip the chip to Skip.
     """
     surf = (surface or "").strip().lower() or None
     if surf != "code":
@@ -247,12 +246,10 @@ def dispatch_approval_refuse_reason(
     mode = fp.get("mode")
     aria = _approval_aria(fp)
     if chip == "absent":
-        if _is_compose_surface_fingerprint(fp):
-            return (
-                "code dispatch refused: Permission mode Skip or Auto not attested "
-                f"(mode={mode!r} approval={fp.get('approval')!r})"
-            )
-        return None
+        return (
+            "code dispatch refused: Permission mode Skip or Auto not attested "
+            f"(mode={mode!r} approval={fp.get('approval')!r})"
+        )
     if chip in ("skip", "auto"):
         return None
     if chip == "manual":
@@ -266,7 +263,10 @@ def dispatch_approval_refuse_reason(
             "code dispatch refused: Permission mode Skip or Auto not attested "
             f"(mode={mode!r} approval={fp.get('approval')!r})"
         )
-    return None
+    return (
+        "code dispatch refused: Permission mode Skip or Auto not attested "
+        f"(mode={mode!r} approval={fp.get('approval')!r} chip={chip!r})"
+    )
 
 
 def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:
