@@ -14,6 +14,7 @@ _MCP = _REPO / "services" / "mcp-server"
 _LIBS = _REPO / "libs"
 
 _MCP_RECENT_COMMITS_PROBE = r"""
+import importlib.util
 import os
 import sys
 
@@ -24,12 +25,8 @@ sys.path = [p for p in sys.path if p]
 sys.path.insert(0, mcp)
 sys.path.insert(0, libs)
 
-for entry in sys.path:
-    if not entry:
-        continue
-    base = os.path.basename(os.path.normpath(entry))
-    if base == "services":
-        raise SystemExit(f"forbidden services/ on PYTHONPATH: {entry!r}")
+if importlib.util.find_spec("services") is not None:
+    raise SystemExit("top-level services package must not resolve on MCP PYTHONPATH")
 
 from git_integrate.events import emit_git_log_read  # noqa: F401
 from tools.filesystem._recent_commits import recent_commits_impl  # noqa: F401
@@ -57,7 +54,5 @@ def test_recent_commits_imports_on_mcp_pythonpath() -> None:
         timeout=60,
         check=False,
     )
-    assert proc.returncode == 0, (
-        f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}"
-    )
+    assert proc.returncode == 0, f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}"
     assert proc.stdout.strip().endswith("ok")

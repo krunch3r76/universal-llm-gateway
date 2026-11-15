@@ -1,8 +1,9 @@
 """Floor for the git_land and git_integrate MCP relay timeouts.
 
-2100.0 is ops_common._GATE_TIMEOUT (300.0) plus
-ops_common._SUITE_DIGEST_TIMEOUT (1800.0). This test does not import
-libs.git_integrate.
+2100.0 is ops_common._GATE_TIMEOUT (300.0) plus the 1800.0 suite budget cited in
+tools/git_integrate.py; land integration uses ops_common._suite_digest_timeout()
+(land_gate_pytest_session_timeout_s() + 120, default 1020.0). This test does not
+import libs.git_integrate.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from unittest.mock import patch
 
 from tools.git_integrate import register_git_integrate_tools
 
-# _GATE_TIMEOUT 300.0 + _SUITE_DIGEST_TIMEOUT 1800.0 (ops_common.py).
+# _GATE_TIMEOUT 300.0 + land suite budget via _suite_digest_timeout() (ops_common.py).
 _RELAY_TIMEOUT_FLOOR = 2100.0
 
 

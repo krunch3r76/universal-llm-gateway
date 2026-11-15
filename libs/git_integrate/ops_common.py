@@ -43,6 +43,8 @@ def _suite_digest_timeout() -> float:
     )
 
     return float(land_gate_pytest_session_timeout_s() + 120)
+
+
 _SUITE_FIELDS = ("computed", "anchor", "added", "removed")
 _GATE_OUTPUT_TAIL_LINES = 20
 _logger = get_logger(__name__)
