@@ -412,22 +412,57 @@ def _python() -> str:
     return os.environ.get("PYTHON", str(Path.home() / ".venvs/universal/bin/python"))
 
 
+def _assert_hermetic_path(path: Path) -> None:
+    """Fail loudly if a test-side path resolves inside the real checkout root."""
+    resolved = path.resolve()
+    repo = _REPO_ROOT.resolve()
+    if resolved == repo or repo in resolved.parents:
+        raise AssertionError(
+            f"hermetic test must not touch repo-root paths: {resolved} under {repo}"
+        )
+
+
+def _prepare_hermetic_sync_workspace(tmp_path: Path) -> Path:
+    """Minimal fake hub tree for --dry-run; all files live under tmp_path."""
+    workspace = tmp_path / "sync-workspace"
+    script_dest = workspace / "scripts" / "sync-and-restart-mcp.sh"
+    script_dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(_SCRIPT, script_dest)
+    mount_rel = Path("libs/cursor_bridge/cdp_gateway_forwarder.py")
+    hub_file = workspace / mount_rel
+    hub_file.parent.mkdir(parents=True, exist_ok=True)
+    hub_file.write_text("hub-forwarder\n", encoding="utf-8")
+    _assert_hermetic_path(hub_file)
+    for root in ("libs", "services", "config", "pipelines"):
+        marker_dir = workspace / root
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        if root == "libs":
+            (marker_dir / "_hermetic_marker.py").write_text("x = 1\n", encoding="utf-8")
+        else:
+            (marker_dir / "marker").write_text("m\n", encoding="utf-8")
+    _assert_hermetic_path(workspace)
+    return workspace
+
+
 def _run_sync_script(
     tmp_path: Path,
     stub: Path,
     *args: str,
     timeout: int = 180,
+    workspace_root: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    root = workspace_root or _REPO_ROOT
+    script = root / "scripts" / "sync-and-restart-mcp.sh" if workspace_root else _SCRIPT
     env = _minimal_env(tmp_path, stub)
     env["PYTHON"] = _python()
-    env["ULG_REPO"] = str(_REPO_ROOT)
-    env["PROJECT_ROOT"] = str(_REPO_ROOT)
+    env["ULG_REPO"] = str(root)
+    env["PROJECT_ROOT"] = str(root)
     first = env["PATH"].split(":")[0]
     if not os.access(Path(first) / "docker", os.X_OK):
         raise AssertionError(f"docker stub is not first on PATH: {first}")
     return subprocess.run(
-        ["bash", str(_SCRIPT), *args],
-        cwd=str(_REPO_ROOT),
+        ["bash", str(script), *args],
+        cwd=str(root),
         env=env,
         capture_output=True,
         text=True,
@@ -1620,27 +1655,25 @@ def test_dry_run_reports_mount_inside_synced_tree(tmp_path: Path) -> None:
     Breaks when wholesale docker cp overwrites a busy single-file bind mount.
     """
     mount_rel = "libs/cursor_bridge/cdp_gateway_forwarder.py"
-    hub_file = _REPO_ROOT / mount_rel
-    hub_file.parent.mkdir(parents=True, exist_ok=True)
-    hub_file.write_text("hub-forwarder\n", encoding="utf-8")
+    workspace = _prepare_hermetic_sync_workspace(tmp_path)
+    hub_file = workspace / mount_rel
+    _assert_hermetic_path(hub_file)
     secret = tmp_path / "mount_secret"
     secret.write_text("hub-forwarder\n", encoding="utf-8")
-    try:
-        stub = _stub_docker_dir(
-            tmp_path,
-            inspect_health="healthy",
-            mount_dest="/app/libs/cursor_bridge/cdp_gateway_forwarder.py",
-            mount_secret_container="/app/libs/cursor_bridge/cdp_gateway_forwarder.py",
-        )
-        proc = _run_sync_script(tmp_path, stub, "--dry-run")
-        log = _docker_log(tmp_path)
-        combined = proc.stdout + proc.stderr
-        assert proc.returncode == 0, combined
-        assert "MCP_SYNC_DRY_RUN" in combined, combined
-        assert "/app/libs/cursor_bridge/cdp_gateway_forwarder.py" in combined, combined
-        assert "MOUNT_HASH libs/cursor_bridge/cdp_gateway_forwarder.py: MATCH" in combined
-        assert "Copy set paths" in combined
-        assert "STAMP_WRITE" not in log, log
-        assert "stop " not in log, log
-    finally:
-        hub_file.unlink(missing_ok=True)
+    stub = _stub_docker_dir(
+        tmp_path,
+        inspect_health="healthy",
+        mount_dest="/app/libs/cursor_bridge/cdp_gateway_forwarder.py",
+        mount_secret_container="/app/libs/cursor_bridge/cdp_gateway_forwarder.py",
+    )
+    proc = _run_sync_script(tmp_path, stub, "--dry-run", workspace_root=workspace)
+    log = _docker_log(tmp_path)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert "MCP_SYNC_DRY_RUN" in combined, combined
+    assert "/app/libs/cursor_bridge/cdp_gateway_forwarder.py" in combined, combined
+    assert "MOUNT_HASH libs/cursor_bridge/cdp_gateway_forwarder.py: MATCH" in combined
+    assert "Copy set paths" in combined
+    assert mount_rel not in combined.split("Copy set paths", 1)[-1], combined
+    assert "STAMP_WRITE" not in log, log
+    assert "stop " not in log, log
