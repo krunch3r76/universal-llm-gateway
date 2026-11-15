@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from playwright.async_api import Page
 
@@ -44,20 +45,69 @@ _NAV_AWAY_URL = re.compile(
 )
 
 _COMPOSE_URL = re.compile(
-    r"/new(?:\?|$|#)|/cowork/cse_|/chat/|/code(?:/|$|\?|#)",
+    r"/cowork/cse_|/chat/",
+    re.I,
+)
+_PROJECT_COMPOSE_PATH = re.compile(
+    r"^/cowork/project/(?P<uuid>[0-9a-f]{8}-"
+    r"[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
     re.I,
 )
 _MIN_PLUS_SCORE = 30
 _MAX_PLUS_LABEL_CHARS = 28
 
 
+def _claude_ai_path(url: str) -> str:
+    parsed = urlparse(url or "")
+    host = (parsed.hostname or "").lower()
+    if host not in ("claude.ai", "www.claude.ai"):
+        return ""
+    return (parsed.path or "").rstrip("/") or "/"
+
+
+def project_shell_compose_url(url: str) -> bool:
+    """True only for an exact Project shell compose URL (no extra path segments)."""
+    path = _claude_ai_path(url)
+    return bool(path and _PROJECT_COMPOSE_PATH.match(path))
+
+
+def url_is_skills_compose_surface(url: str) -> bool:
+    """URL gate for skills attach — refuses bare /projects and project */new 404s."""
+    path = _claude_ai_path(url)
+    if not path:
+        return False
+    if path == "/new":
+        return True
+    if project_shell_compose_url(url):
+        return True
+    raw = url or ""
+    if _COMPOSE_URL.search(raw):
+        return True
+    from claude_bundles.compose_attest import _url_path_is_claude_code_compose
+
+    return _url_path_is_claude_code_compose(raw)
+
+
 def require_compose_surface(page: Page) -> str:
     """Fail closed unless the tab is a Cowork/Chat compose surface."""
     url = page.url or ""
-    if not _COMPOSE_URL.search(url):
+    if not url_is_skills_compose_surface(url):
         raise SkillDeliveryError(
-            f"Skills attach requires /new|/cowork/cse_|/chat/|/code compose — on {url!r}"
+            "Skills attach requires /new, /cowork/project/<uuid>, "
+            f"/cowork/cse_, /chat/, or /code compose — on {url!r}"
         )
+    return url
+
+
+async def attest_compose_surface_for_skills(page: Page) -> str:
+    """URL gate plus DOM attest for Project shell (composer must be present)."""
+    url = require_compose_surface(page)
+    if project_shell_compose_url(url):
+        inv = await inventory_composer_controls(page)
+        if not inv.get("has_composer"):
+            raise SkillDeliveryError(
+                f"project shell compose attest refused — no composer on {url!r}"
+            )
     return url
 
 
@@ -357,7 +407,7 @@ async def _recover_compose_if_needed(page: Page) -> None:
         require_compose_surface(page)
         return
     inv = await inventory_composer_controls(page)
-    if _COMPOSE_URL.search(url) and inv.get("has_composer"):
+    if url_is_skills_compose_surface(url) and inv.get("has_composer"):
         return
     from claude_bundles.chat_session_hygiene import goto_fresh_compose
 
@@ -468,7 +518,7 @@ async def _open_plus_skills_menu(page: Page) -> dict[str, Any]:
             await _recover_compose_if_needed(page)
             continue
         await page.wait_for_timeout(450)
-        if not _COMPOSE_URL.search(page.url or "") or _NAV_AWAY_URL.search(
+        if not url_is_skills_compose_surface(page.url or "") or _NAV_AWAY_URL.search(
             page.url or ""
         ):
             tried.append(
@@ -544,7 +594,7 @@ async def attach_one_session_skill(page: Page, slug: str, *, composer) -> None:
     Completing without raising means the clicks landed, **not** that the skill
     attached — confirm via ``composer_skill_observe.observe_composer_skill_chips``.
     """
-    require_compose_surface(page)
+    await attest_compose_surface_for_skills(page)
     await composer.click(force=True)
     await page.wait_for_timeout(350)
     await _open_plus_skills_menu(page)
