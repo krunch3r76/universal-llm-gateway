@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import json
 import sqlite3
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +14,14 @@ from fastapi.testclient import TestClient
 
 from cortex_store import db as cortex_db
 from cortex_store._intent_card_test_fixtures import insert_entity
+from cortex_store._stamped_route_resolution_testkit import (
+    assert_baseline_route_resolution,
+)
 from cortex_store._test_db_bootstrap import copy_template_db
 from cortex_store.conftest import bind_cortex_db
 from cortex_store.dispatch_ops import execute_op
-from cortex_store.routes.deadlines import _list_deadlines_impl
-from cortex_store._stamped_route_resolution_testkit import assert_baseline_route_resolution
 from cortex_store.main import create_app
+from cortex_store.routes.deadlines import _list_deadlines_impl
 
 _DISPATCH_ENVELOPE_KEYS = frozenset({"_next", "_hint", "skill_hint"})
 _VOLATILE_ENTRY_KEYS = frozenset({"id", "created_at"})

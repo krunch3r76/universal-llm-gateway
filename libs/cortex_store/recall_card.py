@@ -20,9 +20,9 @@ from .recall_models import (
 from .recall_resolve import resolve_recall_inputs
 from .routes.boot.continuity import get_boot_continuity
 from .routes.boot.todos import get_boot_todos
+from .routes.deadlines import _board_lifecycle_clause
 from .scope_radiation import radiate_scope
 from .terminal_facts import is_terminal_facts_hub, resolve_terminal_facts
-from .routes.deadlines import _board_lifecycle_clause
 
 _BOOT_AGENT = "cursor"
 _OPEN_DEADLINES_SQL = f"""

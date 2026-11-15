@@ -43,7 +43,6 @@ def _board_todo_predicate_sql(alias: str = "t") -> str:
     )
 
 
-_BOARD_TODO_PREDICATE = _board_todo_predicate_sql("t")
 _RESOLVED_CLAIM_RE = re.compile(r"\bRESOLVED\b")
 _RESOLVED_VIA_ORDER = ("urgency", "outcome", "resolved_claim", "fold")
 _ROW_POP_KEYS = (

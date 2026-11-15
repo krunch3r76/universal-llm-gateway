@@ -13,11 +13,13 @@ import pytest
 from cortex_store._intent_card_test_fixtures import insert_entity
 from cortex_store._test_db_bootstrap import copy_template_db
 from cortex_store.conftest import bind_cortex_db
+from cortex_store.dispatch_ops.ops_journals import _op_deadline_resolve
 from cortex_store.drift_detector import open_deadline_items
 from cortex_store.entity_state_fold import fold_claim, reverse_fold
 from cortex_store.entity_state_read import _field_verified
-from cortex_store.dispatch_ops.ops_journals import _op_deadline_resolve
+from cortex_store.recall_card import _open_deadlines
 from cortex_store.routes.deadlines import (
+    _BOARD_EXCLUDED_LIFECYCLES,
     _head_closes,
     _list_deadlines_impl,
     _resolved_assertion_ids,
@@ -882,17 +884,23 @@ def test_deadline_resolve_rejects_todo_without_deadline_date(
         workflow_state="open",
         attributes=json.dumps({}),
     )
+    before = _entity_row(migrated_conn, eid)
     result = _resolve_todo(eid)
     assert "error" in result
     assert "type=todo" in result["error"]
+    after = _entity_row(migrated_conn, eid)
+    assert after["attributes"] == before["attributes"]
     assert _resolved_assertion_count(migrated_conn, eid) == 0
 
 
 def test_deadline_resolve_rejects_done_todo(migrated_conn: sqlite3.Connection) -> None:
     eid = "todo:t43903-done"
     _seed_t43903_open_todo(migrated_conn, eid, workflow_state="done")
+    before = _entity_row(migrated_conn, eid)
     result = _resolve_todo(eid)
     assert "error" in result
+    after = _entity_row(migrated_conn, eid)
+    assert after["attributes"] == before["attributes"]
     assert _resolved_assertion_count(migrated_conn, eid) == 0
 
 
@@ -900,20 +908,26 @@ def test_deadline_resolve_rejects_retired_todo(migrated_conn: sqlite3.Connection
     eid = "todo:t43903-retired-resolve"
     _seed_t43903_open_todo(migrated_conn, eid)
     _set_lifecycle(migrated_conn, eid, "retired")
+    before = _entity_row(migrated_conn, eid)
     result = _resolve_todo(eid)
     assert "error" in result
+    after = _entity_row(migrated_conn, eid)
+    assert after["attributes"] == before["attributes"]
     assert _resolved_assertion_count(migrated_conn, eid) == 0
 
 
-def test_retired_todo_absent_from_board(migrated_conn: sqlite3.Connection) -> None:
-    retired = "todo:t43903-retired-board"
-    active = "todo:t43903-active-board"
-    _seed_t43903_open_todo(migrated_conn, retired)
-    _set_lifecycle(migrated_conn, retired, "retired")
+@pytest.mark.parametrize("lifecycle", _BOARD_EXCLUDED_LIFECYCLES)
+def test_excluded_lifecycle_todo_absent_from_board(
+    migrated_conn: sqlite3.Connection, lifecycle: str
+) -> None:
+    excluded = f"todo:t43903-board-{lifecycle}"
+    active = "todo:t43903-board-active-sibling"
+    _seed_t43903_open_todo(migrated_conn, excluded)
+    _set_lifecycle(migrated_conn, excluded, lifecycle)
     _seed_t43903_open_todo(migrated_conn, active)
     for include_resolved in (False, True):
         ids = _listed_ids(include_resolved=include_resolved)
-        assert retired not in ids
+        assert excluded not in ids
         assert active in ids
 
 
@@ -923,6 +937,7 @@ def test_retired_deadline_entity_absent_from_board(
     matter = "account:t43903-matter"
     retired_dl = "deadline:t43903-retired"
     active_dl = "deadline:t43903-active"
+    null_lc_dl = "deadline:t43903-null-lifecycle"
     insert_entity(
         migrated_conn, entity_id=matter, entity_type="account", name="matter"
     )
@@ -941,14 +956,66 @@ def test_retired_deadline_entity_absent_from_board(
         name="active dl",
         attributes=json.dumps({"deadline_date": _future_date()}),
     )
+    _set_lifecycle(migrated_conn, active_dl, "active")
+    insert_entity(
+        migrated_conn,
+        entity_id=null_lc_dl,
+        entity_type="deadline",
+        name="null lifecycle dl",
+        attributes=json.dumps({"deadline_date": _future_date()}),
+    )
     migrated_conn.executemany(
         "INSERT INTO relationships (from_entity, to_entity, type, active) VALUES (?, ?, 'deadline_for', 1)",
-        [(retired_dl, matter), (active_dl, matter)],
+        [
+            (retired_dl, matter),
+            (active_dl, matter),
+            (null_lc_dl, matter),
+        ],
     )
     migrated_conn.commit()
-    ids = _listed_ids()
-    assert retired_dl not in ids
-    assert active_dl in ids
+    for include_resolved in (False, True):
+        ids = _listed_ids(include_resolved=include_resolved)
+        assert retired_dl not in ids
+        assert active_dl in ids
+        assert null_lc_dl in ids
+
+
+def test_recall_open_deadlines_matches_board_lifecycle_filter(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    matter = "account:t43903-recall-matter"
+    retired = "deadline:t43903-recall-retired"
+    active = "deadline:t43903-recall-active"
+    insert_entity(
+        migrated_conn, entity_id=matter, entity_type="account", name="recall matter"
+    )
+    insert_entity(
+        migrated_conn,
+        entity_id=retired,
+        entity_type="deadline",
+        name="recall retired",
+        attributes=json.dumps({"deadline_date": _future_date()}),
+    )
+    _set_lifecycle(migrated_conn, retired, "retired")
+    insert_entity(
+        migrated_conn,
+        entity_id=active,
+        entity_type="deadline",
+        name="recall active",
+        attributes=json.dumps({"deadline_date": _future_date()}),
+    )
+    migrated_conn.executemany(
+        "INSERT INTO relationships (from_entity, to_entity, type, active) VALUES (?, ?, 'deadline_for', 1)",
+        [(retired, matter), (active, matter)],
+    )
+    migrated_conn.commit()
+    recall_ids = {row["deadline_id"] for row in _open_deadlines(migrated_conn)}
+    assert retired not in recall_ids
+    assert active in recall_ids
+    for include_resolved in (False, True):
+        board_ids = _listed_ids(include_resolved=include_resolved)
+        assert retired not in board_ids
+    assert active in _listed_ids(include_resolved=False)
 
 
 def test_deadline_resolve_todo_twice_is_idempotent(

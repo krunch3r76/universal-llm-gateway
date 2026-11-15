@@ -15,7 +15,7 @@ from durable_io.atomic import durable_write_text
 from fastapi import HTTPException, Response
 from universal_logging import get_logger
 
-from ..db import WRITE_LOCK, cortex_conn, execute, json_encode, query
+from ..db import WRITE_LOCK, cortex_conn, execute, json_encode
 from ..models import AssertionCreate
 from ..routes.assertions._create import (
     _write_assertion_locked,
