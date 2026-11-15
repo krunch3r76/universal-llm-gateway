@@ -374,6 +374,26 @@ class ExecutionPollResponse(BaseModel):
             "Optional for mixed deploys."
         ),
     )
+    archive_verdict: str | None = Field(
+        default=None,
+        description=(
+            "Canonical ``VERDICT:`` token when receipt salvage promoted a failed harvest."
+        ),
+    )
+    verdict_source: str | None = Field(
+        default=None,
+        description="Provenance for ``archive_verdict`` (e.g. ``archive`` after salvage).",
+    )
+    skill_receipt_warning: str | None = Field(
+        default=None,
+        description=(
+            "Original ``skill_receipt_unverified`` error preserved when salvage promoted ok."
+        ),
+    )
+    warnings: list[str] | None = Field(
+        default=None,
+        description="Non-fatal receipt or harvest warnings surfaced on terminal poll.",
+    )
     grade_trace: dict[str, Any] | None = Field(
         default=None,
         description=(

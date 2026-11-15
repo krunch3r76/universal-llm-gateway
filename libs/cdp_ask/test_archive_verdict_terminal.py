@@ -5,7 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
+from cdp_ask.app import create_app
 from cdp_ask.execution_ladder import finish_execution
 from cdp_ask.execution_store import ExecutionStore
 
@@ -38,8 +40,7 @@ async def test_finish_execution_promotes_skill_receipt_archive_verdict(
     """End-to-end through finish_execution with a real archived harvest body."""
     record = await store.create(holder="test", purpose="review")
     err = (
-        "skill_receipt_unverified: undelivered=['reasoning-posture'] "
-        "(friction a:27142)"
+        "skill_receipt_unverified: undelivered=['reasoning-posture'] (friction a:27142)"
     )
     archive = tmp_path / "882fef0d-archive.md"
     archive.write_text(_882FEF0D_ARCHIVE, encoding="utf-8")
@@ -59,4 +60,33 @@ async def test_finish_execution_promotes_skill_receipt_archive_verdict(
     assert result.get("ok") is True
     assert result.get("archive_verdict") == "APPROVE_WITH_NITS"
     assert result.get("skill_receipt_warning") == err
+    assert result.get("harvest_provenance") == "chat"
     assert refreshed.error is None
+
+
+@pytest.mark.asyncio
+async def test_poll_surfaces_salvage_fields(
+    store: ExecutionStore, tmp_path: Path
+) -> None:
+    record = await store.create(holder="test", purpose="review")
+    err = "skill_receipt_unverified: undelivered=['reasoning-posture']"
+    archive = tmp_path / "poll-archive.md"
+    archive.write_text(_882FEF0D_ARCHIVE, encoding="utf-8")
+    await finish_execution(
+        store,
+        record.execution_id,
+        {
+            "ok": False,
+            "error": err,
+            "body": "harvested",
+            "archive_uri": f"file://{archive}",
+            "stall_stage": "observer_unverified",
+        },
+    )
+    client = TestClient(create_app(store=store))
+    poll = client.get(f"/v1/project-ask/executions/{record.execution_id}").json()
+    assert poll["ok"] is True
+    assert poll["archive_verdict"] == "APPROVE_WITH_NITS"
+    assert poll["verdict_source"] == "archive"
+    assert poll["skill_receipt_warning"] == err
+    assert err in (poll.get("warnings") or [])
