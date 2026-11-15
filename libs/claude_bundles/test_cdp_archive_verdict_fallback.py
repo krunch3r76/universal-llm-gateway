@@ -9,6 +9,7 @@ import pytest
 
 from claude_bundles.cdp_archive_verdict_fallback import (
     apply_archive_verdict_fallback,
+    apply_archive_verdict_fallback_gated,
     apply_archive_verdict_fallback_terminal_payload,
     parse_archive_verdict,
     parse_canonical_verdict_line,
@@ -245,6 +246,82 @@ def test_terminal_payload_skill_receipt_promotes_ok(
     assert out["skill_receipt_warning"] == err
     assert out.get("error") is None
     assert out.get("harvest_provenance") == "chat"
+
+
+def test_gated_review_approve_promotes_with_harvest_provenance(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "stargate-review.md"
+    archive.write_text(_BAB9_BODY, encoding="utf-8")
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        stall_stage="observer_unverified",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    out = apply_archive_verdict_fallback_gated(result, purpose="review")
+    assert out.ok is True
+    assert out.extras.get("harvest_provenance") == "chat"
+
+
+def test_gated_ask_purpose_does_not_promote(tmp_path: Path) -> None:
+    archive = tmp_path / "stargate-ask.md"
+    archive.write_text(_BAB9_BODY, encoding="utf-8")
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    out = apply_archive_verdict_fallback_gated(result, purpose="ask")
+    assert out.ok is False
+    assert "archive_verdict" not in (out.extras or {})
+
+
+def test_gated_unknown_purpose_fail_closed(tmp_path: Path) -> None:
+    archive = tmp_path / "stargate-unknown.md"
+    archive.write_text(_BAB9_BODY, encoding="utf-8")
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    out = apply_archive_verdict_fallback_gated(result, purpose=None)
+    assert out.ok is False
+
+
+def test_gated_request_changes_stays_failed(tmp_path: Path) -> None:
+    archive = tmp_path / "stargate-rc.md"
+    archive.write_text(
+        "## Body\n\nVERDICT: REQUEST_CHANGES range=a..b head=b\n",
+        encoding="utf-8",
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    out = apply_archive_verdict_fallback_gated(result, purpose="review")
+    assert out.ok is False
 
 
 def test_terminal_payload_ask_purpose_does_not_promote(tmp_path: Path) -> None:

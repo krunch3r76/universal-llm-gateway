@@ -85,6 +85,39 @@ def _read_archive_text(archive_uri: str | None) -> str | None:
     return None
 
 
+def apply_archive_verdict_fallback_gated(
+    result: CdpGenerateResult,
+    *,
+    purpose: str | None,
+) -> CdpGenerateResult:
+    """Archive verdict salvage for stargate generate (purpose-gated, fail-closed)."""
+    if not _promotion_allowed(purpose=purpose):
+        return result
+    out = apply_archive_verdict_fallback(result)
+    if not out.ok:
+        return out
+    extras = dict(out.extras or {})
+    if extras.get("harvest_provenance") is None:
+        extras["harvest_provenance"] = "chat"
+    return CdpGenerateResult(
+        ok=out.ok,
+        body=out.body,
+        execution_id=out.execution_id,
+        satellite_execution_id=out.satellite_execution_id,
+        prompt_uri=out.prompt_uri,
+        picker_model=out.picker_model,
+        archive_uri=out.archive_uri,
+        content_proof_uri=out.content_proof_uri,
+        content_proof_sha256=out.content_proof_sha256,
+        stall_stage=out.stall_stage,
+        error=out.error,
+        substrate=out.substrate,
+        cost_source=out.cost_source,
+        poll_snapshots=out.poll_snapshots,
+        extras=extras,
+    )
+
+
 def apply_archive_verdict_fallback(result: CdpGenerateResult) -> CdpGenerateResult:
     """When skill_receipt_unverified, prefer a canonical archive ``VERDICT:`` line."""
     if not _is_receipt_only_error(result.error):
@@ -239,6 +272,7 @@ def apply_archive_verdict_fallback_terminal_payload(
 
 __all__ = [
     "apply_archive_verdict_fallback",
+    "apply_archive_verdict_fallback_gated",
     "apply_archive_verdict_fallback_terminal_payload",
     "parse_archive_verdict",
     "parse_canonical_verdict_line",
