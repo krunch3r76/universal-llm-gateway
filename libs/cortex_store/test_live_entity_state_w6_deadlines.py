@@ -16,6 +16,7 @@ from cortex_store.conftest import bind_cortex_db
 from cortex_store.drift_detector import open_deadline_items
 from cortex_store.entity_state_fold import fold_claim, reverse_fold
 from cortex_store.entity_state_read import _field_verified
+from cortex_store.dispatch_ops.ops_journals import _op_deadline_resolve
 from cortex_store.routes.deadlines import (
     _head_closes,
     _list_deadlines_impl,
@@ -763,3 +764,234 @@ def test_application_submitted_subject_head_closes_all_that_subjects_deadlines(
     listed = _listed_ids()
     assert d1 not in listed
     assert d2 not in listed
+
+
+# --- friction 43903: todo deadline_resolve + lifecycle board filter ---
+
+
+def _seed_t43903_open_todo(
+    conn: sqlite3.Connection,
+    entity_id: str = "todo:t43903-met",
+    *,
+    workflow_state: str | None = "open",
+    attributes: dict[str, Any] | None = None,
+) -> None:
+    attrs = {"deadline_date": _future_date(), **(attributes or {})}
+    insert_entity(
+        conn,
+        entity_id=entity_id,
+        entity_type="todo",
+        name="t43903 todo",
+        workflow_state=workflow_state,
+        attributes=json.dumps(attrs),
+    )
+
+
+def _set_lifecycle(conn: sqlite3.Connection, entity_id: str, lifecycle: str) -> None:
+    conn.execute("UPDATE entities SET lifecycle = ? WHERE id = ?", (lifecycle, entity_id))
+    conn.commit()
+
+
+def _resolve_todo(
+    entity_id: str,
+    *,
+    outcome: str = "met",
+    resolution_note: str = "t43903 synthetic close",
+) -> dict[str, Any]:
+    return _op_deadline_resolve(
+        deadline_id=entity_id,
+        resolution_note=resolution_note,
+        resolved_at="2026-11-01T12:00:00Z",
+        outcome=outcome,
+    )
+
+
+def _entity_row(conn: sqlite3.Connection, entity_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT workflow_state, attributes FROM entities WHERE id = ?", (entity_id,)
+    ).fetchone()
+    assert row is not None
+    return row
+
+
+def _resolved_assertion_count(conn: sqlite3.Connection, entity_id: str) -> int:
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) FROM assertions WHERE entity_id = ? "
+            "AND confidence = 'confirmed' AND claim LIKE '%RESOLVED%'",
+            (entity_id,),
+        ).fetchone()[0]
+    )
+
+
+def test_deadline_resolve_todo_met_closes_board_row_no_completion(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = "todo:t43903-met"
+    _seed_t43903_open_todo(migrated_conn, eid)
+    assert eid in _listed_ids()
+    result = _resolve_todo(eid, outcome="met")
+    assert "error" not in result
+    assert result.get("entity_type") == "todo"
+    assert eid not in _listed_ids()
+    resolved = _resolved_row(eid)
+    assert resolved is not None
+    assert "outcome" in resolved["resolved_via"]
+    assert "resolved_claim" in resolved["resolved_via"]
+    row = _entity_row(migrated_conn, eid)
+    assert row["workflow_state"] == "open"
+    attrs = json.loads(row["attributes"])
+    assert attrs.get("outcome") == "met"
+    assert _resolved_assertion_count(migrated_conn, eid) == 1
+
+
+def test_deadline_resolve_todo_defaulted_closes_board_row_no_completion(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = "todo:t43903-defaulted"
+    _seed_t43903_open_todo(migrated_conn, eid)
+    result = _resolve_todo(eid, outcome="defaulted")
+    assert "error" not in result
+    assert eid not in _listed_ids()
+    row = _entity_row(migrated_conn, eid)
+    assert row["workflow_state"] == "open"
+    assert json.loads(row["attributes"]).get("outcome") == "defaulted"
+
+
+def test_deadline_resolve_rejects_missed_alias(migrated_conn: sqlite3.Connection) -> None:
+    eid = "todo:t43903-missed"
+    _seed_t43903_open_todo(migrated_conn, eid)
+    before = _entity_row(migrated_conn, eid)
+    result = _resolve_todo(eid, outcome="missed")
+    assert "error" in result
+    assert "outcome must be one of" in result["error"]
+    after = _entity_row(migrated_conn, eid)
+    assert after["attributes"] == before["attributes"]
+    assert _resolved_assertion_count(migrated_conn, eid) == 0
+
+
+def test_deadline_resolve_rejects_todo_without_deadline_date(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = "todo:t43903-no-date"
+    insert_entity(
+        migrated_conn,
+        entity_id=eid,
+        entity_type="todo",
+        name="no date",
+        workflow_state="open",
+        attributes=json.dumps({}),
+    )
+    result = _resolve_todo(eid)
+    assert "error" in result
+    assert "type=todo" in result["error"]
+    assert _resolved_assertion_count(migrated_conn, eid) == 0
+
+
+def test_deadline_resolve_rejects_done_todo(migrated_conn: sqlite3.Connection) -> None:
+    eid = "todo:t43903-done"
+    _seed_t43903_open_todo(migrated_conn, eid, workflow_state="done")
+    result = _resolve_todo(eid)
+    assert "error" in result
+    assert _resolved_assertion_count(migrated_conn, eid) == 0
+
+
+def test_deadline_resolve_rejects_retired_todo(migrated_conn: sqlite3.Connection) -> None:
+    eid = "todo:t43903-retired-resolve"
+    _seed_t43903_open_todo(migrated_conn, eid)
+    _set_lifecycle(migrated_conn, eid, "retired")
+    result = _resolve_todo(eid)
+    assert "error" in result
+    assert _resolved_assertion_count(migrated_conn, eid) == 0
+
+
+def test_retired_todo_absent_from_board(migrated_conn: sqlite3.Connection) -> None:
+    retired = "todo:t43903-retired-board"
+    active = "todo:t43903-active-board"
+    _seed_t43903_open_todo(migrated_conn, retired)
+    _set_lifecycle(migrated_conn, retired, "retired")
+    _seed_t43903_open_todo(migrated_conn, active)
+    for include_resolved in (False, True):
+        ids = _listed_ids(include_resolved=include_resolved)
+        assert retired not in ids
+        assert active in ids
+
+
+def test_retired_deadline_entity_absent_from_board(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    matter = "account:t43903-matter"
+    retired_dl = "deadline:t43903-retired"
+    active_dl = "deadline:t43903-active"
+    insert_entity(
+        migrated_conn, entity_id=matter, entity_type="account", name="matter"
+    )
+    insert_entity(
+        migrated_conn,
+        entity_id=retired_dl,
+        entity_type="deadline",
+        name="retired dl",
+        attributes=json.dumps({"deadline_date": _future_date()}),
+    )
+    _set_lifecycle(migrated_conn, retired_dl, "retired")
+    insert_entity(
+        migrated_conn,
+        entity_id=active_dl,
+        entity_type="deadline",
+        name="active dl",
+        attributes=json.dumps({"deadline_date": _future_date()}),
+    )
+    migrated_conn.executemany(
+        "INSERT INTO relationships (from_entity, to_entity, type, active) VALUES (?, ?, 'deadline_for', 1)",
+        [(retired_dl, matter), (active_dl, matter)],
+    )
+    migrated_conn.commit()
+    ids = _listed_ids()
+    assert retired_dl not in ids
+    assert active_dl in ids
+
+
+def test_deadline_resolve_todo_twice_is_idempotent(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = "todo:t43903-dedup"
+    _seed_t43903_open_todo(migrated_conn, eid)
+    note = "t43903 idempotent note"
+    first = _resolve_todo(eid, resolution_note=note)
+    second = _resolve_todo(eid, resolution_note=note)
+    assert "error" not in first and "error" not in second
+    assert first["resolution_assertion_id"] == second["resolution_assertion_id"]
+    assert _resolved_assertion_count(migrated_conn, eid) == 1
+    assert json.loads(_entity_row(migrated_conn, eid)["attributes"]).get("outcome") == "met"
+
+
+def test_deadline_resolve_todo_transaction_failure_writes_nothing(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    eid = "todo:t43903-fail"
+    _seed_t43903_open_todo(migrated_conn, eid)
+    migrated_conn.execute(
+        """
+        CREATE TRIGGER t43903_abort_update
+        BEFORE UPDATE ON entities
+        WHEN NEW.id = 'todo:t43903-fail'
+        BEGIN
+          SELECT RAISE(ABORT, 't43903');
+        END
+        """
+    )
+    migrated_conn.commit()
+    claim = "RESOLVED — t43903 fail"
+    result = _resolve_todo(eid, resolution_note="t43903 fail")
+    assert result.get("step") == "transaction"
+    assert "error" in result
+    assert (
+        migrated_conn.execute(
+            "SELECT COUNT(*) FROM assertions WHERE entity_id = ? AND claim = ?",
+            (eid, claim),
+        ).fetchone()[0]
+        == 0
+    )
+    row = _entity_row(migrated_conn, eid)
+    assert "outcome" not in json.loads(row["attributes"])
+    assert eid in _listed_ids()

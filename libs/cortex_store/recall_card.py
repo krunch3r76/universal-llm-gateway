@@ -22,9 +22,10 @@ from .routes.boot.continuity import get_boot_continuity
 from .routes.boot.todos import get_boot_todos
 from .scope_radiation import radiate_scope
 from .terminal_facts import is_terminal_facts_hub, resolve_terminal_facts
+from .routes.deadlines import _board_lifecycle_clause
 
 _BOOT_AGENT = "cursor"
-_OPEN_DEADLINES_SQL = """
+_OPEN_DEADLINES_SQL = f"""
     SELECT d.id AS deadline_id, d.name AS deadline_name,
            COALESCE(
                json_extract(d.attributes, '$.deadline_date'),
@@ -32,6 +33,7 @@ _OPEN_DEADLINES_SQL = """
            ) AS deadline_date
     FROM entities d
     WHERE d.type = 'deadline'
+      AND {_board_lifecycle_clause("d")}
       AND (json_extract(d.attributes, '$.outcome') IS NULL
            OR json_extract(d.attributes, '$.outcome') NOT IN
               ('defaulted', 'met', 'withdrawn', 'superseded'))
