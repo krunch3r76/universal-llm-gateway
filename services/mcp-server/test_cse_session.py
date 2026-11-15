@@ -193,15 +193,13 @@ def test_relay_module_has_no_bundle_imports() -> None:
 def test_bind_address_dry_run_omitted_relays_true(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import tools.relay as relay_mod
-
     captured: dict = {}
 
     def _capture_relay(method: str, path: str, **kwargs):  # noqa: ANN001
         captured["body"] = dict(kwargs.get("json_body") or {})
         return {"ok": True, "dry_run": True, "would_write": True}
 
-    monkeypatch.setattr(relay_mod, "_relay", _capture_relay)
+    monkeypatch.setattr("tools.cse_session._relay", _capture_relay)
     from server import _build_server
 
     mcp, _, _ = _build_server("code")
@@ -216,15 +214,13 @@ def test_bind_address_dry_run_omitted_relays_true(
 
 
 def test_bind_address_dry_run_true_relays_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    import tools.relay as relay_mod
-
     captured: dict = {}
 
     def _capture_relay(method: str, path: str, **kwargs):  # noqa: ANN001
         captured["body"] = dict(kwargs.get("json_body") or {})
         return {"ok": True, "dry_run": True}
 
-    monkeypatch.setattr(relay_mod, "_relay", _capture_relay)
+    monkeypatch.setattr("tools.cse_session._relay", _capture_relay)
     from server import _build_server
 
     mcp, _, _ = _build_server("code")
@@ -242,15 +238,13 @@ def test_bind_address_dry_run_true_relays_true(monkeypatch: pytest.MonkeyPatch) 
 def test_retire_binding_dry_run_default_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import tools.relay as relay_mod
-
     captured: dict = {}
 
     def _capture_relay(method: str, path: str, **kwargs):  # noqa: ANN001
         captured["body"] = dict(kwargs.get("json_body") or {})
         return {"ok": True, "outcome": "preview"}
 
-    monkeypatch.setattr(relay_mod, "_relay", _capture_relay)
+    monkeypatch.setattr("tools.cse_session._relay", _capture_relay)
     from server import _build_server
 
     mcp, _, _ = _build_server("code")
@@ -277,15 +271,13 @@ def test_bind_address_identity_required(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_bind_address_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    import tools.relay as relay_mod
-
     payload = {
         "ok": True,
         "dry_run": True,
         "would_write": True,
         "chat_url": "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86",
     }
-    monkeypatch.setattr(relay_mod, "_relay", lambda *a, **k: payload)
+    monkeypatch.setattr("tools.cse_session._relay", lambda *a, **k: payload)
     from server import _build_server
 
     mcp, _, _ = _build_server("code")
@@ -301,15 +293,13 @@ def test_bind_address_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_bind_address_dry_run_false_relays_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    import tools.relay as relay_mod
-
     captured: dict = {}
 
     def _capture_relay(method: str, path: str, **kwargs):  # noqa: ANN001
         captured["body"] = dict(kwargs.get("json_body") or {})
         return {"ok": True, "dry_run": captured["body"].get("dry_run")}
 
-    monkeypatch.setattr(relay_mod, "_relay", _capture_relay)
+    monkeypatch.setattr("tools.cse_session._relay", _capture_relay)
     from server import _build_server
 
     mcp, _, _ = _build_server("code")
@@ -325,11 +315,8 @@ def test_bind_address_dry_run_false_relays_false(monkeypatch: pytest.MonkeyPatch
 
 
 def test_bind_address_refusals(monkeypatch: pytest.MonkeyPatch) -> None:
-    import tools.relay as relay_mod
-
     monkeypatch.setattr(
-        relay_mod,
-        "_relay",
+        "tools.cse_session._relay",
         lambda *a, **k: {"code": "not_session_address", "ok": False},
     )
     from server import _build_server
