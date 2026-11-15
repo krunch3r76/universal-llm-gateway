@@ -54,3 +54,18 @@ def test_render_jsonld_context() -> None:
     assert ctx["@vocab"] == "cortex.life/v1"
     assert "child_of" in ctx
     assert "@type" in ctx
+
+
+def test_issued_by_domain_union() -> None:
+    reg = load_registry()
+    issued = reg.predicates["issued_by"]
+    assert issued.domain == ("account", "document")
+
+
+def test_registry_fail_closed_bad_domain_member(tmp_path: Path) -> None:
+    data = yaml.safe_load(_VOCAB_PATH.read_text())
+    data["predicates"]["issued_by"]["domain"] = ["account", "nope"]
+    path = tmp_path / "bad.yaml"
+    path.write_text(yaml.dump(data))
+    with pytest.raises(ValueError, match="unknown entity types"):
+        load_registry(path)

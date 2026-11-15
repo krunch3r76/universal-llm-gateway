@@ -6,7 +6,10 @@ import sqlite3
 
 import pytest
 
-from cortex_store.life_imprint.op_plan import build_op_plan
+from cortex_store.life_imprint.op_plan import (
+    IMPRINT_NOTED_DEFAULT_EVIDENCE,
+    build_op_plan,
+)
 from cortex_store.life_imprint.registry import load_registry
 
 
@@ -76,6 +79,9 @@ def test_op_plan_assert_noted(seeded_conn: sqlite3.Connection) -> None:
     plan, _ = build_op_plan(patch, reg, seeded_conn)
     assert plan[0]["op"] == "assert"
     assert plan[0]["args"]["confidence"] == "believed"
+    assert plan[0]["args"]["derivation_type"] == "agent_observation"
+    assert plan[0]["args"]["evidence"] == IMPRINT_NOTED_DEFAULT_EVIDENCE
+    assert "confidence_score" not in plan[0]["args"]
 
 
 def test_op_plan_due_and_priority(seeded_conn: sqlite3.Connection) -> None:
@@ -115,3 +121,29 @@ def test_ambiguous_surface_form_yields_candidates(seeded_conn: sqlite3.Connectio
     plan, candidates = build_op_plan(patch, reg, conn)
     assert plan == []
     assert candidates and candidates[0]["matches"]
+
+
+def test_op_plan_noted_explicit_user_statement_modifiers(
+    seeded_conn: sqlite3.Connection,
+) -> None:
+    reg = load_registry()
+    patch = {
+        "@context": "cortex.life/v1",
+        "@graph": [
+            {
+                "@id": "todo:ship",
+                "noted": "Operator said ship Friday",
+                "derivation_type": "user_statement",
+                "evidence": "stated in chat",
+                "evidence_uris": ["workspaces://universal-llm-gateway/tmp/x.md"],
+                "reasoning_summary": "verbatim relay",
+            }
+        ],
+    }
+    plan, candidates = build_op_plan(patch, reg, seeded_conn)
+    assert candidates == []
+    args = plan[0]["args"]
+    assert args["derivation_type"] == "user_statement"
+    assert args["evidence"] == "stated in chat"
+    assert args["evidence_uris"] == ["workspaces://universal-llm-gateway/tmp/x.md"]
+    assert args["reasoning_summary"] == "verbatim relay"

@@ -54,7 +54,7 @@ predicates:
   issued_by:
     class: relationship
     cortex_op: relationship_create
-    domain: account
+    domain: [account, document]
     range: organization
   recipient_of:
     class: relationship

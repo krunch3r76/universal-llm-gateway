@@ -87,3 +87,25 @@ def test_d2_bare_alias_yields_candidates_not_resolve(
     assert len(candidates) == 1
     assert candidates[0]["input_ref"] == "Alice"
     assert candidates[0]["matches"]
+
+
+def test_d1_forward_ref_planned_ids_prescan_and_ordering(
+    seeded_conn: sqlite3.Connection,
+) -> None:
+    """entity_create ops precede relationship even when typed statements are later."""
+    reg = load_registry()
+    patch = {
+        "@context": "cortex.life/v1",
+        "@graph": [
+            {
+                "@id": "person:x",
+                "correspondence_with": {"@id": "document:letter-1"},
+            },
+            {"@id": "document:letter-1", "@type": "document", "name": "Letter"},
+            {"@id": "person:x", "@type": "person", "name": "Pat"},
+        ],
+    }
+    plan, candidates = build_op_plan(patch, reg, seeded_conn)
+    assert candidates == []
+    ops = [entry["op"] for entry in plan]
+    assert ops == ["entity_create", "entity_create", "relationship_create"]

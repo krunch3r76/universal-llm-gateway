@@ -93,3 +93,52 @@ def test_rejects_wrong_context() -> None:
         _reg(),
     )
     assert rejects and rejects[0].code == "unknown_predicate"
+
+
+def test_accepts_document_issued_by() -> None:
+    rejects = shape_check_patch(
+        _patch(
+            [
+                {
+                    "@id": "document:brief",
+                    "issued_by": {"@id": "organization:acme"},
+                }
+            ]
+        ),
+        _reg(),
+    )
+    assert rejects == []
+
+
+def test_rejects_modifier_without_noted() -> None:
+    rejects = shape_check_patch(
+        _patch([{"@id": "todo:x", "derivation_type": "user_statement"}]),
+        _reg(),
+    )
+    assert any("noted modifiers" in r.detail for r in rejects)
+
+
+def test_rejects_invalid_derivation_type_on_noted() -> None:
+    rejects = shape_check_patch(
+        _patch(
+            [{"@id": "todo:x", "noted": "claim", "derivation_type": "quotation"}]
+        ),
+        _reg(),
+    )
+    assert any(r.code == "literal_type" for r in rejects)
+
+
+def test_rejects_session_id_as_unknown_predicate() -> None:
+    rejects = shape_check_patch(
+        _patch([{"@id": "todo:x", "noted": "claim", "session_id": "cursor-sdk-2026"}]),
+        _reg(),
+    )
+    assert any(r.code == "unknown_predicate" for r in rejects)
+
+
+def test_rejects_bad_valid_from_on_noted() -> None:
+    rejects = shape_check_patch(
+        _patch([{"@id": "todo:x", "noted": "claim", "valid_from": "next week"}]),
+        _reg(),
+    )
+    assert any(r.code == "literal_type" for r in rejects)
