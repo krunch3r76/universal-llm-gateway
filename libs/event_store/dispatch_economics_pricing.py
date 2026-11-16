@@ -5,6 +5,9 @@ from __future__ import annotations
 import math
 from typing import Any, Literal
 
+from cursor_capabilities import effective_knobs
+from model_id import ModelId
+
 from .dispatch_economics_core import (
     _SUBSTRATE_PIPELINE,
     _SUBSTRATE_SDK,
@@ -281,20 +284,42 @@ def price_row(
     return _price_row(row, wire_members)
 
 
+def _pricing_knobs(row: dict[str, Any]) -> dict[str, str]:
+    """Knob dict for rate join: descriptor omit-path defaults plus caller overrides."""
+    caller_knobs = dict(row.get("model_knobs_requested") or {})
+    raw_model = row.get("model_id")
+    if not raw_model:
+        return caller_knobs
+    try:
+        bare = ModelId.parse(str(raw_model)).api_model_id.lower()
+        return effective_knobs(bare, caller_knobs)
+    except ValueError:
+        return caller_knobs
+
+
+def _join_used_effective_knobs(row: dict[str, Any]) -> bool:
+    """True when effective-knob join differs from raw ``model_knobs_requested``."""
+    caller = dict(row.get("model_knobs_requested") or {})
+    pricing_knobs = _pricing_knobs(row)
+    return pricing_knobs != caller
+
+
 def _price_row(
     row: dict[str, Any],
     wire_members: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
     priced = dict(row)
     wire_usd, wire_key = _select_wire(wire_members)
+    pricing_knobs = _pricing_knobs(row)
     rate = resolve_rate(
         row.get("model_id"),
-        knobs=row.get("model_knobs_requested"),
+        knobs=pricing_knobs,
     )
 
     if wire_usd is not None:
         priced["cost_usd"] = wire_usd
         priced["cost_source"] = "wire"
+        priced["cost_basis"] = "wire"
         priced["wire_key"] = wire_key
     elif rate is not None:
         # All-zero catalog/provider rates are missing prices, not free inference.
@@ -308,6 +333,7 @@ def _price_row(
             if computed is not None:
                 priced["cost_usd"] = computed
                 priced["cost_source"] = "rate_x_tokens"
+                priced["cost_basis"] = "estimated"
             else:
                 priced["cost_usd"] = None
                 priced["cost_source"] = "unavailable"
@@ -323,6 +349,13 @@ def _price_row(
         priced["cache_write_rate_per_m"] = rate.cache_write_rate_per_m
         priced["cache_read_rate_per_m"] = rate.cache_read_rate_per_m
         priced["rate_source"] = rate.source
+        cache_read = int(row.get("cache_read_tokens") or 0)
+        cache_write = int(row.get("cache_write_tokens") or 0)
+        if cache_read or cache_write:
+            cache_unpriced = (cache_read and rate.cache_read_rate_per_m is None) or (
+                cache_write and rate.cache_write_rate_per_m is None
+            )
+            priced["cache_unpriced"] = cache_unpriced
     else:
         priced["input_rate_per_m"] = None
         priced["output_rate_per_m"] = None
@@ -353,10 +386,14 @@ def _build_pricing_audit(rows: list[dict[str, Any]]) -> dict[str, Any]:
     unavailable_rate = (
         (pricable_unavailable / pricable_total) if pricable_total else 0.0
     )
+    join_used_effective_knobs_count = sum(
+        1 for row in rows if _join_used_effective_knobs(row)
+    )
     return {
         "row_count": total,
         "wire_count": wire_count,
         "rate_computed_count": rate_computed_count,
+        "join_used_effective_knobs_count": join_used_effective_knobs_count,
         "unavailable_count": unavailable_count,
         "cdp_stub_count": cdp_stub_count,
         "pricable_row_count": pricable_total,

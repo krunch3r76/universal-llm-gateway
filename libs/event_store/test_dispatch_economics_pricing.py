@@ -182,6 +182,7 @@ def test_composer_fast_join_path_effective_knobs_map_sdk_price_row() -> None:
     )
     priced = _price_row(mapped, None)
     assert priced["cost_source"] == "rate_x_tokens"
+    assert priced["cost_basis"] == "estimated"
     assert priced["input_rate_per_m"] == 3.0
     assert priced["cache_read_rate_per_m"] == 0.5
     assert priced["output_rate_per_m"] == 15.0
@@ -454,6 +455,7 @@ def test_rate_x_tokens_includes_cache_when_rates_present() -> None:
     """Cache tiers contribute; inclusive prompt nets cache out of input rate (A3)."""
     row = {
         "model_id": "cursor/composer-2.5",
+        "model_knobs_requested": {"fast": "false"},
         "prompt_tokens": 1_000_000,
         "completion_tokens": 1_000_000,
         "cache_read_tokens": 500_000,
@@ -585,7 +587,11 @@ def test_placeholder_zero_falls_through_to_rate_x_tokens() -> None:
     )
     priced = _price_row(g2["rows"][0], wire_index.get("e1"))
     assert priced["cost_source"] == "rate_x_tokens"
-    assert priced["cost_usd"] == pytest.approx(0.5)
+    assert priced["cost_basis"] == "estimated"
+    assert priced["input_rate_per_m"] == 3.0
+    assert priced["cost_usd"] == pytest.approx(3.0)
+    audit = _build_pricing_audit([priced])
+    assert audit["join_used_effective_knobs_count"] >= 1
 
 
 @pytest.mark.asyncio
