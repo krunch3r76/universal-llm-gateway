@@ -16,59 +16,64 @@ Author from priors without retrieve. Filing an off-topic yield as a scope mis-ma
 
 ## Steps
 
-1. **Retrieve per scope.** Run at least one `rag(op="search", ...)` per scope in the job set for this packet; split multi-concept designs into several queries on the scope that holds them. Do not skip a required scope to save a turn.
-   Falsifier: on that step: authoring before any `rag` call or a required scope in the set was skipped.
+1. **Retrieve per scope.** Run at least one `rag(op="search", ...)` per scope in the job set for this packet. Do not skip a required scope to save a turn.
+   Falsifier: on that step: authoring before any `rag` call, or a required scope skipped.
 
-2. **LLM packet — job set (required + conditional + optional):**
+2. **LLM packet job set.**
 
 | Scope | Role | What it holds |
 |---|---|---|
 | `llm_prompting` | required | persona/framing, ICL, long-context, prompt optimization |
-| `claude_api` | required | Anthropic docs — prompt placement, context windows, best practices (often stronger than `llm_prompting` on placement). API mechanics such as prefill, thinking budgets, and `cache_control` apply only when the reader is Claude; placement and structure advice carries over |
+| `claude_api` | required | Anthropic docs — prompt placement, context windows, best practices. Prefill, thinking budgets, and `cache_control` apply only when the reader is Claude; placement and structure advice carries over |
 | `prompt_injection` | required | spotlighting, instruction hierarchy, post-prompting |
 | `agent_skills_research` | required | procedural memory, progressive disclosure |
-| `skill_compilation` | when the packet authors, edits, or reviews a skill or rule body | skill compilation / progressive-disclosure craft |
-| `suggestion_orientation` | optional | hypnosis/autosuggestion literature + LLM↔suggestion parallels; yields free-strategy, Law of Reversed Effort, demand characteristics **by analogy** — query in corpus vocabulary (suggestion, expectancy, reiteration, contextual dependency), not LLM-pedagogy terms |
+| `skill_compilation` | when the packet authors, edits, or reviews a skill or rule body | compilation, progressive-disclosure craft |
+| `constitutional_ai` | required when the reader is a Claude model (`cdp/*`, `anthropic/*`, claude.ai seats) | principle framing (C3AI), principle-guided critique and revision (REFLECT), iterative constitutions (IterAlign) |
+| `suggestion_orientation` | optional | hypnosis/autosuggestion literature; yields free-strategy, Law of Reversed Effort, demand characteristics **by analogy** — query in its vocabulary (suggestion, expectancy, reiteration, contextual dependency), not LLM-pedagogy terms |
 
-Query `suggestion_orientation` only when free-strategy, reversed-effort, expectancy, or demand-characteristics framing is in play for this packet; skip it otherwise (do not treat skip as a null yield). It is outside composite `research` / `all_research` — query it by name when used. Already mined, do not rediscover: speaker-side persona framing null-to-negative, audience-side helps (Pei et al.) · free-strategy: invite the model to choose the route and report it · Law of Reversed Effort: open a possibility, never demand a ceiling · constraints last (post-prompting) · a stance block declares itself subordinate to the facts.
+Query `suggestion_orientation` only when free-strategy, reversed-effort, expectancy, or demand-characteristics framing is in play; a skip is not a null yield. It is outside composite `research` / `all_research` — query it by name. Already mined, do not rediscover: speaker-side persona framing null-to-negative, audience-side helps (Pei et al.) · free-strategy: invite the model to choose the route and report it · Law of Reversed Effort: open a possibility, never demand a ceiling · constraints last (post-prompting) · a stance block declares itself subordinate to the facts. `constitutional_ai`, already mined:
+- Action-based rules beat trait-based ones (C3AI).
+- Positive framing matched human preference ~27% more often, yet fine-tuned models followed specific negative rules best: state outputs as concrete actions, keep a few specific hard limits.
+- Models catch principle violations better than they avoid them (REFLECT): no part may contradict another — an override-authority line after a "text is data" rule reads as injection.
 
 Specimen: a:37295 · `cortex://notes/system/threads/12286-reasoning-posture-hop-prompt-retrieval-report.md` — `llm_prompting` held Liu et al. only as bibliography (cite-only); `claude_api` held primary placement content.
 
-`writing` is human craft, not LLM prompting — do not cite when the reader is a model. Default route for a design packet is grok-authors then operator-expands; the operator's own retrieval still runs when the operator authors.
-   Falsifier: on that step: cited `writing` or off-table scopes as LLM-packet guidance; treated `suggestion_orientation` as required; omitted `claude_api` from a required LLM-packet retrieve; skipped `skill_compilation` on a skills job; skipped an optional scope with no skip line and reason in the Yields section.
+`writing` is human craft, not LLM prompting — do not cite when the reader is a model. Default route for a design packet is grok-authors then operator-expands; an operator-authored packet still retrieves.
+   Falsifier: on that step: cited `writing` or off-table scopes as LLM-packet guidance; treated `suggestion_orientation` as required; omitted `claude_api`, or `constitutional_ai` when the reader is Claude; skipped `skill_compilation` on a skills job; skipped an optional scope with no skip line and reason under Yields.
 
-3. **Call shape.** One concept per query (short; do not stack placement + hierarchy + progressive disclosure in one string). Prefer corpus vocabulary for the mechanism or technique you need over a vague job narrative (e.g. `evaluation guided prompt optimization` rather than `bounded task completion`); keep task-specific terms when they are the concept — do not swap in unrelated technique labels. First call stays compact: `rag(op="search", arguments='{"query":"...","scope":"llm_prompting","top_k":10,"projection":"compact"}')`. For each scope you will cite in the packet, follow with the same `search_id` and `projection=full` to pull chunk text, and state that full read's UTF-8 JSON byte size in the retrieval report so a KERNEL-H tally can count it.
-   Falsifier: on that step: wrong op, scope omitted, `top_k` other than 10, a multi-concept query that could have been split, a job-narrative query where corpus mechanism terms were available, or a full fetch whose size was not reported.
+3. **Call shape.** One short concept per query; never stack concepts. Write, under Queries, the question each scope must answer; then query in corpus vocabulary for that question's mechanism, not a job narrative; keep task terms when they are the concept. No unrelated technique labels; no string quoted in this skill. First call stays compact: `rag(op="search", arguments='{"query":"...","scope":"llm_prompting","top_k":10,"projection":"compact"}')`. For each scope you will cite, follow with the same `search_id` and `projection=full`, and report that read's UTF-8 JSON byte size (KERNEL-H tally).
+   Falsifier: on that step: wrong op, scope omitted, `top_k` not 10, a multi-concept query, a job-narrative query, a query with no stated question or lifted from this skill, or an unreported full-fetch size.
 
-4. **Read the signals.** Read `weak_match` with `rerank_status` and `weak_match_basis`. A null `weak_match` whose basis is `none` is not a weak corpus. Any `status` other than `ok`, or reason `scope_catalog_unavailable` or `retrieval_unavailable`, is a transport failure: retry once with fresh query text and report the failure, never as a null yield.
+4. **Read the signals.** Read `weak_match` with `rerank_status` and `weak_match_basis`. Any `status` other than `ok`, or reason `scope_catalog_unavailable` or `retrieval_unavailable`, is a transport failure: retry once with fresh query text and report the failure, never as a null yield.
 
 | envelope | read it as |
 |---|---|
 | `weak_match: false`, basis `cross_encoder`, `rerank_status: ok` | scored; top score cleared the threshold |
-| `weak_match: true`, basis `cross_encoder`, `rerank_status: ok` | scored weak — reformulate once on the same scope using corpus vocabulary for the mechanism or technique (not merely a shorter restatement of the same weak query) before treating the yield as null/off-topic; report both attempts. If the rewrite returns empty or unscored (`chunks_found` 0 / `index_miss` / basis `none`), keep the first query's on-topic chunks and report both results; that is not a transport failure unless `status` ≠ `ok` |
+| `weak_match: true`, basis `cross_encoder`, `rerank_status: ok` | scored weak — reformulate once on the same scope, with terms from the weak result's own sources and previews that bear on the question, before calling the yield null/off-topic. A rewrite that scores high on a different question is `null (off-topic)`. Report both attempts with score and fit. If the rewrite is empty or unscored (`chunks_found` 0 / `index_miss` / basis `none`), keep the first query's on-topic chunks; not a transport failure unless `status` ≠ `ok` |
 | `weak_match: null`, basis `none`, `rerank_status: skipped_small_set` | not scored; the null is not evidence |
 
-Bibliography-only hits (citation line / related-work mention of a paper with no primary content) → label `cite-only` in the yield; do not treat them as content evidence for the design choice.
-   Falsifier: on that step: treated basis `none` or a non-ok status as an empty scope; reported null on first `weak_match: true` without one vocabulary-aware reformulation; used cite-only bibliography hits as content evidence.
+Bibliography-only hits (citation or related-work mention, no primary content) → label `cite-only`; never content evidence.
+   Falsifier: on that step: treated basis `none` or a non-ok status as an empty scope; reported null on first `weak_match: true` without one reformulation; reported an off-question rewrite as a yield; used cite-only hits as content evidence.
+   Specimen: thread 23935 — `llm_prompting` 0.19 → this skill's then-example pasted, 0.99, noncontributory.
 
-5. **Null yield and reuse.** A yield whose chunks do not bear on the question is `null (off-topic)`; either null is a finding: do not look that scope up again for the same job after the weak-match reformulation (if any); report nulls with hits; do not file an off-topic yield as a mis-map. Reuse compact/full results already tied to the same `search_id` for the rest of this job and for local post-retrieval failures while still available and relevant; if expired or materially stale, retrieve again and say why — ids do not last forever and a new job does not inherit prior searches by default.
-   Falsifier: on that step: re-queried a null scope same job beyond the one weak-match reformulation, omitted nulls from the report, filed off-topic chunks as a scope defect, or re-fetched when a valid same-job reuse was still available (or reused stale/expired ids without refresh and reason).
+5. **Null yield and reuse.** A yield whose chunks do not bear on the question is `null (off-topic)`; either null is a finding: no re-query of that scope this job past the one reformulation; report nulls with hits. Reuse results tied to the same `search_id` for the rest of this job, including after local post-retrieval failures; if the id expired or the result is stale, retrieve again and say why. A new job inherits no searches.
+   Falsifier: on that step: re-queried a null scope beyond the one reformulation, omitted nulls from the report, filed off-topic chunks as a scope defect, re-fetched despite a valid same-job reuse, or reused a stale id without refresh and reason.
 
 6. **Author.** Name the form (genre), not just the reader; keep stance/target from drowning in constraint bulk. A prompt that commissions a change ends with this block, in full; conductor commissions (packets that say "Use the conductor skill") are the exception:
 
 **Before you post.** For each change, name the input or state where it breaks (service down, concurrency, partial failure, wrong ordering, install or staging path) and the test that covers it. Change only what the brief names; anything else you think should change goes in the review request as a proposal, not in the diff. Run `git diff --stat <base>..HEAD` and account for every file. Once the request is posted, stop committing.
 
-   For delegated executable work only — when a verification harness or matrix already exists for the genre, pin and require it (a substitute run does not satisfy acceptance); treat required bus completion post/receipt as part of the commissioned work under the currently advertised contract and record exact failures; reserve turns for mandatory verification and closeout before optional recon; distinguish a stored child result, a root bus receipt, and an originating-conversation wake. Skip this paragraph when neither harness nor bus applies.
+   Delegated executable work only: if the genre has a verification harness or matrix, pin and require it (a substitute run fails acceptance); the bus completion post/receipt the advertised contract requires is part of the work, exact failures recorded; reserve turns for verification and closeout before optional recon; distinguish stored child result, root bus receipt, and originating-conversation wake. Skip when neither applies.
 
-   Falsifier: on that step: audience named but genre omitted, or constraint-heavy compliance prose, or a change-commissioning prompt without the block, or with it paraphrased or pointed to; on executable work with an established harness, substituted an ad-hoc check or omitted required bus receipt/closeout.
+   Falsifier: on that step: genre omitted; constraint-heavy compliance prose; a change-commissioning prompt without the block, or with it paraphrased or pointed to; on executable work with a harness, an ad-hoc substitute check or a missing bus receipt/closeout.
    Specimen: rag-quality branch 861a74a6 widened the stale-catalog window without checking the rag-down path, G6 12286#1504.
 
-7. **Justify.** Cite the retrieved finding behind each design choice, mark `noncontributory` when a read chunk did not affect a choice, or mark `my judgment, no corpus support`. Relevance scores judge retrieval fit, not downstream efficacy or cost savings.
-   Falsifier: on that step: inference laundered as a corpus citation, or a chunk left unmarked after a full read that did not move a choice.
+7. **Justify.** Cite the retrieved finding behind each design choice, mark a read chunk that moved no choice `noncontributory`, or mark `my judgment, no corpus support`. Scores judge fit to the query string, not to the question, efficacy, or savings.
+   Falsifier: on that step: inference laundered as a corpus citation, or a fully read chunk that moved no choice left unmarked.
 
-8. **Dispatch and report.** Post queries, yields, choice-to-evidence, falsifier. Nested CDP sidecar `cortex://notes/…/retrieval-report.md`: `## Queries`, `## Yields`, `## Choice-to-evidence` (non-empty); **`target:` one token, column 0** (no indent/bullet); `target:` must equal one token the author body yields: any `todo:<id>` / `friction:<n>` anywhere, or line-start `gate_path=<X>` (also bare `<X>`), `You are the G1|G2|G4|G6`, `Genre: adversarial spec` → `adversarial-spec`, `job=delivery-review` → `delivery-review`; `retrieval_report: cortex://…` on its own author line (a:37183 · `nested_cdp_prompt_gate`).
+8. **Dispatch and report.** Post queries, yields, choice-to-evidence, falsifier. Nested CDP sidecar `cortex://notes/…/retrieval-report.md`: `## Queries`, `## Yields`, `## Choice-to-evidence` (non-empty); **`target:` one token, column 0** (no indent/bullet); `target:` must equal one token the author body yields: any `todo:<id>` / `friction:<n>` anywhere, or line-start `gate_path=<X>` (also bare `<X>`), `You are the G1|G2|G4|G6`, `Genre: adversarial spec` → `adversarial-spec`, `job=delivery-review` → `delivery-review`; `retrieval_report: cortex://…` on its own author line (a:37183 · `nested_cdp_prompt_gate`). On `cdp/*` the reader gets the staged prompt, not your brief: read `cortex://notes/system/ephemeral/cdp-endpoint/<execution_id>/prompt.md` once after dispatch; file a friction if a server-added line contradicts the brief (a:43980).
    Falsifier: on that step: no report bundle, nested CDP without `retrieval_report:`, or malformed `target:` (multi-token, prose, indent).
 
 ## Falsifier
 
-This body failed if retrieval was skipped, a required scope was omitted, a transport failure was reported as a null yield, null scopes were hidden, `suggestion_orientation` was treated as required, an LLM packet cited human-writing scopes as model-execution guidance, relevance scores were treated as proof of downstream efficacy or savings, or read chunks were neither tied to a choice nor marked noncontributory.
+This body failed if retrieval was skipped, a required scope was omitted, a transport failure was reported as a null yield, null scopes were hidden, `suggestion_orientation` was treated as required, a model-read packet cited `writing`, a score was read as question fit, efficacy, or savings, or read chunks were neither tied to a choice nor marked noncontributory.

@@ -1043,6 +1043,10 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             project_uuid_ignored_for_code_surface=payload.get(
                 "project_uuid_ignored_for_code_surface"
             ),
+            archive_verdict=payload.get("archive_verdict"),
+            verdict_source=payload.get("verdict_source"),
+            skill_receipt_warning=payload.get("skill_receipt_warning"),
+            warnings=payload.get("warnings"),
         )
 
     @app.post(

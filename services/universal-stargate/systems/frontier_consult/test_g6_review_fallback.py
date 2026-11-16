@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -193,6 +194,66 @@ async def test_cdp_worker_freeform_opus_high_without_proof_does_not_call_fable(
     assert final.execution_id == "exec-freeform-high"
     assert final.stall_stage == "completed_without_proof"
     assert "review_fallback_model" not in final.extras
+
+
+@pytest.mark.asyncio
+async def test_cdp_worker_archive_prose_does_not_promote_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T1: archive VERDICT prose without wire must not flip worker ok."""
+    from systems.frontier_consult import cdp_generate_worker as worker
+
+    archive = tmp_path / "archive.md"
+    archive.write_text(
+        "# CDP ask harvest\n\n## Body\n\nVERDICT: APPROVE range=aaaa..bbbb head=bbbb\n",
+        encoding="utf-8",
+    )
+    finalize = AsyncMock()
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.finalize_cdp_generate",
+        finalize,
+    )
+    monkeypatch.setattr(worker, "publish_cdp_kwargs", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.attach_satellite_execution_id",
+        lambda **kw: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.maybe_expand_cdp_prompt",
+        lambda **kw: kw["prompt_uri"],
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_inflight_ledger.upsert_inflight_leg",
+        lambda **kw: None,
+    )
+
+    def _fake_generate(**kwargs: object) -> CdpGenerateResult:
+        return _result(
+            ok=False,
+            error="skill_receipt_unverified: undelivered=['reasoning-posture']",
+            archive_uri=f"file://{archive}",
+        )
+
+    async def _sync_to_thread(fn, /, *args, **kwargs):  # type: ignore[no-untyped-def]
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(worker.asyncio, "to_thread", _sync_to_thread)
+    monkeypatch.setattr(worker, "run_cdp_generate", _fake_generate)
+
+    await run_cdp_worker(
+        execution_id="exec-archive-fallback",
+        model_id="cdp/opus-5",
+        thread_id="23893",
+        caller_agent="dispatch",
+        prompt_uri="cortex://notes/prompt.md",
+        request_id="req-t1",
+        contract="delivery-review",
+    )
+
+    finalize.assert_awaited_once()
+    final = finalize.await_args.kwargs["result"]
+    assert final.ok is False
+    assert (final.extras or {}).get("verdict_source") != "archive"
 
 
 def test_empty_fable_body_is_not_adopted() -> None:

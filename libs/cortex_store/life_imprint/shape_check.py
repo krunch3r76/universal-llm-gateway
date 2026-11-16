@@ -6,10 +6,23 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from ..assertion_quality import DERIVATION_TYPE_TAXONOMY
 from .registry import LifeVocabRegistry
 
 _METADATA_KEYS = frozenset(
     {"@context", "@graph", "@version", "@vocab", "@id", "name", "description"}
+)
+_NOTED_MODIFIER_KEYS = frozenset(
+    {
+        "derivation_type",
+        "evidence",
+        "evidence_uris",
+        "valid_from",
+        "reasoning_summary",
+    }
+)
+_ALLOWED_NOTED_DERIVATION = frozenset(
+    {"agent_observation", "direct_observation", "user_statement"}
 )
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _TYPED_ENTITY_ATTRS = frozenset({"name", "description", "aliases", "attributes"})
@@ -51,12 +64,12 @@ def _check_domain_range(
     rejects: list[ShapeReject] = []
     if spec_domain:
         subject_type = _entity_ref_type(subject_id, registry)
-        if subject_type and subject_type != spec_domain:
+        if subject_type and subject_type not in spec_domain:
             rejects.append(
                 ShapeReject(
                     statement_idx,
                     "domain_mismatch",
-                    f"{pred_name}: subject {subject_id!r} expected domain {spec_domain!r}",
+                    f"{pred_name}: subject {subject_id!r} expected domain {list(spec_domain)!r}",
                 )
             )
     if spec_range and object_ref:
@@ -119,6 +132,86 @@ def _check_literal_value(
     ]
 
 
+def _check_noted_modifiers(
+    stmt: dict[str, Any],
+    statement_idx: int,
+) -> list[ShapeReject]:
+    rejects: list[ShapeReject] = []
+    has_noted = "noted" in stmt
+    present = _NOTED_MODIFIER_KEYS & stmt.keys()
+    if present and not has_noted:
+        rejects.append(
+            ShapeReject(
+                statement_idx,
+                "cardinality",
+                f"noted modifiers {sorted(present)} require noted predicate",
+            )
+        )
+        return rejects
+    if not has_noted:
+        return rejects
+
+    if "derivation_type" in stmt:
+        dt = stmt["derivation_type"]
+        if (
+            not isinstance(dt, str)
+            or dt not in DERIVATION_TYPE_TAXONOMY
+            or dt not in _ALLOWED_NOTED_DERIVATION
+        ):
+            rejects.append(
+                ShapeReject(
+                    statement_idx,
+                    "literal_type",
+                    f"derivation_type must be one of {sorted(_ALLOWED_NOTED_DERIVATION)}",
+                )
+            )
+    if "evidence" in stmt:
+        ev = stmt["evidence"]
+        if not isinstance(ev, str) or not ev.strip():
+            rejects.append(
+                ShapeReject(
+                    statement_idx,
+                    "literal_type",
+                    "evidence must be a non-empty string",
+                )
+            )
+    if "evidence_uris" in stmt:
+        uris = stmt["evidence_uris"]
+        if (
+            not isinstance(uris, list)
+            or not uris
+            or not all(isinstance(u, str) and u.strip() for u in uris)
+        ):
+            rejects.append(
+                ShapeReject(
+                    statement_idx,
+                    "literal_type",
+                    "evidence_uris must be a non-empty list of non-empty strings",
+                )
+            )
+    if "valid_from" in stmt:
+        vf = stmt["valid_from"]
+        if not isinstance(vf, str) or not _DATE_RE.match(vf):
+            rejects.append(
+                ShapeReject(
+                    statement_idx,
+                    "literal_type",
+                    "valid_from must be ISO date YYYY-MM-DD",
+                )
+            )
+    if "reasoning_summary" in stmt:
+        rs = stmt["reasoning_summary"]
+        if not isinstance(rs, str) or not rs.strip():
+            rejects.append(
+                ShapeReject(
+                    statement_idx,
+                    "literal_type",
+                    "reasoning_summary must be a non-empty string",
+                )
+            )
+    return rejects
+
+
 def _object_ref(value: object) -> str | None:
     if isinstance(value, str):
         return value
@@ -161,10 +254,12 @@ def shape_check_patch(
             continue
 
         typing_key = "@type" if "@type" in stmt else ("a" if "a" in stmt else None)
+        rejects.extend(_check_noted_modifiers(stmt, idx))
         predicate_keys = [
             k
             for k in stmt
             if k not in _METADATA_KEYS
+            and k not in _NOTED_MODIFIER_KEYS
             and k not in {"@type", "a"}
             and not k.startswith("@")
         ]

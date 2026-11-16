@@ -107,7 +107,7 @@ def test_archive_stamp_rejects_failed_outcome(tmp_path: Path) -> None:
         f"# CDP ask harvest\n\n"
         f"- execution_id: `{_EXEC_ID}`\n"
         "- outcome: failed\n"
-        "- error: skill_receipt_unverified: x\n\n"
+        "- error: observer_unverified: stream dropped\n\n"
         f"## Body\n\n{'y' * 250}\n",
         encoding="utf-8",
     )

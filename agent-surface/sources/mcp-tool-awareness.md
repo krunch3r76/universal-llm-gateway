@@ -56,6 +56,9 @@ For large markdown files, prefer section-level access over full reads:
 | `read` | Full file read | `path` (repo-relative refs auto-resolve) |
 | `write` | Write/overwrite file | `path`, `content` |
 
+
+Default `span=own_body` on section writes; `expected_sha256` CAS on pre-image; `md_create` create-only.
+
 ## Sandbox Routing
 
 | Sandbox | Root | Example path |

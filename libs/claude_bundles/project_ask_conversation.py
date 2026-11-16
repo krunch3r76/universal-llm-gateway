@@ -26,13 +26,11 @@ from claude_bundles.cowork_output_download import (
     cortex_files_root_from_env,
     resolve_harvest_body,
 )
-from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
 from claude_bundles.project_ask import (
     ProjectAskResult,
     _assert_code_surface_model_before_send,
     _attest_model,
     _compose_model_selected,
-    _harvest_after_skill_receipt_unverified,
     artifact_cards_from_state,
     finalize_scrape_body,
     project_ask_on_page,
@@ -177,19 +175,6 @@ async def send_followup_paste_half(
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=satellite_execution_id,
         )
-    except SkillReceiptUnverifiedError as exc:
-        state = await harvest_assistant(page)
-        return {
-            "send_verified": True,
-            "receipt": "dom_paste",
-            "streaming_at_paste": bool(state.get("streaming")),
-            "url": str(state.get("url") or page.url or url),
-            "pasted_at": time.time(),
-            "verification_marker": marker,
-            "error": "skill_receipt_unverified",
-            "detail": str(exc),
-            "target_binding": target_binding,
-        }
     except Exception as exc:  # noqa: BLE001 — paste-half fail-closed envelope
         state = await harvest_assistant(page)
         return {
@@ -404,23 +389,6 @@ async def project_followup_on_page(
             delete_after=None,
             error=str(exc),
         )
-    except SkillReceiptUnverifiedError as exc:
-        if not exc.submitted or anchor is None:
-            raise
-        return await _harvest_after_skill_receipt_unverified(
-            page,
-            exc=exc,
-            anchor=anchor,
-            project_uuid=project_uuid or "",
-            project_url=dest,
-            model_info={"ok": True, "step": "followup"},
-            model=model,
-            timeout_s=timeout_s,
-            min_growth=min_growth,
-            min_body=min_body,
-            on_harvest=on_harvest,
-            purpose=purpose,
-        )
     except Exception as exc:  # noqa: BLE001
         return ProjectAskResult(
             ok=False,
@@ -550,36 +518,16 @@ async def run_project_conversation(
             anchor = probe.after(
                 await harvest_assistant(page, min_msg_chars=10, anchor=probe)
             )
-            try:
-                await send_prompt(
-                    page,
-                    prompts[0],
-                    stargate_execution_id=stargate_execution_id,
-                    satellite_execution_id=satellite_execution_id,
-                    await_induction_reply=True,
-                    on_harvest=on_harvest,
-                    claude_surface=claude_surface,
-                    compose_receipt=model_info,
-                )
-            except SkillReceiptUnverifiedError as exc:
-                if not exc.submitted:
-                    raise
-                first = await _harvest_after_skill_receipt_unverified(
-                    page,
-                    exc=exc,
-                    anchor=anchor,
-                    project_uuid="",
-                    project_url=url,
-                    model_info=model_info,
-                    model=model,
-                    timeout_s=timeout_s,
-                    min_growth=min_growth,
-                    min_body=min_body,
-                    on_harvest=on_harvest,
-                    purpose=purpose,
-                )
-                results.append(first)
-                return results
+            await send_prompt(
+                page,
+                prompts[0],
+                stargate_execution_id=stargate_execution_id,
+                satellite_execution_id=satellite_execution_id,
+                await_induction_reply=True,
+                on_harvest=on_harvest,
+                claude_surface=claude_surface,
+                compose_receipt=model_info,
+            )
             await _emit_page_url(on_harvest, page)
             try:
                 state = await wait_assistant_reply(

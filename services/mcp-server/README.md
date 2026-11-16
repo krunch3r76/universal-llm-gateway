@@ -43,6 +43,9 @@ and `fs(op="write", sandbox="workspaces", ...)` operate without a gate.
 | `search_project_files` | Regex search; optional `include_untracked` |
 | `fs(sandbox="workspaces", ...)` | Preferred unified read/write/list/search surface over project-mounted files |
 
+
+`md_*` writes also support `expected_sha256` CAS, default `span=own_body`, and `md_create`.
+
 ### Pipeline Consultation (`tools/pipeline_consult.py`)
 
 RAG-grounded prompt-engineering advice for pipeline steps. Queries step metadata from the event service, auto-detects RAG scope from the model tier, and runs the `consult-prompt-engineer` pipeline via Stargate.

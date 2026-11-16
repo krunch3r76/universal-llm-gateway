@@ -198,6 +198,224 @@ def test_commit_apply_failed_on_bad_plan(
     assert row["status"] == "open"
 
 
+_MATTER_SCOPE = "case:chase-escrow-flintridge-2026"
+
+
+def _seed_provenance_fixtures(conn: sqlite3.Connection) -> None:
+    conn.executemany(
+        "INSERT INTO entities (id, type, name) VALUES (?, ?, ?)",
+        [
+            ("person:alice", "person", "Alice"),
+            ("organization:acme", "organization", "Acme"),
+            ("document:brief", "document", "Brief"),
+            (_MATTER_SCOPE, "matter", "Escrow case"),
+        ],
+    )
+    conn.commit()
+
+
+def _propose_patch(cortex_client: TestClient, patch: dict) -> str:
+    resp = cortex_client.post("/graph/imprint/propose", json={"patch": patch})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("proposal_id"), body
+    return str(body["proposal_id"])
+
+
+def test_commit_noted_default_provenance_persisted(
+    cortex_client: TestClient, migrated_conn: sqlite3.Connection
+) -> None:
+    _seed_provenance_fixtures(migrated_conn)
+    patch = {
+        "@context": "cortex.life/v1",
+        "@graph": [{"@id": "person:alice", "noted": "Will call back Tuesday"}],
+    }
+    proposal_id = _propose_patch(cortex_client, patch)
+    resp = cortex_client.post("/graph/imprint/commit", json={"proposal_id": proposal_id})
+    assert resp.status_code == 200, resp.json()
+    row = migrated_conn.execute(
+        "SELECT derivation_type, evidence, confidence, confidence_score "
+        "FROM assertions WHERE entity_id = 'person:alice' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row["derivation_type"] == "agent_observation"
+    assert row["confidence"] == "believed"
+    assert row["confidence_score"] is None
+    assert "operator-stated" not in (row["evidence"] or "")
+    assert row["evidence"] == (
+        "recorded via life imprint noted; caller supplied no evidence"
+    )
+
+
+def test_commit_noted_explicit_modifiers_persisted(
+    cortex_client: TestClient, migrated_conn: sqlite3.Connection
+) -> None:
+    _seed_provenance_fixtures(migrated_conn)
+    patch = {
+        "@context": "cortex.life/v1",
+        "@graph": [
+            {
+                "@id": "person:alice",
+                "noted": "Ship Friday",
+                "derivation_type": "user_statement",
+                "evidence": "stated in chat",
+                "evidence_uris": ["workspaces://universal-llm-gateway/tmp/x.md"],
+                "reasoning_summary": "relay",
+            }
+        ],
+    }
+    proposal_id = _propose_patch(cortex_client, patch)
+    resp = cortex_client.post("/graph/imprint/commit", json={"proposal_id": proposal_id})
+    assert resp.status_code == 200, resp.json()
+    row = migrated_conn.execute(
+        "SELECT derivation_type, evidence, evidence_uris, reasoning_summary "
+        "FROM assertions WHERE entity_id = 'person:alice' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row["derivation_type"] == "user_statement"
+    assert row["evidence"] == "stated in chat"
+    assert "workspaces://" in (row["evidence_uris"] or "")
+    assert row["reasoning_summary"] == "relay"
+
+
+def test_commit_matter_noted_valid_from_persisted(
+    cortex_client: TestClient, migrated_conn: sqlite3.Connection
+) -> None:
+    _seed_provenance_fixtures(migrated_conn)
+    patch = {
+        "@context": "cortex.life/v1",
+        "@graph": [
+            {
+                "@id": _MATTER_SCOPE,
+                "noted": "Filing deadline observed",
+                "valid_from": "2026-03-15",
+            }
+        ],
+    }
+    proposal_id = _propose_patch(cortex_client, patch)
+    resp = cortex_client.post("/graph/imprint/commit", json={"proposal_id": proposal_id})
+    assert resp.status_code == 200, resp.json()
+    row = migrated_conn.execute(
+        "SELECT valid_from FROM assertions WHERE entity_id = ? ORDER BY id DESC LIMIT 1",
+        (_MATTER_SCOPE,),
+    ).fetchone()
+    assert row["valid_from"] == "2026-03-15"
+
+
+def test_commit_matter_noted_missing_valid_from_rolls_back(
+    cortex_client: TestClient, migrated_conn: sqlite3.Connection
+) -> None:
+    _seed_provenance_fixtures(migrated_conn)
+    before_entities = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+    before_assertions = migrated_conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[
+        0
+    ]
+    patch = {
+        "@context": "cortex.life/v1",
+        "@graph": [
+            {"@id": "account:new-hub", "@type": "account", "name": "Hub"},
+            {
+                "@id": _MATTER_SCOPE,
+                "noted": "Undated claim",
+            },
+        ],
+    }
+    proposal_id = _propose_patch(cortex_client, patch)
+    resp = cortex_client.post("/graph/imprint/commit", json={"proposal_id": proposal_id})
+    assert resp.status_code == 422, resp.json()
+    after_entities = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+    after_assertions = migrated_conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[0]
+    assert after_entities == before_entities
+    assert after_assertions == before_assertions
+    status = migrated_conn.execute(
+        "SELECT status FROM imprint_proposals WHERE id = ?", (proposal_id,)
+    ).fetchone()["status"]
+    assert status == "open"
+
+
+def test_commit_document_issued_by_relationship(
+    cortex_client: TestClient, migrated_conn: sqlite3.Connection
+) -> None:
+    _seed_provenance_fixtures(migrated_conn)
+    patch = {
+        "@context": "cortex.life/v1",
+        "@graph": [
+            {"@id": "document:brief", "issued_by": {"@id": "organization:acme"}},
+        ],
+    }
+    proposal_id = _propose_patch(cortex_client, patch)
+    resp = cortex_client.post("/graph/imprint/commit", json={"proposal_id": proposal_id})
+    assert resp.status_code == 200, resp.json()
+    row = migrated_conn.execute(
+        "SELECT from_entity, to_entity, type FROM relationships "
+        "WHERE from_entity = 'document:brief' AND type = 'issued_by'"
+    ).fetchone()
+    assert row is not None
+    assert row["to_entity"] == "organization:acme"
+
+
+def test_commit_duplicate_typed_document_id_apply_failed(
+    cortex_client: TestClient, migrated_conn: sqlite3.Connection
+) -> None:
+    """Duplicate typed @id commit outcome unchanged from base (AC4-dup, document fixture)."""
+    patch = {
+        "@context": "cortex.life/v1",
+        "@graph": [
+            {"@id": "document:dup-proof", "@type": "document", "name": "Alpha"},
+            {"@id": "document:dup-proof", "@type": "document", "name": "Beta"},
+        ],
+    }
+    before_entities = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+    before_assertions = migrated_conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[
+        0
+    ]
+    resp = cortex_client.post("/graph/imprint/propose", json={"patch": patch})
+    assert resp.status_code == 200, resp.json()
+    body = resp.json()
+    creates = [e for e in body["op_plan"] if e["op"] == "entity_create"]
+    assert len(creates) == 2
+    proposal_id = body["proposal_id"]
+    assert proposal_id
+
+    commit = cortex_client.post(
+        "/graph/imprint/commit", json={"proposal_id": proposal_id}
+    )
+    assert commit.status_code == 422, commit.json()
+    assert commit.json()["code"] == "apply_failed"
+
+    after_entities = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+    after_assertions = migrated_conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[
+        0
+    ]
+    assert after_entities == before_entities
+    assert after_assertions == before_assertions
+
+
+def test_commit_forward_ref_correspondence(
+    cortex_client: TestClient, migrated_conn: sqlite3.Connection
+) -> None:
+    patch = {
+        "@context": "cortex.life/v1",
+        "@graph": [
+            {
+                "@id": "account:mailbox",
+                "correspondence_with": {"@id": "document:letter-1"},
+            },
+            {"@id": "document:letter-1", "@type": "document", "name": "Letter"},
+            {"@id": "account:mailbox", "@type": "account", "name": "Mailbox"},
+        ],
+    }
+    proposal_id = _propose_patch(cortex_client, patch)
+    before = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+    resp = cortex_client.post("/graph/imprint/commit", json={"proposal_id": proposal_id})
+    assert resp.status_code == 200, resp.json()
+    after = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+    assert after == before + 2
+    rel = migrated_conn.execute(
+        "SELECT 1 FROM relationships WHERE from_entity = 'account:mailbox' "
+        "AND to_entity = 'document:letter-1'"
+    ).fetchone()
+    assert rel is not None
+
+
 def test_events_module_registers_commit_factories() -> None:
     import importlib
 

@@ -111,8 +111,7 @@ async def test_code_surface_marked_prompt_attests_via_inline_seals(
 async def test_code_surface_missing_skill_block_fails_attest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Seal missing from committed turn → SkillReceiptUnverifiedError(submitted=True)."""
-    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
+    """Seal missing from committed turn → attest miss, send_prompt returns (Phase 0)."""
     from claude_bundles.project_ask import send_prompt
 
     page, submit_calls, _insert, _attest, patches = _code_surface_harness(monkeypatch)
@@ -125,8 +124,7 @@ async def test_code_surface_missing_skill_block_fails_attest(
                 new=AsyncMock(return_value=[]),
             )
         )
-        with pytest.raises(SkillReceiptUnverifiedError, match="undelivered"):
-            await send_prompt(page, _MARKED, claude_surface="code")
+        await send_prompt(page, _MARKED, claude_surface="code")
     assert submit_calls
 
 
@@ -135,7 +133,6 @@ async def test_code_surface_stale_seal_nonce_fails_attest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An earlier-turn seal must not satisfy this dispatch's attest."""
-    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
     from claude_bundles.project_ask import send_prompt
 
     page, _submit, _insert, attest_payloads, patches = _code_surface_harness(
@@ -154,8 +151,7 @@ async def test_code_surface_stale_seal_nonce_fails_attest(
                 side_effect=_seals_only_stale,
             )
         )
-        with pytest.raises(SkillReceiptUnverifiedError):
-            await send_prompt(page, _MARKED, claude_surface="code")
+        await send_prompt(page, _MARKED, claude_surface="code")
     assert not attest_payloads or attest_payloads[-1]["ok"] is False
 
 
