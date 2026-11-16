@@ -28,10 +28,35 @@ from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatc
 _CSE_URL = "https://claude.ai/cowork/cse_testholder1"
 
 
+@pytest.fixture(autouse=True)
+def _redirect_background_uds_publishers(
+    _events_sink_default_off_live: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    for mod_name in (
+        "agent_bus_store.events.publisher",
+        "libs.agent_bus_store.events.publisher",
+        "cortex_store.event_publisher",
+        "libs.cortex_store.event_publisher",
+        "mcp_events",
+    ):
+        mod = sys.modules.get(mod_name)
+        pub = getattr(mod, "_publisher", None) if mod is not None else None
+        if pub is not None and hasattr(pub, "_sock_path"):
+            monkeypatch.setattr(pub, "_sock_path", _events_sink_default_off_live)
+    from services.git_integration_worker.tests.events_sink_hermetic import (
+        live_connect_attempts,
+    )
+
+    live_connect_attempts.clear()
+
+
 @pytest.fixture()
 def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CursorDispatchLedger:
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    CursorDispatchLedger._instance = None
+    monkeypatch.setattr(CursorDispatchLedger, "_instance", None)
     return CursorDispatchLedger.instance()
 
 
@@ -196,7 +221,7 @@ def test_ledger_init_survives_boot_reconcile_registry_error(
     from claude_bundles.cdp_registry_store import RegistryStoreError
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    CursorDispatchLedger._instance = None
+    monkeypatch.setattr(CursorDispatchLedger, "_instance", None)
     with patch(
         "claude_bundles.cdp_registry.session_address.list_active",
         side_effect=RegistryStoreError("corrupt test registry"),
@@ -423,6 +448,10 @@ def test_close_owed_wake_on_lane_activity_closes_open_row(
 def test_upsert_holder_refuses_houseless_registry_row(
     ledger: CursorDispatchLedger, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from services.git_integration_worker.cse_session_holders import (
+        HolderProjectionRefusedError,
+    )
+
     reg = "583b411df34247f9a48bc044b6518be3"
     url = "https://claude.ai/cowork/cse_01HouselessMailbox"
     monkeypatch.setattr(
@@ -431,8 +460,10 @@ def test_upsert_holder_refuses_houseless_registry_row(
     )
     with ledger._connect() as conn:
         ensure_schema(conn)
-        with pytest.raises(ValueError, match="houseless"):
+        with pytest.raises(HolderProjectionRefusedError, match="houseless") as exc_info:
             upsert_holder(conn, chat_url=url, registration_id=reg)
+    assert exc_info.value.reason == "houseless_registration"
+    assert exc_info.value.registration_id == reg
 
 
 def test_boot_reconcile_skips_houseless_registry_adopt(

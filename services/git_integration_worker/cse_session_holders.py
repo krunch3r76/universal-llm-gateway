@@ -109,7 +109,30 @@ class RemoteUpsert(StrEnum):
 
     OK = "ok"
     LANE_CONFLICT = "lane_conflict"
+    REFUSED = "refused"
     UNAVAILABLE = "unavailable"
+
+
+class HolderProjectionRefusedError(ValueError):
+    """Typed policy refusal when a CSE holder upsert violates GIW ledger invariants.
+
+    Raised by ``upsert_holder`` when the URL is not a valid seat address or the
+    registration is houseless, allowing the admin route to return HTTP 422
+    instead of collapsing policy refusals into HTTP 500 outages.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        holder_id: str | None = None,
+        registration_id: str | None = None,
+    ) -> None:
+        self.reason = reason
+        self.holder_id = holder_id
+        self.registration_id = registration_id
+        super().__init__(message)
 
 
 class HolderLaneConflictError(Exception):
@@ -158,9 +181,14 @@ def upsert_holder(
     """
     url = normalize_cse_url(chat_url)
     hid = holder_id_from_chat_url(url)
-    if not hid:
-        raise ValueError(f"invalid CSE chat_url: {chat_url!r}")
     reg = (registration_id or "").strip() or None
+    if not hid:
+        raise HolderProjectionRefusedError(
+            f"invalid CSE chat_url: {chat_url!r}",
+            reason="invalid_chat_url",
+            holder_id=None,
+            registration_id=reg,
+        )
     if reg:
         # Best-effort belt-and-braces on io-local registry; authority is cdp_ask on Jupiter.
         try:
@@ -172,10 +200,21 @@ def upsert_holder(
             if isinstance(reg_row, dict) and is_houseless_purpose(
                 reg_row.get("purpose")
             ):
-                raise ValueError(
-                    f"houseless registration must not be persisted in GIW ledger: {reg}"
+                _emit(
+                    "cse.holder.upsert_refused",
+                    {
+                        "holder_id": hid,
+                        "registration_id": reg,
+                        "reason": "houseless_registration",
+                    },
                 )
-        except ValueError:
+                raise HolderProjectionRefusedError(
+                    f"houseless registration must not be persisted in GIW ledger: {reg}",
+                    reason="houseless_registration",
+                    holder_id=hid,
+                    registration_id=reg,
+                )
+        except HolderProjectionRefusedError:
             raise
         except Exception as exc:
             logger.warning(
@@ -821,6 +860,24 @@ def _lane_conflict_from_http_error(
     return None
 
 
+def _refused_from_http_error(
+    exc: urllib.error.HTTPError,
+) -> dict[str, Any] | None:
+    try:
+        raw = exc.read()
+        payload = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        reason = detail.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            return detail
+    return None
+
+
 def upsert_holder_remote(
     *,
     chat_url: str,
@@ -830,10 +887,10 @@ def upsert_holder_remote(
 ) -> RemoteUpsert:
     """Best-effort HTTP upsert for out-of-process callers (cdp_registry hook).
 
-    One POST to GIW ``/cse-holder/upsert`` with no retry. Transport failure and
-    non-conflict HTTP errors return ``RemoteUpsert.UNAVAILABLE`` (fail-open).
-    HTTP 409 with ``lane_conflict`` returns ``RemoteUpsert.LANE_CONFLICT`` so
-    callers do not treat a live cross-lane refusal as success or as GIW-down.
+    One POST to GIW ``/cse-holder/upsert`` with no retry. Transport failure,
+    5xx, and untyped 4xx return ``RemoteUpsert.UNAVAILABLE`` (fail-open).
+    HTTP 409 with ``lane_conflict`` returns ``RemoteUpsert.LANE_CONFLICT`` and
+    HTTP 422 with a typed ``detail.reason`` returns ``RemoteUpsert.REFUSED``.
     """
     if _remote_holder_write_blocked_under_pytest():
         logger.warning(
@@ -879,6 +936,10 @@ def upsert_holder_remote(
                     conflict.get("requested_lane"),
                 )
                 return RemoteUpsert.LANE_CONFLICT
+        elif exc.code == 422:
+            refused = _refused_from_http_error(exc)
+            if refused is not None:
+                return RemoteUpsert.REFUSED
         logger.debug("cse holder remote upsert fail-open: %s", exc)
         return RemoteUpsert.UNAVAILABLE
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -1157,6 +1218,7 @@ __all__ = [
     "dispatch_owed_wake_producer1_row",
     "ensure_schema",
     "HolderLaneConflictError",
+    "HolderProjectionRefusedError",
     "get_driving_holder_for_lane",
     "get_holder",
     "lookup_holder_for_owed_wake",
