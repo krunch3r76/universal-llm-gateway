@@ -605,6 +605,51 @@ def test_enum_echo_line_does_not_body_veto(tmp_path: Path) -> None:
     assert out.extras.get("archive_verdict") == "APPROVE"
 
 
+def test_smuggle_pipe_segment_request_changes_before_merge_does_not_promote(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "smuggle-rc-prose.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "VERDICT: APPROVE range=a..b head=b",
+                "APPROVE | REQUEST_CHANGES before merge",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
+
+
+def test_enum_echo_near_miss_substrings_do_not_promote(tmp_path: Path) -> None:
+    archive = tmp_path / "enum-near-miss.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "VERDICT: APPROVE range=a..b head=b",
+                "REQUEST_CHANGES_PENDING | xAPPROVE",
+                "APPROVE-ish | REQUEST_CHANGES",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
+
+
+def test_plain_loose_verdict_request_changes_does_not_promote(tmp_path: Path) -> None:
+    archive = tmp_path / "loose-rc-plain.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "VERDICT: APPROVE range=a..b head=b",
+                "Verdict: REQUEST_CHANGES",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
+
+
 def test_terminal_payload_without_parseable_verdict_stays_failed(
     tmp_path: Path,
 ) -> None:

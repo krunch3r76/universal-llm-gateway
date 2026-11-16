@@ -113,11 +113,25 @@ def _line_bounds(body: str, index: int) -> tuple[int, int]:
     return start, end
 
 
+def _clean_pipe_segment(segment: str) -> str:
+    """Strip whitespace and light markdown wrappers from a pipe segment."""
+    cleaned = segment.strip()
+    if len(cleaned) >= 2 and cleaned[0] == "`" and cleaned[-1] == "`":
+        cleaned = cleaned[1:-1].strip()
+    if len(cleaned) >= 4 and cleaned.startswith("**") and cleaned.endswith("**"):
+        cleaned = cleaned[2:-2].strip()
+    return cleaned.strip()
+
+
 def _segment_names_enum_token(segment: str) -> str | None:
-    """Return the verdict enum token named in a pipe segment, if any."""
-    for token in sorted(_VERDICT_ENUM_TOKENS, key=len, reverse=True):
-        if re.search(rf"(?i)\b{re.escape(token)}\b", segment):
-            return token
+    """Return the verdict enum token only when the segment is exactly that token."""
+    candidates = [_clean_pipe_segment(segment)]
+    if ":" in segment:
+        candidates.append(_clean_pipe_segment(segment.rsplit(":", 1)[-1]))
+    for cleaned in candidates:
+        normalized = _normalize_verdict_token(cleaned)
+        if normalized in _VERDICT_ENUM_TOKENS:
+            return normalized
     return None
 
 
