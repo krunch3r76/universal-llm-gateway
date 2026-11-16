@@ -101,7 +101,10 @@ def execute_bind_address(req: BindAddressRequest) -> dict[str, object]:
     """Bind a unified or Cowork seat URL; optional ``parent_thread`` bus associate."""
     from claude_bundles import cdp_registry_store as store
     from claude_bundles.cdp_registry.execution_state import row_execution_in_flight
-    from claude_bundles.cdp_registry.session_address import bind_session_address
+    from claude_bundles.cdp_registry.session_address import (
+        bind_session_address,
+        holder_projection_applies,
+    )
     from claude_bundles.cse_url import BINDABLE_SEAT_KINDS, parse_claude_seat_address
 
     parsed = parse_claude_seat_address(req.chat_url)
@@ -175,6 +178,7 @@ def execute_bind_address(req: BindAddressRequest) -> dict[str, object]:
             cse_registration_id=reg_id,
             bound_by=_BIND_ADDRESS_BY,
             evidence=(req.reason or "repair_bind_address").strip(),
+            holder_projection=holder_projection_applies(row),
         )
         from agent_bus_store.db.turns import insert_turn
         from hop_handoff.body import build_seat_registration_stamp
@@ -230,6 +234,8 @@ def _chat_session_refuse_body(code: str, message: str) -> dict[str, object]:
 
 
 class StandingPinHealthModel(BaseModel):
+    """Advisory health projection for one standing CDP display pin reported on ``/health``."""
+
     state: str
     source: str
     observed_at: str
