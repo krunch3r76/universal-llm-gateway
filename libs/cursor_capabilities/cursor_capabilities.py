@@ -523,6 +523,21 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         instruction_profile="reasoner",
         probed_at="2026-11-12",
     ),
+    # Gemini 4 Hydrogen (Google frontier, fast tier). Live ListModels probe
+    # 2026-11-15: id=gemini-4-hydrogen, parameter reasoning_effort
+    # accepted=(low, medium, high, xhigh), default_variant={reasoning_effort: high};
+    # no context parameter knob (same pattern as Carbon).
+    "gemini-4-hydrogen": ModelCapability(
+        knobs={
+            "effort": KnobSpec(
+                accepted=("low", "medium", "high", "xhigh"),
+                default="high",
+            ),
+        },
+        default_variant={"effort": "high"},
+        instruction_profile="reasoner",
+        probed_at="2026-11-15",
+    ),
     "glm-5.2": ModelCapability(
         knobs={
             "reasoning": KnobSpec(accepted=("high", "max"), default="high"),

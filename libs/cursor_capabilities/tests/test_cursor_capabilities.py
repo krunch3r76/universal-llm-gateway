@@ -34,6 +34,7 @@ _GOVERNED_INSTRUCTION_PROFILES: dict[str, str] = {
     "grok-4.7": "reasoner",
     "gemini-4-argon": "reasoner",
     "gemini-4-carbon": "reasoner",
+    "gemini-4-hydrogen": "reasoner",
     "muse-wonder-1.0": "reasoner",
 }
 
@@ -60,6 +61,17 @@ def test_gemini_4_carbon_stamped_from_listmodels_probe() -> None:
     assert cap.context_window_tokens is None
 
 
+def test_gemini_4_hydrogen_stamped_from_listmodels_probe() -> None:
+    """Production card: stamped from live ListModels probe (2026-11-15)."""
+    cap = CURSOR_MODEL_CAPABILITIES["gemini-4-hydrogen"]
+    assert cap.probed_at == "2026-11-15"
+    assert set(cap.knobs) == {"effort"}
+    assert cap.knobs["effort"].accepted == ("low", "medium", "high", "xhigh")
+    assert cap.knobs["effort"].default == "high"
+    assert cap.default_variant == {"effort": "high"}
+    assert cap.context_window_tokens is None
+
+
 def test_gemini_3_7_flash_stamped_from_listmodels_probe() -> None:
     """Production card: stamped from live ListModels probe (2026-10-17)."""
     cap = CURSOR_MODEL_CAPABILITIES["gemini-3.7-flash"]
@@ -76,7 +88,7 @@ def test_model_capability_default_instruction_profile_is_mechanical() -> None:
 
 
 def test_governed_rows_carry_instruction_profile_classifications() -> None:
-    assert len(CURSOR_MODEL_CAPABILITIES) == 25
+    assert len(CURSOR_MODEL_CAPABILITIES) == 26
     opus5 = CURSOR_MODEL_CAPABILITIES["claude-opus-5"]
     opus55 = CURSOR_MODEL_CAPABILITIES["claude-opus-5-5"]
     assert opus55.knobs == opus5.knobs
