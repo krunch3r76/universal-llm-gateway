@@ -9,11 +9,8 @@ import time
 from pathlib import Path
 
 import pytest
-from io_agent_gc2_browser import (
-    format_systemd_environment_block,
-    gc2_service_environment,
-    provision_gc2_browser_config,
-)
+from io_agent_display_browser import format_systemd_environment_block
+from io_agent_gc2_browser import gc2_service_environment, provision_gc2_browser_config
 
 
 @pytest.mark.offline
