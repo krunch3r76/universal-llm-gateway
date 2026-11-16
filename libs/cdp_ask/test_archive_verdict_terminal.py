@@ -1,4 +1,4 @@
-"""Archive verdict salvage at cdp_ask finish_execution (a:27142)."""
+"""Archive verdict at cdp_ask finish_execution never promotes (a:27142, Decision 06)."""
 
 from __future__ import annotations
 
@@ -34,10 +34,10 @@ def store() -> ExecutionStore:
 
 
 @pytest.mark.asyncio
-async def test_finish_execution_promotes_skill_receipt_archive_verdict(
+async def test_finish_execution_keeps_skill_receipt_failure_with_approving_archive(
     store: ExecutionStore, tmp_path: Path
 ) -> None:
-    """End-to-end through finish_execution with a real archived harvest body."""
+    """End-to-end through finish_execution: an APPROVE_WITH_NITS archive stays failed."""
     record = await store.create(holder="test", purpose="review")
     err = (
         "skill_receipt_unverified: undelivered=['reasoning-posture'] (friction a:27142)"
@@ -55,38 +55,15 @@ async def test_finish_execution_promotes_skill_receipt_archive_verdict(
 
     refreshed = await store.get(record.execution_id)
     assert refreshed is not None
-    assert refreshed.status == "completed"
+    assert refreshed.status == "failed"
+    assert refreshed.error == err
     result = refreshed.result or {}
-    assert result.get("ok") is True
-    assert result.get("archive_verdict") == "APPROVE_WITH_NITS"
-    assert result.get("skill_receipt_warning") == err
-    assert result.get("harvest_provenance") == "chat"
-    assert refreshed.error is None
+    assert result.get("ok") is False
+    assert "archive_verdict" not in result
+    assert "verdict_source" not in result
 
-
-@pytest.mark.asyncio
-async def test_poll_surfaces_salvage_fields(
-    store: ExecutionStore, tmp_path: Path
-) -> None:
-    record = await store.create(holder="test", purpose="review")
-    err = "skill_receipt_unverified: undelivered=['reasoning-posture']"
-    archive = tmp_path / "poll-archive.md"
-    archive.write_text(_882FEF0D_ARCHIVE, encoding="utf-8")
-    await finish_execution(
-        store,
-        record.execution_id,
-        {
-            "ok": False,
-            "error": err,
-            "body": "harvested",
-            "archive_uri": f"file://{archive}",
-            "stall_stage": "observer_unverified",
-        },
-    )
     client = TestClient(create_app(store=store))
     poll = client.get(f"/v1/project-ask/executions/{record.execution_id}").json()
-    assert poll["ok"] is True
-    assert poll["archive_verdict"] == "APPROVE_WITH_NITS"
-    assert poll["verdict_source"] == "archive"
-    assert poll["skill_receipt_warning"] == err
-    assert err in (poll.get("warnings") or [])
+    assert poll["ok"] is False
+    assert poll.get("archive_verdict") is None
+    assert poll.get("verdict_source") is None
