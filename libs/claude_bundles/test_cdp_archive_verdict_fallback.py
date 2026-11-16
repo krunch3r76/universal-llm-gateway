@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from claude_bundles.cdp_archive_verdict_fallback import (
     apply_archive_verdict_fallback,
+    apply_archive_verdict_fallback_terminal_payload,
     parse_archive_verdict,
+    parse_canonical_verdict_line,
 )
 from claude_bundles.cdp_model_endpoint import CdpGenerateResult
 
@@ -26,6 +29,8 @@ VERDICT: APPROVE range=aaaa..bbbb head=bbbb
 
 Seat review complete.
 """
+
+_RECEIPT_ERR = "skill_receipt_unverified: panel timeout"
 
 
 def test_parse_archive_verdict_approve() -> None:
@@ -47,16 +52,17 @@ def test_archive_verdict_promotes_ok(
         prompt_uri="cortex://x",
         picker_model="opus",
         stall_stage="observer_unverified",
-        error="skill_receipt_unverified: panel timeout",
+        error=_RECEIPT_ERR,
         archive_uri=uri,
     )
     out = apply_archive_verdict_fallback(result)
     assert out.ok is True
     assert out.extras.get("verdict_source") == "archive"
     assert out.extras.get("archive_verdict") == "APPROVE"
+    assert out.extras.get("skill_receipt_warning") == result.error
 
 
-def test_prose_approve_after_request_changes_not_approve() -> None:
+def test_prose_without_verdict_line_not_parsed() -> None:
     body = (
         "REQUEST_CHANGES on scope.\n"
         "The operator would not approve this without a revisit.\n"
@@ -67,6 +73,75 @@ def test_prose_approve_after_request_changes_not_approve() -> None:
 def test_prompt_echo_verdict_not_parsed() -> None:
     body = "VERDICT <APPROVE|REQUEST_CHANGES>\n"
     assert parse_archive_verdict(body) is None
+
+
+def test_template_pipe_verdict_line_not_parsed() -> None:
+    body = "VERDICT: APPROVE|APPROVE_WITH_NITS|REQUEST_CHANGES range=x..y\n"
+    assert parse_canonical_verdict_line(body) is None
+
+
+def test_request_changes_with_ratify_prose_stays_failed(tmp_path: Path) -> None:
+    archive = tmp_path / "rc.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "## Body",
+                "",
+                "VERDICT: REQUEST_CHANGES range=a..b head=b",
+                "The advance set {APPROVE, PASS, SHIP, RATIFY} must not flip ok.",
+                "We might RATIFY later after fixes.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    out = apply_archive_verdict_fallback(result)
+    assert out.ok is False
+    assert "archive_verdict" not in (out.extras or {})
+
+
+def test_ratify_with_conditions_stays_failed(tmp_path: Path) -> None:
+    archive = tmp_path / "rwc.md"
+    archive.write_text(
+        "## Body\n\nVERDICT: RATIFY_WITH_CONDITIONS range=a..b\n",
+        encoding="utf-8",
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=f"file://{archive}",
+    )
+    assert apply_archive_verdict_fallback(result).ok is False
+
+
+def test_compound_receipt_error_stays_failed(tmp_path: Path) -> None:
+    archive = tmp_path / "compound.md"
+    archive.write_text(_BAB9_BODY, encoding="utf-8")
+    payload = {
+        "ok": False,
+        "error": "skill_receipt_unverified: panel; harvest_failed: Target closed",
+        "archive_uri": f"file://{archive}",
+    }
+    out = apply_archive_verdict_fallback_terminal_payload(
+        payload,
+        execution_id="e" * 32,
+        purpose="review",
+    )
+    assert out["ok"] is False
 
 
 def test_stays_unverified_without_parseable_archive(tmp_path: Path) -> None:
@@ -106,5 +181,105 @@ def test_no_archive_stays_unverified() -> None:
     assert "verdict_source" not in (out.extras or {})
 
 
+def test_fallback_exception_returns_unchanged_payload(tmp_path: Path) -> None:
+    archive = tmp_path / "safe.md"
+    archive.write_text(_BAB9_BODY, encoding="utf-8")
+    payload = {
+        "ok": False,
+        "error": _RECEIPT_ERR,
+        "archive_uri": f"file://{archive}",
+    }
+    with patch(
+        "claude_bundles.cdp_archive_verdict_fallback._merge_promoted_payload",
+        side_effect=RuntimeError("boom"),
+    ):
+        out = apply_archive_verdict_fallback_terminal_payload(
+            payload, execution_id="e" * 32, purpose="review"
+        )
+    assert out is payload
+    assert out["ok"] is False
+    assert out["error"] == _RECEIPT_ERR
+
+
 def test_file_proof() -> None:
     assert Path(__file__).resolve().name == "test_cdp_archive_verdict_fallback.py"
+
+
+_882FEF0D_ARCHIVE = """# CDP ask harvest
+
+- execution_id: `3a138d9c3ec640d9953ca5c1e9c5f451`
+- stargate_execution_id: `882fef0d-ebd1-4cce-9605-be2243f114a2`
+- outcome: failed
+- error: skill_receipt_unverified: required skills fail channel attest after attach + inline + induction seal: undelivered=['reasoning-posture', 'consult-posture', 'hypothesize-simulate'] (attached=[], inlined=[], induction=[]) — fail closed (friction a:27142)
+
+## Body
+
+VERDICT: APPROVE_WITH_NITS range=706f4b8dbbb376bdbf3ee62ec3b77c8f62c303db..d2bf6021088fb85eac2d30c5412bc5811ba2fba9 head=d2bf6021088fb85eac2d30c5412bc5811ba2fba9
+
+Seat review complete.
+"""
+
+
+def test_terminal_payload_skill_receipt_promotes_ok(
+    tmp_path: Path,
+) -> None:
+    err = (
+        "skill_receipt_unverified: undelivered=['reasoning-posture'] (friction a:27142)"
+    )
+    archive = tmp_path / "882fef0d-archive.md"
+    archive.write_text(_882FEF0D_ARCHIVE, encoding="utf-8")
+    payload = {
+        "ok": False,
+        "error": err,
+        "body": "seat prose",
+        "archive_uri": f"file://{archive}",
+        "stall_stage": "observer_unverified",
+    }
+    out = apply_archive_verdict_fallback_terminal_payload(
+        payload,
+        execution_id="3a138d9c3ec640d9953ca5c1e9c5f451",
+        purpose="review",
+    )
+    assert out["ok"] is True
+    assert out["archive_verdict"] == "APPROVE_WITH_NITS"
+    assert out["skill_receipt_warning"] == err
+    assert out.get("error") is None
+    assert out.get("harvest_provenance") == "chat"
+
+
+def test_terminal_payload_ask_purpose_does_not_promote(tmp_path: Path) -> None:
+    archive = tmp_path / "ask-chat.md"
+    archive.write_text(
+        "## Body\n\nVerdict: approve — see attached output.\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "ok": False,
+        "error": _RECEIPT_ERR,
+        "body": "Verdict: approve",
+        "archive_uri": f"file://{archive}",
+    }
+    out = apply_archive_verdict_fallback_terminal_payload(
+        payload, execution_id="e" * 32, purpose="ask"
+    )
+    assert out["ok"] is False
+
+
+def test_terminal_payload_without_parseable_verdict_stays_failed(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "no-verdict.md"
+    archive.write_text(
+        "# CDP ask harvest\n\n- outcome: failed\n\n## Body\n\nno verdict here\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "ok": False,
+        "error": "skill_receipt_unverified: empty",
+        "archive_uri": f"file://{archive}",
+    }
+    out = apply_archive_verdict_fallback_terminal_payload(
+        payload, execution_id="e" * 32, purpose="review"
+    )
+    assert out["ok"] is False
+    assert "archive_verdict" not in out
