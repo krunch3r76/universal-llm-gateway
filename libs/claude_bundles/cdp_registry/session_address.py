@@ -43,6 +43,20 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+
+def _holder_registration_id_for_upsert(
+    registration_id: str,
+    *,
+    row: dict[str, Any],
+) -> str | None:
+    """Omit registration_id for houseless rows — GIW ledger excludes them."""
+    from claude_bundles.what_is_running_view import is_houseless_purpose
+
+    if is_houseless_purpose(str(row.get("purpose") or "")):
+        return None
+    return registration_id
+
+
 def attachment_for_chat_url(chat_url: str) -> Registration | None:
     """Return the sole host-listable row for *chat_url*, or None."""
     norm = canonical_claude_seat_url(chat_url) or normalize_cse_url(chat_url or "")
@@ -213,7 +227,9 @@ def bind_session_address(
 
                 upsert_result = upsert_holder_remote(
                     chat_url=url,
-                    registration_id=registration_id,
+                    registration_id=_holder_registration_id_for_upsert(
+                        registration_id, row=updated
+                    ),
                     execution_id=execution_id,
                 )
                 if upsert_result is RemoteUpsert.LANE_CONFLICT:
@@ -288,9 +304,12 @@ def bind_session_address(
         upsert_holder_remote,
     )
 
+    bound_row = active.get(registration_id) or {}
     upsert_result = upsert_holder_remote(
         chat_url=url,
-        registration_id=registration_id,
+        registration_id=_holder_registration_id_for_upsert(
+            registration_id, row=bound_row
+        ),
         execution_id=execution_id,
     )
     if upsert_result is RemoteUpsert.LANE_CONFLICT:

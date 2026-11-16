@@ -16,3 +16,10 @@ def test_resume_refuses_wrong_chat_tab_identity_mismatch() -> None:
     c1 = "https://claude.ai/cowork/cse_alpha"
     c2 = "https://claude.ai/cowork/cse_beta"
     assert _cse_id(c1) != _cse_id(c2)
+
+
+def test_resume_chat_host_and_case_variants_match() -> None:
+    uuid_lower = "2762063d-2966-4859-a3ce-23831c6e0c86"
+    canonical = f"https://claude.ai/chat/{uuid_lower}"
+    www_upper = f"https://www.claude.ai/chat/{uuid_lower.upper()}"
+    assert _cse_id(canonical) == _cse_id(www_upper)

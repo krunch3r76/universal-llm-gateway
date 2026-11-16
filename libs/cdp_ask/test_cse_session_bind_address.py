@@ -202,9 +202,9 @@ def test_repair_bind_journals_provenance(client: TestClient) -> None:
         },
     )
     assert resp.status_code == 200, resp.text
-    from claude_bundles import cdp_registry_store as store
-
     import json
+
+    from claude_bundles import cdp_registry_store as store
 
     found = False
     for line in store.REGISTRY_LOG.read_text(encoding="utf-8").splitlines():
@@ -236,6 +236,50 @@ def test_bind_address_in_flight_refuses_even_when_bound(client: TestClient) -> N
     )
     assert resp.status_code == 409
     assert resp.json().get("code") == "in_flight"
+
+
+def test_bind_address_stamp_skipped_no_parent_thread(client: TestClient) -> None:
+    rid = "reg-stamp-skip-parent"
+    _write_row(rid)
+    resp = client.post(
+        "/v1/cse-session/bind-address",
+        json={
+            "registration_id": rid,
+            "chat_url": _UNIFIED,
+            "dry_run": False,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json().get("stamp") == "skipped_no_parent_thread"
+
+
+def test_bind_address_stamp_outcome_failed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rid = "reg-stamp-failed"
+    _write_row(rid)
+
+    def _raise(**_kw: object) -> int:
+        raise RuntimeError("stamp refused for test")
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.cse_associations.associate_cse",
+        lambda **kw: {"thread_id": kw["thread_id"]},
+    )
+    monkeypatch.setattr("agent_bus_store.db.turns.insert_turn", _raise)
+    resp = client.post(
+        "/v1/cse-session/bind-address",
+        json={
+            "registration_id": rid,
+            "chat_url": _UNIFIED,
+            "dry_run": False,
+            "parent_thread": "agent-bus:99998",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("stamp") == "failed"
+    assert body.get("stamp_error") == "RuntimeError"
 
 
 def test_bind_address_stamp_outcome_posted(

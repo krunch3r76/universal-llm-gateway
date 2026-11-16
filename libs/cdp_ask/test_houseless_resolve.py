@@ -162,28 +162,23 @@ def test_bind_unified_chat_resolves_houseless_unmocked(
     store.ensure_dirs()
     monkeypatch.setattr(reg._store, "is_seat_authority", lambda: True)
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "holder-data"))
-    from services.git_integration_worker.cursor_dispatch_ledger import (
-        CursorDispatchLedger,
-    )
     from services.git_integration_worker.cse_session_holders import (
         RemoteUpsert,
         ensure_schema,
         get_holder,
         upsert_holder,
     )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
 
     CursorDispatchLedger._instance = None
     ledger = CursorDispatchLedger.instance()
 
     def _local_holder_upsert(**kw: object) -> RemoteUpsert:
-        holder_kw = {
-            k: v
-            for k, v in dict(kw).items()
-            if k in {"chat_url", "execution_id", "lane_thread_id"}
-        }
         with ledger._connect() as conn:
             ensure_schema(conn)
-            upsert_holder(conn, **holder_kw)  # type: ignore[arg-type]
+            upsert_holder(conn, **dict(kw))  # type: ignore[arg-type]
         return RemoteUpsert.OK
 
     monkeypatch.setattr(
