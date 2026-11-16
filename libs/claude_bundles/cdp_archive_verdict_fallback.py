@@ -18,10 +18,23 @@ _CANONICAL_VERDICT_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _LOOSE_VERDICT_LINE_RE = re.compile(
-    r"(?im)^\W*verdict\W*[:=-]?\s*\**\s*(?P<token>\w+)",
+    r"(?i)\bverdict\b[^\w\n]{0,4}?(?:[:=\u2014\u2013]|\s-\s)[^\w\n]*(?P<token>\w+)",
 )
+_REQUEST_CHANGES_BODY_RE = re.compile(r"(?i)\bREQUEST_CHANGES\b")
+_BARE_VERDICT_COLON_LINE_RE = re.compile(r"(?im)^VERDICT:\s*$")
 _PROMPT_ECHO_VERDICT_RE = re.compile(r"(?im)^VERDICT\s*<")
 _ADVANCE_VERDICTS = frozenset({"APPROVE", "APPROVE_WITH_NITS"})
+_VERDICT_ENUM_TOKENS = frozenset(
+    {
+        "APPROVE",
+        "APPROVE_WITH_NITS",
+        "REQUEST_CHANGES",
+        "RATIFY",
+        "RATIFY_WITH_CONDITIONS",
+        "PASS",
+        "SHIP",
+    }
+)
 
 
 def _is_receipt_only_error(error: str | None) -> bool:
@@ -92,13 +105,68 @@ def _normalize_verdict_token(raw: str) -> str:
     return raw.upper().replace("-", "_")
 
 
+def _line_bounds(body: str, index: int) -> tuple[int, int]:
+    start = body.rfind("\n", 0, index) + 1
+    end = body.find("\n", index)
+    if end == -1:
+        end = len(body)
+    return start, end
+
+
+def _segment_names_enum_token(segment: str) -> str | None:
+    """Return the verdict enum token named in a pipe segment, if any."""
+    for token in sorted(_VERDICT_ENUM_TOKENS, key=len, reverse=True):
+        if re.search(rf"(?i)\b{re.escape(token)}\b", segment):
+            return token
+    return None
+
+
+def _line_is_pure_verdict_enum_echo(line: str) -> bool:
+    """True when ``REQUEST_CHANGES`` appears only in a pipe-delimited enum listing."""
+    stripped = line.strip()
+    if not _REQUEST_CHANGES_BODY_RE.search(stripped):
+        return False
+    loose = _LOOSE_VERDICT_LINE_RE.search(stripped)
+    if loose and _normalize_verdict_token(loose.group("token")) == "REQUEST_CHANGES":
+        return False
+    if "|" not in stripped:
+        return False
+    segments = [seg.strip() for seg in stripped.split("|") if seg.strip()]
+    if len(segments) < 2:
+        return False
+    saw_request_changes = False
+    for seg in segments:
+        token = _segment_names_enum_token(seg)
+        if token is None:
+            return False
+        if token == "REQUEST_CHANGES":
+            saw_request_changes = True
+    return saw_request_changes
+
+
+def _body_request_changes_blocks_promotion(body: str) -> bool:
+    """Fail-closed when ``REQUEST_CHANGES`` appears outside pure enum-echo lines."""
+    for match in _REQUEST_CHANGES_BODY_RE.finditer(body):
+        start, end = _line_bounds(body, match.start())
+        if not _line_is_pure_verdict_enum_echo(body[start:end]):
+            return True
+    return False
+
+
 def _loose_veto_blocks_promotion(body: str) -> bool:
     """Fail-closed when any loose ``verdict`` line names a non-advance token."""
     for match in _LOOSE_VERDICT_LINE_RE.finditer(body):
         token = _normalize_verdict_token(match.group("token"))
+        if token == "VERDICT":
+            return True
         if not _verdict_advances(token):
             return True
     return False
+
+
+def _bare_verdict_colon_blocks_promotion(body: str) -> bool:
+    """Fail-closed when a canonical ``VERDICT:`` line has no token."""
+    return _BARE_VERDICT_COLON_LINE_RE.search(body) is not None
 
 
 def _read_archive_text(archive_uri: str | None) -> str | None:
@@ -154,6 +222,10 @@ def apply_archive_verdict_fallback(result: CdpGenerateResult) -> CdpGenerateResu
     if not text:
         return result
     if _PROMPT_ECHO_VERDICT_RE.search(text):
+        return result
+    if _body_request_changes_blocks_promotion(text):
+        return result
+    if _bare_verdict_colon_blocks_promotion(text):
         return result
     if _loose_veto_blocks_promotion(text):
         return result

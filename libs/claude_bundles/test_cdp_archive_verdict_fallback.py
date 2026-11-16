@@ -501,6 +501,110 @@ def test_template_echo_plus_real_approve_does_not_promote(tmp_path: Path) -> Non
     assert apply_archive_verdict_fallback(result).ok is False
 
 
+def _receipt_result(archive_uri: str) -> CdpGenerateResult:
+    return CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="e" * 32,
+        satellite_execution_id="s" * 32,
+        prompt_uri="cortex://x",
+        picker_model="opus",
+        error=_RECEIPT_ERR,
+        archive_uri=archive_uri,
+    )
+
+
+def test_loose_veto_final_verdict_prefix(tmp_path: Path) -> None:
+    archive = tmp_path / "final-verdict.md"
+    archive.write_text(
+        "VERDICT: APPROVE range=a..b head=b\nFinal verdict: REQUEST_CHANGES\n",
+        encoding="utf-8",
+    )
+    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
+
+
+def test_loose_veto_overall_verdict_heading(tmp_path: Path) -> None:
+    archive = tmp_path / "overall.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "VERDICT: APPROVE range=a..b head=b",
+                "Overall VERDICT: REQUEST_CHANGES",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
+
+
+def test_loose_veto_numbered_list_item(tmp_path: Path) -> None:
+    archive = tmp_path / "numbered.md"
+    archive.write_text(
+        "VERDICT: APPROVE range=a..b head=b\n1. Verdict: REQUEST_CHANGES\n",
+        encoding="utf-8",
+    )
+    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
+
+
+def test_loose_veto_html_b_tag(tmp_path: Path) -> None:
+    archive = tmp_path / "html-b.md"
+    archive.write_text(
+        "VERDICT: APPROVE range=a..b head=b\n<b>VERDICT: REQUEST_CHANGES</b>\n",
+        encoding="utf-8",
+    )
+    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
+
+
+def test_loose_veto_html_p_strong_tag(tmp_path: Path) -> None:
+    archive = tmp_path / "html-p.md"
+    archive.write_text(
+        "VERDICT: APPROVE range=a..b head=b\n"
+        "<p><strong>Verdict:</strong> REQUEST_CHANGES</p>\n",
+        encoding="utf-8",
+    )
+    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
+
+
+def test_body_veto_markdown_table_request_changes(tmp_path: Path) -> None:
+    archive = tmp_path / "table.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "VERDICT: APPROVE range=a..b head=b",
+                "| Section | Outcome |",
+                "| Verdict | REQUEST_CHANGES |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
+
+
+def test_body_veto_bare_request_changes_token(tmp_path: Path) -> None:
+    archive = tmp_path / "bare-rc.md"
+    archive.write_text(
+        "VERDICT: APPROVE range=a..b head=b\nScope needs REQUEST_CHANGES before land.\n",
+        encoding="utf-8",
+    )
+    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
+
+
+def test_enum_echo_line_does_not_body_veto(tmp_path: Path) -> None:
+    archive = tmp_path / "enum-echo.md"
+    archive.write_text(
+        "\n".join(
+            [
+                "VERDICT: APPROVE range=a..b head=b",
+                "Allowed values: APPROVE | APPROVE_WITH_NITS | REQUEST_CHANGES",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    out = apply_archive_verdict_fallback(_receipt_result(f"file://{archive}"))
+    assert out.ok is True
+    assert out.extras.get("archive_verdict") == "APPROVE"
+
+
 def test_terminal_payload_without_parseable_verdict_stays_failed(
     tmp_path: Path,
 ) -> None:
