@@ -14,7 +14,8 @@ F3a (RULING 21088#158 + 21088#190) — rule of record for ``ingest_report_turn``
    that is not ``ledger_row:`` or ``purpose:`` maps with the same table as a subject token
    (R1).
 5. ``CLOSEOUT partial:capture`` and ``partial:consult`` map to ``done``; ``partial:work``,
-   ``partial:park``, and bare ``partial`` map to ``parked``; ``gated`` maps to ``failed``.
+   ``partial:park``, ``partial:coverage``, and bare ``partial`` map to ``parked``; ``gated``
+   maps to ``failed``.
 6. ``PARKED`` and ``PARKED|`` map to ``parked`` (R2). Bare ``DONE`` / bare ``STATUS`` →
    ``unknown`` with ``source_status`` ``DONE`` / ``STATUS``.
 7. Any other leading subject token yields ``unknown`` without reading the body.
@@ -784,6 +785,22 @@ def test_ingest_report_dispatch_id_isolated_from_thread(tmp_path: Path) -> None:
     assert out["row_id"] == rid_target
     assert out["status"] == "done"
     assert out["source_status"] == "CLOSEOUT partial:capture"
+
+
+def test_closeout_partial_coverage_maps_to_parked() -> None:
+    marker = ledger._closeout_marker_from_json(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "partial",
+                "status_incomplete_class": "coverage",
+                "summary": "read gate",
+                "source_ref": "todo:x",
+            }
+        )
+    )
+    assert marker == "CLOSEOUT partial:coverage"
+    assert ledger._status_from_closeout_marker(marker) == "parked"
 
 
 def test_ingest_report_turn_null_when_omitted(tmp_path: Path) -> None:

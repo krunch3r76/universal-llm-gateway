@@ -18,7 +18,7 @@ from implement_admission.spec import (
     WorkOutcome,
 )
 
-StatusIncompleteClass = Literal["work", "capture", "consult", "park"]
+StatusIncompleteClass = Literal["work", "coverage", "capture", "consult", "park"]
 StatusAuthorityWinner = Literal["measure", "claim"]
 NextStepAuthority = Literal[
     "deviations_qualified_measure",
@@ -28,7 +28,7 @@ NextStepAuthority = Literal[
 
 _PLANE_LEGEND_RE = re.compile(r"(?im)^plane-legend:\s*.+$")
 _INCOMPLETE_CLASS_SUFFIX_RE = re.compile(
-    r"^(partial):(work|capture|consult|park)$", re.I
+    r"^(partial):(work|coverage|capture|consult|park)$", re.I
 )
 _MEASURE_ALIAS_MAP = {
     "failed": "blocked",
@@ -38,6 +38,7 @@ _MEASURE_ALIAS_MAP = {
 
 _WORK_DEVIATION_MARKERS = frozenset({"land:lane_b_unlanded"})
 _CAPTURE_DEVIATION_PREFIXES = ("capture:", "divergence:")
+_COVERAGE_DEVIATION_PREFIXES = ("coverage:",)
 
 
 def normalize_measurement_token(measurement: str) -> str:
@@ -105,6 +106,10 @@ def classify_status_incomplete_class(
         return "work"
     if degraded_reason in NO_RUN_DEGRADED_REASONS:
         return "work"
+    if any(
+        d.startswith(prefix) for d in devs for prefix in _COVERAGE_DEVIATION_PREFIXES
+    ):
+        return "coverage"
     if capture_status in ("partial", "unavailable"):
         return "capture"
     if any(
@@ -121,7 +126,7 @@ def incomplete_class_from_wrapper(
 ) -> StatusIncompleteClass | None:
     """Read stamped class from ImplementCloseout JSON when present."""
     raw = payload.get("status_incomplete_class")
-    if raw in ("work", "capture", "consult", "park"):
+    if raw in ("work", "coverage", "capture", "consult", "park"):
         return raw  # type: ignore[return-value]
     return None
 
@@ -161,7 +166,8 @@ def status_claim_is_polysemous_partial_legend(*, claim: str, measurement: str) -
     ``partial:work`` is a resolved work-incomplete class — not benign polysemy
     (operator bind a:35821). Check incomplete class before suffix strip.
     """
-    if measurement_incomplete_class(measurement) == "work":
+    incomplete = measurement_incomplete_class(measurement)
+    if incomplete in ("work", "coverage"):
         return False
     claim_norm = normalize_measurement_token(claim)
     measure_norm = normalize_measurement_token(measurement)
@@ -206,9 +212,13 @@ def _deviations_qualify_next_step(
     incomplete_class: StatusIncompleteClass | None,
 ) -> bool:
     devs = list(deviations or [])
-    if incomplete_class == "work":
+    if incomplete_class in ("work", "coverage"):
         return True
     if any(marker in devs for marker in _WORK_DEVIATION_MARKERS):
+        return True
+    if any(
+        d.startswith(prefix) for d in devs for prefix in _COVERAGE_DEVIATION_PREFIXES
+    ):
         return True
     if any(
         d.startswith(prefix) for d in devs for prefix in _CAPTURE_DEVIATION_PREFIXES

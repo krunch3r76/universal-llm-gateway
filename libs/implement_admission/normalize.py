@@ -446,6 +446,7 @@ _MAX_FILE_PATH_LEN = 200
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 _GIT_REF_PREFIX_RE = re.compile(r"^(?:origin|refs|upstream)/", re.IGNORECASE)
 _FILES_DIRECTIVE_KEYS = ("files_expected", "expected_files")
+_READS_DIRECTIVE_KEYS = ("required_reads",)
 
 
 def _packet_has_acceptance(text: str) -> bool:
@@ -512,7 +513,7 @@ def _directive_block_list(text: str, key: str) -> list[str] | None:
     for line in text[header.end() :].splitlines():
         if not line.strip():
             continue
-        item = re.match(r"^[ \t]+-[ \t]*(.+)$", line)
+        item = re.match(r"^[ \t]*-[ \t]*(.+)$", line)
         if item is None:
             break
         items.append(item.group(1).strip().strip("`\"'"))
@@ -533,23 +534,39 @@ def _directive_inline_comma(text: str, key: str) -> list[str] | None:
     return _split_comma_file_list(raw)
 
 
-def _files_expected_directive(text: str) -> list[str] | None:
-    """Authoritative ``expected_files`` / ``files_expected`` outside block frontmatter."""
+def _paths_directive(text: str, keys: tuple[str, ...]) -> list[str] | None:
+    """Authoritative block or inline list for packet scope/read directives."""
     region = _frontmatter_region(text)
     if region is not None:
-        for key in _FILES_DIRECTIVE_KEYS:
+        for key in keys:
             inline = _directive_inline_comma(region, key)
             if inline is not None:
                 return inline
-    for key in _FILES_DIRECTIVE_KEYS:
+    for key in keys:
         block = _directive_block_list(text, key)
         if block is not None:
             return block
-    for key in _FILES_DIRECTIVE_KEYS:
+    for key in keys:
         inline = _directive_inline_comma(text, key)
         if inline is not None:
             return inline
     return None
+
+
+def _files_expected_directive(text: str) -> list[str] | None:
+    """Authoritative ``expected_files`` / ``files_expected`` outside block frontmatter."""
+    return _paths_directive(text, _FILES_DIRECTIVE_KEYS)
+
+
+def required_reads_from_packet(text: str) -> list[str]:
+    """Packet-authored ``required_reads`` — opt-in; absent yields empty list."""
+    frontmatter_reads = frontmatter_list_value(text, "required_reads")
+    if frontmatter_reads is not None:
+        return _dedupe_preserve([f for f in frontmatter_reads if f])
+    directive_reads = _paths_directive(text, _READS_DIRECTIVE_KEYS)
+    if directive_reads is not None:
+        return _dedupe_preserve([p.strip() for p in directive_reads if p.strip()])
+    return []
 
 
 def _filter_repo_paths(paths: list[str]) -> list[str]:

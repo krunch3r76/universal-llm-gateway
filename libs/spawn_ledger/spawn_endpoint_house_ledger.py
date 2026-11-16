@@ -452,7 +452,7 @@ def _status_from_closeout_marker(marker: str) -> str:
     ml = marker.lower()
     if "partial:capture" in ml or "partial:consult" in ml:
         return "done"
-    if "partial:work" in ml or "partial:park" in ml:
+    if "partial:work" in ml or "partial:park" in ml or "partial:coverage" in ml:
         return "parked"
     if re.fullmatch(r"closeout partial", ml):
         return "parked"

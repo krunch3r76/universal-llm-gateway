@@ -159,6 +159,30 @@ def test_specimen_capture_driven_complete_x_partial_auto_889de52ed385_shape() ->
     assert merge_plane_discrepancy_markers(marker) is None
 
 
+def test_specimen_coverage_driven_complete_x_partial_plane_discrepancy() -> None:
+    """Read-coverage incompleteness — complete claim vs partial:coverage is not plane-legend."""
+    incomplete_class = classify_status_incomplete_class(
+        status=CloseoutStatus.PARTIAL,
+        work_outcome=WorkOutcome.SHIPPED,
+        capture_status="complete",
+        escalation_harvest="none",
+        deviations=["coverage:required_reads_unobserved:2"],
+    )
+    assert incomplete_class == "coverage"
+    marker = annotate_status_claim_discrepancy(
+        claim="complete",
+        measurement="partial:coverage",
+    )
+    assert merge_plane_discrepancy_markers(marker) is not None
+    assert (
+        status_claim_is_polysemous_partial_legend(
+            claim="complete",
+            measurement="partial:coverage",
+        )
+        is False
+    )
+
+
 def test_specimen_work_driven_complete_x_partial_auto_84c1c42a3720_shape() -> None:
     """Work incompleteness — checks_failed + land:lane_b_unlanded."""
     incomplete_class = classify_status_incomplete_class(

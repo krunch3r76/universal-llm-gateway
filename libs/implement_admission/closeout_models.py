@@ -268,6 +268,12 @@ class AdapterResult(BaseModel):
     error: str | None = None
 
 
+class ReadInventoryRow(BaseModel):
+    path: str
+    observed: bool
+    source: Literal["manifest", "seat"]
+
+
 class ImplementCloseout(BaseModel):
     schema_version: Literal[1] = 1
     status: CloseoutStatus
@@ -305,3 +311,6 @@ class ImplementCloseout(BaseModel):
     commits_ahead: int | None = None
     commits_ahead_unfiltered: int | None = None
     landed: bool | None = None
+    # Opt-in read-coverage gate (packet ``required_reads``); empty keeps legacy behaviour.
+    required_reads: list[str] = Field(default_factory=list)
+    read_inventory: list[ReadInventoryRow] = Field(default_factory=list)

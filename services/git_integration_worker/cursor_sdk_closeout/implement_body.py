@@ -24,16 +24,14 @@ from implement_admission.closeout_models import (
     Verification,
 )
 from implement_admission.evidence_verify import hash_artifact_path
+from implement_admission.normalize import required_reads_from_packet
 from implement_admission.propagation_row import (
     land_paths_for_propagation,
     resolve_code_ref,
 )
+from implement_admission.read_coverage import build_read_inventory
 from implement_admission.spec import WorkOutcome
 
-from services.git_integration_worker.relay.episode_residue import (
-    propagation_residue_for_finalize,
-    resolve_propagation_for_finalize,
-)
 from services.git_integration_worker.cursor_sdk_authored_status_reconcile import (
     reconcile_structured_with_authored,
 )
@@ -41,6 +39,7 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     apply_capture_incompleteness_gate,
     apply_escalation_harvest_gate,
+    apply_read_coverage_gate,
     attribution_effects_paths,
     merge_landed_hub_effects_paths,
     positive_deliverable_evidence,
@@ -69,6 +68,10 @@ from services.git_integration_worker.cursor_sdk_subagent_capture import (
 )
 from services.git_integration_worker.cursor_sdk_usage_sidecar import (
     stamp_usage_model_label,
+)
+from services.git_integration_worker.relay.episode_residue import (
+    propagation_residue_for_finalize,
+    resolve_propagation_for_finalize,
 )
 
 from .bus_body_budget import MAX_TURN_BODY_CHARS
@@ -209,6 +212,15 @@ def build_implement_closeout_body(
         deliverables_expected=deliverables_expected,
         capture_status=capture_status,
         positive_deliverable_evidence=positive_evidence,
+    )
+    required_reads = required_reads_from_packet(packet_text) if packet_text else []
+    pre_gate_manifest = effects_manifest or outcome.effects_manifest
+    read_inventory = build_read_inventory(required_reads, pre_gate_manifest)
+    status, deviations = apply_read_coverage_gate(
+        status=status,
+        required_reads=required_reads,
+        read_inventory=read_inventory,
+        deviations=deviations,
     )
     status, resolved_work_outcome = apply_escalation_harvest_gate(
         status=status,
@@ -378,6 +390,8 @@ def build_implement_closeout_body(
             work_outcome=resolved_work_outcome,
             escalation_harvest=escalation_harvest or "none",
             summary=summary,
+            required_reads=list(required_reads),
+            read_inventory=list(read_inventory),
             source_ref=work_item_ref or sidecar_ref,
             files_created=list(repo_files.created),
             files_modified=list(repo_files.modified),

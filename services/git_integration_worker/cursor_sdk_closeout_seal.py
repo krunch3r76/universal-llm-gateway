@@ -141,6 +141,23 @@ def _qualify_dense_spec_valid(payload: dict[str, Any]) -> None:
     payload.setdefault("dense_spec_valid_authority", "derived")
 
 
+def _qualify_read_inventory(payload: dict[str, Any]) -> None:
+    """Qualify manifest-backed read evidence bits on ``read_inventory`` rows."""
+    rows = payload.get("read_inventory")
+    if not isinstance(rows, list):
+        return
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        if not isinstance(item.get("observed"), bool):
+            continue
+        item.setdefault(
+            "observed_scope",
+            "required_reads path evidenced by effects_manifest read-family I/O",
+        )
+        item.setdefault("observed_authority", "derived")
+
+
 def _qualify_open_forks(payload: dict[str, Any]) -> None:
     """Qualify blocks_implement on each open_forks row.
 
@@ -288,6 +305,7 @@ def seal_closeout_payload(payload: dict[str, Any]) -> dict[str, Any]:
     _qualify_files_attribution_lists(payload)
     _qualify_effects_movement_list(payload)
     _qualify_authority_fork(payload)
+    _qualify_read_inventory(payload)
     _qualify_open_forks(payload)
     _qualify_dense_spec_valid(payload)
     _qualify_run_progress(payload)

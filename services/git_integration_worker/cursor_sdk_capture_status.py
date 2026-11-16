@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from implement_admission.closeout_models import EffectsManifest, Verification
+from implement_admission.closeout_models import (
+    EffectsManifest,
+    ReadInventoryRow,
+    Verification,
+)
 from implement_admission.spec import (
     NO_RUN_DEGRADED_REASONS,
     CloseoutStatus,
@@ -984,6 +988,27 @@ def apply_escalation_harvest_gate(
     if status == CloseoutStatus.COMPLETE:
         status = CloseoutStatus.PARTIAL
     return status, work_outcome
+
+
+def apply_read_coverage_gate(
+    *,
+    status: CloseoutStatus,
+    required_reads: list[str],
+    read_inventory: list[ReadInventoryRow],
+    deviations: list[str] | None,
+) -> tuple[CloseoutStatus, list[str]]:
+    """Forbid ``complete`` when packet ``required_reads`` lack manifest read evidence."""
+    out_devs = list(deviations or [])
+    if not required_reads:
+        return status, out_devs
+    unobserved = sum(1 for row in read_inventory if not getattr(row, "observed", False))
+    if unobserved == 0:
+        return status, out_devs
+    if status == CloseoutStatus.COMPLETE:
+        status = CloseoutStatus.PARTIAL
+    if not any(d.startswith("coverage:") for d in out_devs):
+        out_devs.append(f"coverage:required_reads_unobserved:{unobserved}")
+    return status, out_devs
 
 
 def apply_capture_incompleteness_gate(
