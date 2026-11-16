@@ -87,11 +87,11 @@ def provision_cursor(
     shim: dict[str, object] = {}
 
     diff_text = _plan_diff(installed_text, rendered, unit_path)
-    print("Plan: io-agent-cursor.service")
+    print("Plan: io-agent-cursor.service", file=sys.stderr)
     if diff_text.strip():
-        print(diff_text, end="" if diff_text.endswith("\n") else "\n")
+        print(diff_text, end="" if diff_text.endswith("\n") else "\n", file=sys.stderr)
     else:
-        print("(no unit drift)")
+        print("(no unit drift)", file=sys.stderr)
 
     reload_ran = False
     if apply:
@@ -103,7 +103,7 @@ def provision_cursor(
         reload_ran = True
 
     restart_cmd = f"systemctl --user restart {_UNIT_NAME}"
-    print(f"Operator restart (not run here): {restart_cmd}")
+    print(f"Operator restart (not run here): {restart_cmd}", file=sys.stderr)
 
     return {
         "ok": True,
@@ -128,6 +128,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """CLI entry: print JSON summary on stdout; plan and diff go to stderr."""
     args = _parser().parse_args()
     home = Path.home()
     result = provision_cursor(home=home, apply=args.apply)

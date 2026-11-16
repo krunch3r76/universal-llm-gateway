@@ -2,37 +2,57 @@
 # Slot-agnostic URL opener for io-agent Xvfb houses — routes http(s) to house Chromium on X11.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 
 usage() {
   echo "usage: ${SCRIPT_NAME} <url-or-path>" >&2
 }
 
+run_child() {
+  env -u WAYLAND_DISPLAY DISPLAY="${HOUSE_DISPLAY}" "$@"
+}
+
+child_wayland_display_label() {
+  if run_child printenv WAYLAND_DISPLAY >/dev/null 2>&1; then
+    run_child printenv WAYLAND_DISPLAY
+  else
+    echo "unset"
+  fi
+}
+
 log_line() {
   local route="$1"
   local url_key="$2"
   [[ -z "${IO_AGENT_OPEN_URL_LOG:-}" ]] && return 0
-  local ts
+  local ts log_parent
   ts="$(date -Iseconds)"
-  printf '%s display=%s route=%s url=%s\n' "${ts}" "${HOUSE_DISPLAY:-}" "${route}" "${url_key}" \
-    >>"${IO_AGENT_OPEN_URL_LOG}"
+  log_parent="$(dirname "${IO_AGENT_OPEN_URL_LOG}")"
+  {
+    mkdir -p "${log_parent}" 2>/dev/null || true
+    printf '%s display=%s route=%s url=%s\n' "${ts}" "${HOUSE_DISPLAY:-}" "${route}" "${url_key}" \
+      >>"${IO_AGENT_OPEN_URL_LOG}"
+  } 2>/dev/null || true
 }
 
 reduced_url_key() {
   local raw="$1"
   case "${raw}" in
     http://*|https://*)
-      local scheme rest authority path_only
-      scheme="${raw%%://*}"
-      rest="${raw#*://}"
-      authority="${rest%%/*}"
-      path_only="/${rest#*/}"
-      path_only="${path_only%%[?#]*}"
-      if [[ "${rest}" == "${authority}" ]]; then
-        path_only="/"
+      local scheme="${raw%%://*}"
+      local rest="${raw#*://}"
+      rest="${rest%%#*}"
+      rest="${rest%%\?*}"
+      local authority path_part="${rest#*/}"
+      if [[ "${rest}" == */* ]]; then
+        authority="${rest%%/*}"
+        path_part="/${path_part}"
+      else
+        authority="${rest}"
+        path_part="/"
       fi
-      echo "${scheme}://${authority}${path_only}"
+      authority="${authority##*@}"
+      echo "${scheme}://${authority}${path_part}"
       ;;
     *)
       echo "${raw}"
@@ -59,12 +79,12 @@ quote_argv() {
 }
 
 find_delegate_xdg_open() {
-  local entry dir
+  local entry entry_phys
   local IFS=:
   for entry in ${PATH}; do
     [[ -z "${entry}" ]] && continue
-    dir="$(cd "${entry}" 2>/dev/null && pwd -P)" || continue
-    [[ "${dir}" == "${SCRIPT_DIR}" ]] && continue
+    entry_phys="$(cd "${entry}" 2>/dev/null && pwd -P)" || continue
+    [[ "${entry_phys}" == "${SCRIPT_DIR}" ]] && continue
     if [[ -x "${entry}/xdg-open" ]]; then
       echo "${entry}/xdg-open"
       return 0
@@ -75,31 +95,42 @@ find_delegate_xdg_open() {
 
 surface_browser_window() {
   local class="$1"
-  [[ "${IO_AGENT_OPEN_URL_SKIP_SURFACE:-}" == "1" ]] && return 0
+  local display="${HOUSE_DISPLAY}"
+  local log_path="${IO_AGENT_OPEN_URL_LOG:-}"
+  setsid bash -c "$(cat <<'SURFACE_EOF'
+surface_poll() {
+  local class="$1" display="$2" log_path="$3"
   command -v xdotool >/dev/null 2>&1 || return 0
-  local wid=""
-  local end=$((SECONDS + 15))
+  local wid="" end=$((SECONDS + 15))
   while (( SECONDS < end )); do
     if command -v timeout >/dev/null 2>&1; then
-      wid="$(env -u WAYLAND_DISPLAY DISPLAY="${HOUSE_DISPLAY}" timeout 0.4 xdotool search --class "${class}" 2>/dev/null | tail -1 || true)"
+      wid="$(env -u WAYLAND_DISPLAY DISPLAY="${display}" timeout 0.4 xdotool search --onlyvisible --class "${class}" 2>/dev/null | tail -1 || true)"
     else
-      wid="$(env -u WAYLAND_DISPLAY DISPLAY="${HOUSE_DISPLAY}" xdotool search --class "${class}" 2>/dev/null | tail -1 || true)"
+      wid="$(env -u WAYLAND_DISPLAY DISPLAY="${display}" xdotool search --onlyvisible --class "${class}" 2>/dev/null | tail -1 || true)"
     fi
     if [[ -n "${wid}" ]]; then
       if command -v timeout >/dev/null 2>&1; then
-        env -u WAYLAND_DISPLAY DISPLAY="${HOUSE_DISPLAY}" timeout 0.4 xdotool windowraise "${wid}" 2>/dev/null || true
-        env -u WAYLAND_DISPLAY DISPLAY="${HOUSE_DISPLAY}" timeout 0.4 xdotool windowfocus "${wid}" 2>/dev/null || true
+        env -u WAYLAND_DISPLAY DISPLAY="${display}" timeout 0.4 xdotool windowraise "${wid}" 2>/dev/null || true
+        env -u WAYLAND_DISPLAY DISPLAY="${display}" timeout 0.4 xdotool windowfocus "${wid}" 2>/dev/null || true
       else
-        env -u WAYLAND_DISPLAY DISPLAY="${HOUSE_DISPLAY}" xdotool windowraise "${wid}" 2>/dev/null || true
-        env -u WAYLAND_DISPLAY DISPLAY="${HOUSE_DISPLAY}" xdotool windowfocus "${wid}" 2>/dev/null || true
+        env -u WAYLAND_DISPLAY DISPLAY="${display}" xdotool windowraise "${wid}" 2>/dev/null || true
+        env -u WAYLAND_DISPLAY DISPLAY="${display}" xdotool windowfocus "${wid}" 2>/dev/null || true
       fi
       return 0
     fi
     sleep 0.5
   done
-  [[ -n "${IO_AGENT_OPEN_URL_LOG:-}" ]] && \
-    printf '%s display=%s route=surface-miss class=%s\n' "$(date -Iseconds)" "${HOUSE_DISPLAY}" "${class}" \
-      >>"${IO_AGENT_OPEN_URL_LOG}" || true
+  if [[ -n "${log_path}" ]]; then
+    {
+      printf '%s display=%s route=surface-miss class=%s\n' "$(date -Iseconds)" "${display}" "${class}" \
+        >>"${log_path}"
+    } 2>/dev/null || true
+  fi
+}
+surface_poll "$@"
+SURFACE_EOF
+)" _ "${class}" "${display}" "${log_path}" </dev/null >/dev/null 2>&1 &
+  disown -h 2>/dev/null || disown 2>/dev/null || true
 }
 
 URL="${1:-}"
@@ -121,8 +152,6 @@ fi
 
 URL_KEY="$(reduced_url_key "${URL}")"
 DRY="${IO_AGENT_OPEN_URL_DRY_RUN:-}"
-# Dry-run reports the child env (Wayland cleared for Xvfb houses).
-WAYLAND_PRINT="unset"
 
 case "${URL}" in
   http:*|https:*)
@@ -134,6 +163,12 @@ case "${URL}" in
     mkdir -p "${IO_AGENT_BROWSER_PROFILE}"
     CHROME_BIN="$(resolve_chrome_bin)"
     BROWSER_CLASS="${IO_AGENT_BROWSER_CLASS:-io-agent-browser}"
+    if [[ ! -x "${CHROME_BIN}" ]]; then
+      echo "io-agent-open-url: no Playwright Chromium (${CHROME_BIN:-empty})." >&2
+      echo "Install: \$HOME/.venvs/universal/bin/python -m playwright install chromium" >&2
+      log_line "error:no-chromium" "${URL_KEY}"
+      exit 1
+    fi
     CHROME_ARGS=(
       "${CHROME_BIN}"
       "--user-data-dir=${IO_AGENT_BROWSER_PROFILE}"
@@ -145,6 +180,7 @@ case "${URL}" in
       "--window-position=100,50"
       "${URL}"
     )
+    WAYLAND_PRINT="$(child_wayland_display_label)"
     if [[ "${DRY}" == "1" ]]; then
       echo "route=house-browser"
       echo "display=${HOUSE_DISPLAY}"
@@ -153,17 +189,10 @@ case "${URL}" in
       log_line "house-browser" "${URL_KEY}"
       exit 0
     fi
-    if [[ ! -x "${CHROME_BIN}" ]]; then
-      echo "io-agent-open-url: no Playwright Chromium (${CHROME_BIN:-empty})." >&2
-      echo "Install: \$HOME/.venvs/universal/bin/python -m playwright install chromium" >&2
-      log_line "error:no-chromium" "${URL_KEY}"
-      exit 1
-    fi
     setsid env -u WAYLAND_DISPLAY DISPLAY="${HOUSE_DISPLAY}" "${CHROME_ARGS[@]}" \
       </dev/null >/dev/null 2>&1 &
     disown -h 2>/dev/null || disown 2>/dev/null || true
-    surface_browser_window "${BROWSER_CLASS}" &
-    disown -h 2>/dev/null || disown 2>/dev/null || true
+    surface_browser_window "${BROWSER_CLASS}"
     log_line "house-browser" "${URL_KEY}"
     exit 0
     ;;
@@ -174,15 +203,17 @@ case "${URL}" in
       log_line "error:no-delegate-xdg-open" "${URL_KEY}"
       exit 1
     fi
-    if [[ "${DRY}" == "1" ]]; then
-      echo "route=delegate-xdg-open"
-      echo "display=${HOUSE_DISPLAY}"
-      echo "wayland_display=${WAYLAND_PRINT}"
-      echo "argv=$(quote_argv "${DELEGATE}" "${URL}")"
-      log_line "delegate-xdg-open" "${URL_KEY}"
-      exit 0
-    fi
+  # fallthrough for delegate — check chrome not required
+  WAYLAND_PRINT="$(child_wayland_display_label)"
+  if [[ "${DRY}" == "1" ]]; then
+    echo "route=delegate-xdg-open"
+    echo "display=${HOUSE_DISPLAY}"
+    echo "wayland_display=${WAYLAND_PRINT}"
+    echo "argv=$(quote_argv "${DELEGATE}" "${URL}")"
     log_line "delegate-xdg-open" "${URL_KEY}"
-    exec env -u WAYLAND_DISPLAY DISPLAY="${HOUSE_DISPLAY}" "${DELEGATE}" "${URL}"
-    ;;
+    exit 0
+  fi
+  log_line "delegate-xdg-open" "${URL_KEY}"
+  exec env -u WAYLAND_DISPLAY DISPLAY="${HOUSE_DISPLAY}" "${DELEGATE}" "${URL}"
+  ;;
 esac

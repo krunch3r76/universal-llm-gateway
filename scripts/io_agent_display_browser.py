@@ -30,7 +30,7 @@ def _install_executable(src: Path, dest: Path) -> None:
 
 
 def provision_display_browser(slot: str, *, home: Path | None = None) -> dict[str, object]:
-    """Install io-agent-open-url.sh and xdg-open symlink copies under ~/.config/io-agent-<slot>/bin."""
+    """Install io-agent-open-url.sh and an xdg-open copy under ~/.config/io-agent-<slot>/bin."""
     home = home or Path.home()
     bin_dir = home / ".config" / f"io-agent-{slot}" / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
