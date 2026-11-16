@@ -1011,6 +1011,9 @@ fs(op="md_insert", sandbox="workspaces", path="universal-llm-gateway/notes/plan.
 # → "## Risks" inserted after the Overview subtree; {status: inserted, ...}
 ```
 
+
+**Write semantics (2026-05):** Section writes default `span=own_body` (parent body only; children preserved). `span=subtree` restores legacy include-children behavior. Optional `expected_sha256` CAS-refuses stale pre-images. `md_create` creates a new markdown file from a JSON heading dict (refuses existing paths). Prefer full hierarchical section ids when headings repeat under different parents.
+
 ## pipeline
 
 Unified pipeline execution and inspection tool. Dispatches by `op` to one of

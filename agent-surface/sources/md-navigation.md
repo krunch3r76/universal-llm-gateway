@@ -17,6 +17,10 @@ operational context) when a single section answers the question.
 | `md_read(section=<id>)` | One section by `id` from `md_list` (`__preamble__` for pre-heading body) |
 | `md_replace` / `md_append` / `md_delete` | Section-level edits |
 
+| `md_rewrite_section` | Replace section body (default `span=own_body`) |
+| `md_create` | Create-only new markdown from JSON heading dict |
+| `expected_sha256` | Optional CAS on write pre-image for all `md_*` writes |
+
 ## Pattern
 
 ```

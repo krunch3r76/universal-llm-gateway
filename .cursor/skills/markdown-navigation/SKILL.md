@@ -47,6 +47,9 @@ PDF, DOCX, ODT, EML, HTML support `md_list` / `md_read` as converted read-only d
 
 Pass the exact manifest `id` to `md_read` / write ops (`section=`).
 
+
+Write ops accept optional `expected_sha256` (CAS on the full file pre-image) and `span` (`own_body` default on section writes; `subtree` for legacy include-children behavior). Use full hierarchical ids (`Parent/Child`) when the same heading text repeats under different parents. `md_create` creates a new markdown file from a JSON heading dict (create-only).
+
 ## Heading-less-content contract
 
 For `md_replace`, `md_append`, `md_insert`: `content = body_only` (patch replacement for `md_replace`).
