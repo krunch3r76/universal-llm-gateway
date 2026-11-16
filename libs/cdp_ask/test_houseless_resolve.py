@@ -142,6 +142,7 @@ def test_bind_unified_chat_resolves_houseless_unmocked(
     from claude_bundles import cdp_registry_store as store_mod
     from claude_bundles import cse_provenance
     from claude_bundles.cdp_registry import session_address
+
     from services.git_integration_worker import cse_session_holders
     from services.git_integration_worker.cse_session_holders import (
         RemoteUpsert,

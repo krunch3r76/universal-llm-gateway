@@ -293,11 +293,11 @@ def plan_boot_lane_readoption(
 def _adopted_status(row: Mapping[str, Any], cse_affinity: CseAffinity) -> str:
     """Choose boot-adopt status without restoring a driver lock.
 
-    Operator-proxy / mission / blank-purpose hosts with a reachable CSE page
-    keep ``active`` so a ``cdp_ask`` restart does not demote a live seat.
-    Idle parking of those purposes is the drain predicate, not this status.
-    Ask hosts and hosts with no CSE stay ``retained``.
-    ``active`` here is reservation, not a claimed driver: the lock stays off.
+    Operator-proxy / mission / blank-purpose hosts with a reachable unified chat
+    or Cowork CSE page keep ``active`` so a ``cdp_ask`` restart does not demote
+    a live seat. Houseless unified seats, ask hosts, and hosts with no reachable
+    seat page adopt as ``retained``. ``active`` here is reservation, not a
+    claimed driver: the lock stays off.
     """
     from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
 

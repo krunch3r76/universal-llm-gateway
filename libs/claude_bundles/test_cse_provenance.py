@@ -730,19 +730,65 @@ def test_bind_unified_chat_conflict_same_uuid(
     assert exc.value.code == "attachment.conflict"
 
 
-def test_attachment_conflict_canonical_key() -> None:
-    from claude_bundles.cdp_registry.attachment_journal import assert_attachment_unique
+def test_attachment_conflict_canonical_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles import cdp_registry as reg
+    from services.git_integration_worker.cse_session_holders import RemoteUpsert
 
-    active = {
-        "reg-a": {
-            "status": "active",
-            "chat_url": "https://www.claude.ai/cowork/cse_canon_key",
-        },
-    }
-    with pytest.raises(ProtocolError) as exc:
-        assert_attachment_unique(
-            active,
-            "https://claude.ai/cowork/cse_canon_key",
-            registration_id="reg-b",
+    root = tmp_path / "cdp-registry-canon"
+    root.mkdir()
+    regs = root / "registrations"
+    regs.mkdir()
+    monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "1")
+    for name, value in {
+        "REGISTRY_DIR": root,
+        "REGISTRY_LOG": root / "registry.jsonl",
+        "ACTIVE_JSON": root / "active.json",
+        "PORTS_LOCK": root / "ports.lock",
+        "REGISTRATIONS_DIR": regs,
+    }.items():
+        monkeypatch.setattr(reg._store, name, value)
+        monkeypatch.setattr(cse_provenance.store, name, value)
+    monkeypatch.setattr(reg._store, "is_seat_authority", lambda: True)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
+        lambda **_kw: RemoteUpsert.OK,
+    )
+    reg._store.write_active(
+        {
+            "reg-a": {
+                "registration_id": "reg-a",
+                "port": 9223,
+                "status": "active",
+                "chat_url": "https://www.claude.ai/cowork/cse_canon_key",
+            },
+            "reg-b": {
+                "registration_id": "reg-b",
+                "port": 9224,
+                "status": "active",
+                "chat_url": "",
+            },
+            "reg-c": {
+                "registration_id": "reg-c",
+                "port": 9225,
+                "status": "active",
+                "chat_url": f"https://claude.ai/chat/{_CHAT_UUID.upper()}",
+            },
+            "reg-d": {
+                "registration_id": "reg-d",
+                "port": 9226,
+                "status": "active",
+                "chat_url": "",
+            },
+        }
+    )
+    with pytest.raises(ProtocolError) as exc_cowork:
+        reg.bind_session_address(
+            "reg-b", chat_url="https://claude.ai/cowork/cse_canon_key"
         )
-    assert exc.value.code == "attachment.conflict"
+    assert exc_cowork.value.code == "attachment.conflict"
+
+    with pytest.raises(ProtocolError) as exc_chat:
+        reg.bind_session_address("reg-d", chat_url=_UNIFIED_CHAT)
+    assert exc_chat.value.code == "attachment.conflict"

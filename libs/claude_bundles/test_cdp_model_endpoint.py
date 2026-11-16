@@ -3511,7 +3511,7 @@ def test_absorb_snapshot_latches_unified_chat() -> None:
 
 
 def test_url_bound_fires_once_unified_chat() -> None:
-    from claude_bundles.cdp_model_endpoint import _ProofCarry, _maybe_invoke_url_bound
+    from claude_bundles.cdp_model_endpoint import _maybe_invoke_url_bound, _ProofCarry
 
     carry = _ProofCarry()
     url = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"

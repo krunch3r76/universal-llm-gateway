@@ -289,6 +289,7 @@ def test_refusal_emits_signal(
 ) -> None:
     """Houseless refusal emits cse.holder.upsert_refused via publish_lib_signal."""
     from claude_bundles import cdp_registry_store as store
+
     from services.git_integration_worker import events as giw_events
     from services.git_integration_worker.cse_session_holders import (
         HolderProjectionRefusedError,

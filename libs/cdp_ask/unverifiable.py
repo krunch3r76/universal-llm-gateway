@@ -9,6 +9,11 @@ from __future__ import annotations
 import ast
 from typing import Any
 
+from claude_bundles.cse_url import (
+    canonical_claude_seat_url,
+    is_bindable_claude_seat_url,
+)
+
 from cdp_ask.models import StallStage, classify_stall_stage
 
 WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED = "wall_clock_exceeded_abort_unconfirmed"
@@ -36,8 +41,6 @@ DEATH_STALL_STAGES = frozenset(
         "wall_clock_exceeded",
     }
 )
-
-from claude_bundles.cse_url import canonical_claude_seat_url, is_bindable_claude_seat_url
 
 # Playwright / CDP wording when the Chrome host went away under a live turn
 # (a:36969: compositor Wayland reset → TargetClosedError in harvest). The

@@ -17,13 +17,13 @@ from pathlib import Path
 from typing import Any
 
 from claude_bundles import cdp_registry
-from claude_bundles.cse_url import parse_claude_seat_address
 from claude_bundles.cdp_registry.driving_seat import (
     ensure_driving_operator_seat,
     launch_or_defer,
 )
 from claude_bundles.compose_setup_emit import compose_runner_quota_fields
 from claude_bundles.cowork_output_download import should_attempt_output_download
+from claude_bundles.cse_url import parse_claude_seat_address
 from claude_bundles.cse_wake_retain import registration_has_wake_debt
 from claude_bundles.project_ask import (
     HarvestArchiveError,
@@ -42,13 +42,13 @@ from cortex_store.files_path_normalize import normalize_cortex_files_path
 
 from cdp_ask.models import SubmitProjectAskRequest, classify_stall_stage
 from cdp_ask.overlay_effort_retry import run_with_overlay_retry
-from cdp_ask.project_select import apply_project_select
 from cdp_ask.page_liveness import (
     LadderAdvanceState,
     LadderCallbacks,
     advance_ladder_from_harvest,
     make_harvest_ladder_hook,
 )
+from cdp_ask.project_select import apply_project_select
 from cdp_ask.standing_pins import resolve_cdp_ask_browser_host_row
 from cdp_ask.unverifiable import (
     converse_fail_error,
