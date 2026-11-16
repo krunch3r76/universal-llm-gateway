@@ -275,6 +275,22 @@ def test_rehearsal_does_not_mutate_registry(
     assert writes == []
 
 
+def test_unified_seat_adopted_active_unmocked() -> None:
+    uuid = "2762063d-2966-4859-a3ce-23831c6e0c86"
+    unified = f"https://claude.ai/chat/{uuid}"
+    row = _row(
+        status="active",
+        port=9246,
+        chat_url=unified,
+    )
+    plan = _plan(
+        active_rows={"unified-rid": row},
+        live_ports=[_live(port=9246, page_urls=(unified,))],
+        is_listening=lambda p: p == 9246,
+    )
+    assert any(item.get("registration_id") == "unified-rid" for item in plan.would_adopt)
+
+
 def test_thin_execution_record_not_created_by_apply(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

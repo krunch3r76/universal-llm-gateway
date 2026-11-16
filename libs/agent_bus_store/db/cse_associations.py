@@ -2,7 +2,7 @@
 
 Participates in store-allocated ordering (SQLite AUTOINCREMENT ``id``) and
 derived-current reads via ``MAX(id)`` per ``thread_id``. Append only — never
-mutate a current-holder pointer. Identity is the Cowork session address
+mutate a current-holder pointer. Identity is the unified chat or Cowork session address
 (``cse_chat_url``); ``cse_registration_id`` is last-known Chrome host bind.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url
 from universal_logging import get_logger
 
 from ..events.cse_bound import emit_cse_bound
@@ -32,10 +32,7 @@ def _normalize_registration_id(raw: str | None) -> str | None:
 
 def normalize_cse_bind_url(raw: str | None) -> str | None:
     """Return a bindable Cowork or unified chat URL, or None when not a seat address."""
-    bound = canonical_claude_seat_url(raw)
-    if bound:
-        return bound
-    return canonical_claude_seat_url(normalize_cse_url(raw or ""))
+    return canonical_claude_seat_url(raw)
 
 
 def _prior_row(conn, *, thread_id: str) -> Any | None:

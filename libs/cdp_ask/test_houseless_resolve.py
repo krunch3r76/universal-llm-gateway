@@ -140,8 +140,6 @@ def test_bind_unified_chat_resolves_houseless_unmocked(
     from claude_bundles import cse_provenance
     from claude_bundles.cdp_registry import session_address
 
-    from services.git_integration_worker.cse_session_holders import RemoteUpsert
-
     root = tmp_path / "cdp-registry"
     root.mkdir()
     regs = root / "registrations"
@@ -155,14 +153,42 @@ def test_bind_unified_chat_resolves_houseless_unmocked(
         "PORTS_LOCK": root / "ports.lock",
         "REGISTRATIONS_DIR": regs,
     }
+    from claude_bundles import cdp_registry_store as store_mod
+
     for name, value in paths.items():
         monkeypatch.setattr(store, name, value)
         monkeypatch.setattr(cse_provenance.store, name, value)
+        monkeypatch.setattr(store_mod, name, value)
     store.ensure_dirs()
     monkeypatch.setattr(reg._store, "is_seat_authority", lambda: True)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "holder-data"))
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.cse_session_holders import (
+        RemoteUpsert,
+        ensure_schema,
+        get_holder,
+        upsert_holder,
+    )
+
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+
+    def _local_holder_upsert(**kw: object) -> RemoteUpsert:
+        holder_kw = {
+            k: v
+            for k, v in dict(kw).items()
+            if k in {"chat_url", "execution_id", "lane_thread_id"}
+        }
+        with ledger._connect() as conn:
+            ensure_schema(conn)
+            upsert_holder(conn, **holder_kw)  # type: ignore[arg-type]
+        return RemoteUpsert.OK
+
     monkeypatch.setattr(
         "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
-        lambda **_kw: RemoteUpsert.OK,
+        _local_holder_upsert,
     )
     store.write_active(
         {
@@ -189,6 +215,12 @@ def test_bind_unified_chat_resolves_houseless_unmocked(
     assert res.ok is True
     assert res.chat_url == _UNIFIED
     assert res.reason != "no_chat_url"
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        holder = get_holder(conn, f"chat_{_UUID}")
+    assert holder is not None
+    assert holder["holder_id"] == f"chat_{_UUID}"
+    assert holder["chat_url"] == _UNIFIED
 
 
 def test_resolve_houseless_memoizes_per_registration() -> None:

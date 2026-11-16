@@ -728,3 +728,21 @@ def test_bind_unified_chat_conflict_same_uuid(
     with pytest.raises(ProtocolError) as exc:
         reg.bind_session_address(second.registration_id, chat_url=_UNIFIED_CHAT)
     assert exc.value.code == "attachment.conflict"
+
+
+def test_attachment_conflict_canonical_key() -> None:
+    from claude_bundles.cdp_registry.attachment_journal import assert_attachment_unique
+
+    active = {
+        "reg-a": {
+            "status": "active",
+            "chat_url": "https://www.claude.ai/cowork/cse_canon_key",
+        },
+    }
+    with pytest.raises(ProtocolError) as exc:
+        assert_attachment_unique(
+            active,
+            "https://claude.ai/cowork/cse_canon_key",
+            registration_id="reg-b",
+        )
+    assert exc.value.code == "attachment.conflict"

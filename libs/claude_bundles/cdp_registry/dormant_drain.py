@@ -41,7 +41,6 @@ CONSUMERS: tuple[str, ...] = ("cdp_ask",)
 INJECTORS: tuple[str, ...] = ("cdp_ask",)
 
 _DRAINABLE_STATUSES = frozenset({"retained", "orphaned_alive", "active"})
-_CSE_MARKER = "/cowork/cse_"
 
 # Long relative to one dispatch (observed 5-25 min the night this shipped):
 # the only signal available on a registry row is a lifecycle-transition
@@ -86,11 +85,13 @@ class DrainResult:
 
 def _probe_cse_url(port: int) -> str | None:
     """Return a CSE URL open on *port*, or None."""
+    from claude_bundles.cse_url import is_bindable_claude_seat_url
+
     from .session_address import _default_probe_page_urls
 
     with contextlib.suppress(Exception):
         for url in _default_probe_page_urls(port):
-            if _CSE_MARKER in str(url):
+            if is_bindable_claude_seat_url(str(url)):
                 return str(url)
     return None
 

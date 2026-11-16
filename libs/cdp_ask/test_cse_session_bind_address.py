@@ -34,9 +34,12 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
         "REGISTRATIONS_DIR": regs,
     }
     monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "1")
+    from claude_bundles import cdp_registry_store as store_mod
+
     for name, value in paths.items():
         monkeypatch.setattr(reg._store, name, value)
         monkeypatch.setattr(cse_provenance.store, name, value)
+        monkeypatch.setattr(store_mod, name, value)
     monkeypatch.setattr(reg._store, "is_seat_authority", lambda: True)
     from services.git_integration_worker.cse_session_holders import RemoteUpsert
 
@@ -161,3 +164,104 @@ def test_bind_address_missing_row(client: TestClient) -> None:
     body = resp.json()
     assert body.get("code") == "missing_row"
     assert body.get("ok") is False
+
+
+def test_retire_binding_default_dry_run_preview(client: TestClient) -> None:
+    rid = "reg-retire-default"
+    from claude_bundles import cdp_registry_store as store
+
+    store.write_active(
+        {
+            rid: {
+                "registration_id": rid,
+                "port": 9223,
+                "status": "dormant",
+                "chat_url": _UNIFIED,
+            }
+        }
+    )
+    resp = client.post(
+        "/v1/cse-session/retire-binding",
+        json={"registration_id": rid, "chat_url": _UNIFIED},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("dry_run") is True
+
+
+def test_repair_bind_journals_provenance(client: TestClient) -> None:
+    rid = "reg-repair-journal"
+    _write_row(rid)
+    resp = client.post(
+        "/v1/cse-session/bind-address",
+        json={
+            "registration_id": rid,
+            "chat_url": _UNIFIED,
+            "dry_run": False,
+            "reason": "repair_bind_address",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    from claude_bundles import cdp_registry_store as store
+
+    import json
+
+    found = False
+    for line in store.REGISTRY_LOG.read_text(encoding="utf-8").splitlines():
+        rec = json.loads(line)
+        if rec.get("event") != "session_address_bound":
+            continue
+        if rec.get("registration_id") != rid:
+            continue
+        assert rec.get("bound_by") == "cse_session.bind_address"
+        assert rec.get("attach_proof") == "repair_harvest_url"
+        found = True
+    assert found
+
+
+def test_bind_address_in_flight_refuses_even_when_bound(client: TestClient) -> None:
+    rid = "reg-in-flight-prior"
+    _write_row(
+        rid,
+        chat_url=_UNIFIED,
+        execution_state={
+            "state": "streaming",
+            "started_at": time.time(),
+            "execution_id": "exec-bound-in-flight",
+        },
+    )
+    resp = client.post(
+        "/v1/cse-session/bind-address",
+        json={"registration_id": rid, "chat_url": _UNIFIED, "dry_run": True},
+    )
+    assert resp.status_code == 409
+    assert resp.json().get("code") == "in_flight"
+
+
+def test_bind_address_stamp_outcome_posted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rid = "reg-stamp-posted"
+    _write_row(rid)
+    turns: list[dict] = []
+    monkeypatch.setattr(
+        "agent_bus_store.db.turns.insert_turn",
+        lambda **kw: turns.append(kw) or 1,
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.db.cse_associations.associate_cse",
+        lambda **kw: {"thread_id": kw["thread_id"]},
+    )
+    resp = client.post(
+        "/v1/cse-session/bind-address",
+        json={
+            "registration_id": rid,
+            "chat_url": _UNIFIED,
+            "dry_run": False,
+            "parent_thread": "agent-bus:99999",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("stamp") == "posted"
+    assert len(turns) == 1

@@ -16,9 +16,8 @@ from typing import Any, Literal
 from claude_bundles import cdp_registry
 from claude_bundles.cdp_reclaim_refuse import reclaim_refuse_reason
 from claude_bundles.cse_idle_probe import in_flight_from_state, probe_page_liveness_sync
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import is_bindable_claude_seat_url, normalize_cse_url
 
-CSE_URL_MARKER = "claude.ai/cowork/cse_"
 _DEFAULT_CSE_IDLE_DWELL_S = 300.0
 
 CseClassification = Literal["closable", "protected"]
@@ -32,7 +31,7 @@ FetchJsonFn = Callable[[str], Any | None]
 
 @dataclass(frozen=True)
 class CseTarget:
-    """One observed ``/cowork/cse_*`` page on a probed port."""
+    """One observed unified chat or Cowork CSE page on a probed port."""
 
     url: str
     target_id: str | None
@@ -68,7 +67,7 @@ def cse_pages_from_list(payload: Any) -> list[dict[str, Any]]:
         if item.get("type") != "page":
             continue
         url = item.get("url")
-        if isinstance(url, str) and CSE_URL_MARKER in url:
+        if isinstance(url, str) and is_bindable_claude_seat_url(url):
             out.append(item)
     return out
 

@@ -76,7 +76,7 @@ def backfill_attachment_from_chat_url(
     url = (chat_url or "").strip()
     parsed = parse_claude_seat_address(url)
     if parsed is None or parsed.kind not in BINDABLE_SEAT_KINDS:
-        return {"dry_run": dry_run, "skipped": "not_cse_url"}
+        return {"dry_run": dry_run, "skipped": "not_seat_address"}
     url = parsed.canonical_url
     if dry_run:
         return {"dry_run": True, "would_bind": registration_id, "chat_url": url}
@@ -155,6 +155,8 @@ def bind_session_address(
     execution_id: str | None = None,
     target_id: str | None = None,
     defer_seat_commit: bool = False,
+    bound_by: str | None = None,
+    attach_proof: str | None = None,
 ) -> bool:
     """Persist CSE ``chat_url`` on the registry row (safety property — arc 6885).
 
@@ -189,6 +191,20 @@ def bind_session_address(
                 updated=updated,
                 execution_id=execution_id,
             )
+            if bound_by is not None:
+                _store.append_log(
+                    "session_address_bound",
+                    {
+                        "registration_id": registration_id,
+                        "chat_url": url,
+                        "execution_id": execution_id,
+                        "target_id": target_id,
+                        "defer_seat_commit": defer_seat_commit,
+                        "bound_by": bound_by,
+                        "attach_proof": attach_proof,
+                        "idempotent_repair": True,
+                    },
+                )
             if not defer_seat_commit:
                 from services.git_integration_worker.cse_session_holders import (
                     RemoteUpsert,
@@ -254,6 +270,8 @@ def bind_session_address(
                 "execution_id": execution_id,
                 "target_id": target_id,
                 "defer_seat_commit": defer_seat_commit,
+                "bound_by": bound_by,
+                "attach_proof": attach_proof,
             },
         )
         _append_lane_less_episode(

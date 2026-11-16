@@ -130,7 +130,7 @@ def execute_bind_address(req: BindAddressRequest) -> dict[str, object]:
             retryable=False,
             data={"registration_id": reg_id, "chat_url": prior},
         )
-    if row_execution_in_flight(row) and not prior:
+    if row_execution_in_flight(row):
         raise ProtocolError(
             code="in_flight",
             message="registration has an in-flight execution",
@@ -146,15 +146,26 @@ def execute_bind_address(req: BindAddressRequest) -> dict[str, object]:
         "dry_run": req.dry_run,
     }
     if req.dry_run:
-        return {"ok": True, **preview, "would_write": True}
+        return {"ok": True, **preview, "would_write": True, "stamp": "skipped_dry_run"}
 
-    bound = (
-        True
-        if prior == canonical
-        else bind_session_address(reg_id, chat_url=canonical, execution_id=exec_id)
+    bound = bind_session_address(
+        reg_id,
+        chat_url=canonical,
+        execution_id=exec_id,
+        bound_by=_BIND_ADDRESS_BY,
+        attach_proof="repair_harvest_url",
     )
+    if not bound:
+        return {
+            "ok": False,
+            "code": "bind_refused",
+            **preview,
+        }
+
     parent = (req.parent_thread or "").strip()
     association: dict[str, object] | None = None
+    stamp = "skipped_no_parent_thread"
+    stamp_error: str | None = None
     if parent:
         from agent_bus_store.db.cse_associations import associate_cse
 
@@ -165,29 +176,39 @@ def execute_bind_address(req: BindAddressRequest) -> dict[str, object]:
             bound_by=_BIND_ADDRESS_BY,
             evidence=(req.reason or "repair_bind_address").strip(),
         )
-        if exec_id:
-            with contextlib.suppress(Exception):
-                from agent_bus_store.db.turns import insert_turn
-                from hop_handoff.body import build_seat_registration_stamp
+        from agent_bus_store.db.turns import insert_turn
+        from hop_handoff.body import build_seat_registration_stamp
 
-                body = build_seat_registration_stamp(
-                    successor_birth_id=exec_id,
-                    registration_id=reg_id,
-                    execution_id=exec_id,
-                    parent_thread=parent,
-                    chat_url=canonical,
-                )
-                insert_turn(
-                    thread=parent,
-                    from_agent="cursor-auto",
-                    to_agent="cursor",
-                    subject=f"SEAT_REGISTRATION — {reg_id}",
-                    body=body,
-                )
+        stamp_body = build_seat_registration_stamp(
+            successor_birth_id=exec_id or reg_id,
+            registration_id=reg_id,
+            execution_id=exec_id,
+            parent_thread=parent,
+            chat_url=canonical,
+        )
+        try:
+            insert_turn(
+                thread=parent,
+                from_agent="cursor-auto",
+                to_agent="cursor",
+                subject=f"SEAT_REGISTRATION — {reg_id}",
+                body=stamp_body,
+            )
+            stamp = "posted"
+        except Exception as exc:  # noqa: BLE001 — bind stands; stamp failure is advisory
+            logger.warning(
+                "bind_address seat stamp failed registration_id=%s",
+                reg_id,
+                exc_info=True,
+            )
+            stamp = "failed"
+            stamp_error = type(exc).__name__
     return {
         "ok": True,
         "bound": bound,
         "idempotent": prior == canonical,
+        "stamp": stamp,
+        "stamp_error": stamp_error,
         **preview,
         "association": association,
     }

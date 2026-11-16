@@ -22,11 +22,9 @@ from claude_bundles.cdp_orphan_cse_classify import (
     cse_pages_from_list,
 )
 from claude_bundles.cdp_reclaim_refuse import guard_cse_reclaim
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import is_bindable_claude_seat_url, normalize_cse_url
 
 LIVENESS_AUTHORITY_ATTACHMENT_ONLY = "attachment_only"
-
-_CSE_URL_MARKER = "claude.ai/cowork/cse_"
 _REG_PROFILE_PREFIX = "claude-ai-chrome-profile-reg-"
 _PROBE_TIMEOUT_S = 1.5
 
@@ -168,7 +166,7 @@ def _unique_cse_urls(page_urls: tuple[str, ...]) -> tuple[str, ...]:
     seen: set[str] = set()
     out: list[str] = []
     for url in page_urls:
-        if _CSE_URL_MARKER not in url:
+        if not is_bindable_claude_seat_url(url):
             continue
         normalized = normalize_cse_url(url)
         if normalized and normalized not in seen:

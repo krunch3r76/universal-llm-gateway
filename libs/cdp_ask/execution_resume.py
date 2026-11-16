@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import re
 import time
 from typing import Any
 
@@ -144,7 +143,6 @@ def _body_of(response: Any) -> str:
     return _body_from_harvest(response)
 
 
-_CSE_ID = re.compile(r"/cowork/(cse_[A-Za-z0-9]+)")
 # ExecutionPollResponse.harvest_provenance literal; the CSE harvester's own
 # labels (cse-dom, metadata_only) are DOM-level and read as "chat" to a poller.
 _POLL_PROVENANCE = {"output-file", "cortex-uri", "chat", "chat-large", "artifact-card"}
@@ -156,9 +154,11 @@ def _poll_provenance(content_provenance: str | None) -> str:
 
 
 def _cse_id(url: str) -> str:
-    """Session identity of a Cowork URL — the only part the attach must match."""
-    match = _CSE_ID.search(url or "")
-    return match.group(1) if match else ""
+    """Session primary id for unified chat or Cowork — attach must match."""
+    from claude_bundles.cse_url import parse_claude_seat_address
+
+    parsed = parse_claude_seat_address(url or "")
+    return parsed.primary_id if parsed is not None else ""
 
 
 async def resume_execution(

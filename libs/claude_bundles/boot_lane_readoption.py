@@ -15,7 +15,11 @@ from typing import Any, Literal
 
 from claude_bundles import cdp_lane, cdp_orphans, cdp_registry
 from claude_bundles.cdp_orphans import LivePort, is_primary_profile
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import (
+    canonical_claude_seat_url,
+    is_bindable_claude_seat_url,
+    normalize_cse_url,
+)
 
 # File-level serving map — package CONSUMERS on cdp_registry/__init__ do not
 # cover this sibling module (unmapped_serving otherwise).
@@ -30,7 +34,6 @@ ADOPT_STATUS = "retained"
 _REACHABLE_CSE_AFFINITIES = frozenset(
     {"bound_present", "unbound_present", "bound_missing"}
 )
-_CSE_URL_MARKER = "claude.ai/cowork/cse_"
 _REG_PROFILE_PREFIX = "claude-ai-chrome-profile-reg-"
 
 
@@ -102,13 +105,15 @@ def _cse_affinity(row: Mapping[str, Any], live: LivePort | None) -> CseAffinity:
     if live is None:
         return "none"
     normalized_pages = {
-        normalize_cse_url(url)
+        key
         for url in live.page_urls
-        if _CSE_URL_MARKER in url
+        if is_bindable_claude_seat_url(url)
+        for key in [canonical_claude_seat_url(url)]
+        if key
     }
     chat_url = str(row.get("chat_url") or "").strip()
     if chat_url:
-        norm = normalize_cse_url(chat_url)
+        norm = canonical_claude_seat_url(chat_url) or normalize_cse_url(chat_url)
         if norm and norm in normalized_pages:
             return "bound_present"
         if live.has_live_cse or normalized_pages:

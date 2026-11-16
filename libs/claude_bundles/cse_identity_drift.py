@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
-from claude_bundles.cse_url import normalize_cse_url, parse_claude_seat_address
+from claude_bundles.cse_url import parse_claude_seat_address
 
 IdentityCheck = Literal[
     "match",
@@ -15,9 +15,6 @@ IdentityCheck = Literal[
 ]
 
 _CSE_TOKEN = re.compile(r"(cse_[A-Za-z0-9]+)")
-_CSE_INPUT = re.compile(
-    r"^(?:https://claude\.ai/(?:cowork/)?)?(cse_[A-Za-z0-9]+)/?$"
-)
 
 
 def _cse_url_from_token(raw: str) -> str | None:
@@ -25,9 +22,6 @@ def _cse_url_from_token(raw: str) -> str | None:
     parsed = parse_claude_seat_address(text)
     if parsed is not None and parsed.kind in ("unified_chat", "cowork_cse"):
         return parsed.canonical_url
-    match = _CSE_INPUT.match(text)
-    if match:
-        return normalize_cse_url(f"https://claude.ai/cowork/{match.group(1)}")
     return None
 
 
