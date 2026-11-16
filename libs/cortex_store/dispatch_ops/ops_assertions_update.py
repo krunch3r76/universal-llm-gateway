@@ -22,7 +22,11 @@ from ._assertions_shared import (
     _project_seeded_by,
 )
 from ._shared import record
-from ._write_validation import collect_missing_required, validation_error_response
+from ._write_validation import (
+    collect_missing_required,
+    field_error,
+    validation_error_response,
+)
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
 
@@ -101,7 +105,59 @@ def _attach_dropped_key_warnings(
     return result
 
 
-def _op_assertion_get(assertion_id: int | None = None, **_: object) -> dict[str, Any]:
+def _resolve_assertion_get_id(
+    assertion_id: int | str | None,
+) -> tuple[int | None, dict[str, Any] | None]:
+    """Normalize assertion_get id: int, digits, ``a:N``, or ``assertion:N``."""
+    if assertion_id is None:
+        return None, {"error": "assertion_id is required"}
+    if isinstance(assertion_id, bool):
+        return None, validation_error_response(
+            [
+                field_error(
+                    "assertion_id",
+                    f"invalid assertion_id {assertion_id!r}; expected integer, "
+                    "digit string, 'a:N', or 'assertion:N'",
+                    code="invalid_assertion_id",
+                )
+            ]
+        )
+    if isinstance(assertion_id, int):
+        return assertion_id, None
+    if not isinstance(assertion_id, str):
+        return None, validation_error_response(
+            [
+                field_error(
+                    "assertion_id",
+                    f"invalid assertion_id type {type(assertion_id).__name__!r}",
+                    code="invalid_assertion_id",
+                )
+            ]
+        )
+    raw = assertion_id.strip()
+    if not raw:
+        return None, {"error": "assertion_id is required"}
+    for prefix in ("assertion:", "a:"):
+        if raw.startswith(prefix):
+            raw = raw[len(prefix) :].strip()
+            break
+    if raw.isdigit():
+        return int(raw), None
+    return None, validation_error_response(
+        [
+            field_error(
+                "assertion_id",
+                f"invalid assertion_id {assertion_id!r}; expected integer, digit "
+                "string, 'a:N', or 'assertion:N'",
+                code="invalid_assertion_id",
+            )
+        ]
+    )
+
+
+def _op_assertion_get(
+    assertion_id: int | str | None = None, **_: object
+) -> dict[str, Any]:
     """Read a single assertion by id.
 
     Used by `pipelines/predicate_extract/` for the §6.7 idempotency check
@@ -109,8 +165,10 @@ def _op_assertion_get(assertion_id: int | None = None, **_: object) -> dict[str,
     round trip. Returns the same shape as `_create_assertion_impl`'s
     `item` field — `predicate_form` included.
     """
-    if assertion_id is None:
-        return {"error": "assertion_id is required"}
+    resolved_id, shape_err = _resolve_assertion_get_id(assertion_id)
+    if shape_err is not None:
+        return shape_err
+    assert resolved_id is not None
     from ..db import cortex_conn, decode_row, query
     from ..models import AssertionItem
     from ..routes.assertions import _ASSERTION_COLS, _JSON_FIELDS
@@ -119,10 +177,10 @@ def _op_assertion_get(assertion_id: int | None = None, **_: object) -> dict[str,
         rows = query(
             conn,
             f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
-            (assertion_id,),
+            (resolved_id,),
         )
     if not rows:
-        return {"error": f"Assertion not found: {assertion_id}"}
+        return {"error": f"Assertion not found: {resolved_id}"}
     return AssertionItem(**decode_row(rows[0], _JSON_FIELDS)).model_dump(mode="json")
 
 
