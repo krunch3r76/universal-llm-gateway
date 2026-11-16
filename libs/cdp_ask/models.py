@@ -28,6 +28,7 @@ StallStage = Literal[
     "observer_unverified",
     "select_no_attest",
     "compose_surface",
+    "recovered_unverified_dom",
     "unknown",
 ]
 
@@ -297,6 +298,8 @@ class ExecutionPollResponse(BaseModel):
             "fail after compose-attest without CSE-death proof and without a select "
             "record (a:30678); `select_no_attest` — picker click did not leave the "
             "chip on the requested model; "
+            "`recovered_unverified_dom` — poll_recovery DOM scrape archived for "
+            "forensics only without verified harvest attestation; "
             "`unknown` — unclassified. "
             "Non-null on failed terminals so consumers distinguish stall from dual-completion lag."
         ),

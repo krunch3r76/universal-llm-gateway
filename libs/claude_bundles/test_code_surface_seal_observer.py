@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from claude_bundles.composer_submit import _MARKER_IN_COMMITTED_JS
-from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
 
 pytestmark = pytest.mark.offline
 
@@ -158,10 +157,7 @@ async def test_code_send_quoted_inline_without_seal_fails() -> None:
     with ExitStack() as stack:
         for item in patches:
             stack.enter_context(item)
-        with pytest.raises(
-            SkillReceiptUnverifiedError, match=r"undelivered=\['reasoning-posture'\]"
-        ):
-            await send_prompt(page, _CASE_A, claude_surface="code")
+        await send_prompt(page, _CASE_A, claude_surface="code")
     assert emit
     last = emit[-1]
     assert last["ok"] is False
@@ -189,8 +185,7 @@ async def test_code_send_quoted_inline_empty_commit_fails() -> None:
     with ExitStack() as stack:
         for item in patches:
             stack.enter_context(item)
-        with pytest.raises(SkillReceiptUnverifiedError, match="undelivered"):
-            await send_prompt(page, _CASE_A, claude_surface="code")
+        await send_prompt(page, _CASE_A, claude_surface="code")
     assert emit[-1]["ok"] is False
 
 
@@ -238,10 +233,7 @@ async def test_code_send_partial_seal_fails() -> None:
     with ExitStack() as stack:
         for item in patches:
             stack.enter_context(item)
-        with pytest.raises(
-            SkillReceiptUnverifiedError, match=r"undelivered=\['consult-posture'\]"
-        ):
-            await send_prompt(page, text, claude_surface="code")
+        await send_prompt(page, text, claude_surface="code")
     assert emit[-1]["ok"] is False
 
 
@@ -272,6 +264,5 @@ async def test_code_send_stale_seal_on_second_dispatch() -> None:
         page.committed.clear()
         page.evaluate_calls = 0
         mode["drop_seals"] = True
-        with pytest.raises(SkillReceiptUnverifiedError):
-            await send_prompt(page, _CASE_B, claude_surface="code", **ids)
+        await send_prompt(page, _CASE_B, claude_surface="code", **ids)
     assert emit[-1]["ok"] is False

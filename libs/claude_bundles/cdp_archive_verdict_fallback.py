@@ -53,40 +53,8 @@ def parse_archive_verdict(body: str) -> str | None:
 
 
 def apply_archive_verdict_fallback(result: CdpGenerateResult) -> CdpGenerateResult:
-    """When skill_receipt_unverified, prefer a parseable archive verdict."""
-    err = (result.error or "").lower()
-    if _SKILL_RECEIPT not in err:
-        return result
-    if result.ok:
-        return result
-    text = _read_archive_text(result.archive_uri)
-    if not text:
-        return result
-    verdict = parse_archive_verdict(text)
-    if not verdict:
-        return result
-    extras = dict(result.extras or {})
-    extras["verdict_source"] = "archive"
-    extras["archive_verdict"] = verdict
-    root = verdict.split()[0].split("-")[0].upper()
-    advance = root in {"APPROVE", "PASS", "SHIP", "RATIFY"}
-    return CdpGenerateResult(
-        ok=advance,
-        body=result.body or text,
-        execution_id=result.execution_id,
-        satellite_execution_id=result.satellite_execution_id,
-        prompt_uri=result.prompt_uri,
-        picker_model=result.picker_model,
-        archive_uri=result.archive_uri,
-        content_proof_uri=result.content_proof_uri,
-        content_proof_sha256=result.content_proof_sha256,
-        stall_stage=None if advance else result.stall_stage,
-        error=None if advance else result.error,
-        substrate=result.substrate,
-        cost_source=result.cost_source,
-        poll_snapshots=result.poll_snapshots,
-        extras=extras,
-    )
+    """Return ``result`` unchanged — archive prose does not promote gate authority."""
+    return result
 
 
 __all__ = ["apply_archive_verdict_fallback", "parse_archive_verdict"]

@@ -280,7 +280,7 @@ async def test_converse_archives_failed_result_with_body(
     reg.registration_id = "reg-fail-archive"
     reg.cdp_url = "http://127.0.0.1:9222"
     body = "X" * 9000
-    err = "skill_receipt_unverified: wrong_channel=['reasoning-posture']"
+    err = "converse turn failed: wrong_channel=['reasoning-posture']"
     fail = ProjectAskResult(
         ok=False,
         body=body,
@@ -329,7 +329,7 @@ async def test_converse_archives_failed_result_with_body(
         full_path = root / uri.removeprefix("cortex://")
     text = full_path.read_text(encoding="utf-8")
     assert "- outcome: failed" in text
-    assert "- error:" in text and "skill_receipt_unverified" in text
+    assert "- error:" in text and "converse turn failed" in text
     assert body in text
 
 
@@ -341,7 +341,7 @@ async def test_failed_converse_archive_write_error_keeps_original_error() -> Non
     reg = MagicMock()
     reg.registration_id = "reg-archive-mask"
     reg.cdp_url = "http://127.0.0.1:9222"
-    cause = "skill_receipt_unverified: undelivered=['reasoning-posture']"
+    cause = "converse turn failed: undelivered=['reasoning-posture']"
     fail = ProjectAskResult(
         ok=False,
         body="Y" * 9000,
@@ -460,7 +460,7 @@ async def test_failed_converse_does_not_pass_archive_to_content_proof() -> None:
         model={"ok": True},
         body_len=9000,
         delete_after={"deleted": False},
-        error="skill_receipt_unverified: x",
+        error="converse turn failed: x",
         archive_uri=None,
         attested_model=None,
         harvest_provenance="chat",
@@ -511,7 +511,7 @@ async def test_converse_skips_archive_when_failed_body_empty() -> None:
         model={},
         body_len=0,
         delete_after={"deleted": False},
-        error="skill_receipt_unverified: empty",
+        error="converse turn failed: empty",
         archive_uri=None,
         attested_model=None,
         harvest_provenance=None,

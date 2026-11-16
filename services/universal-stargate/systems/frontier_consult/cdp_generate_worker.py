@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from cdp_ask.unverifiable import is_unverifiable_stall, model_select_status_lines
-from claude_bundles.cdp_archive_verdict_fallback import apply_archive_verdict_fallback
 from claude_bundles.cdp_model_endpoint import (
     CDP_REPLY_FROM,
     DEFAULT_MAX_WALL_S,
@@ -703,7 +702,6 @@ async def run_cdp_worker(
                     stall_stage=fallback.stall_stage,
                 )
 
-    result = apply_archive_verdict_fallback(result)
     await finalize_cdp_generate(
         result=result,
         request_id=request_id,

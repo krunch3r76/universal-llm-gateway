@@ -463,9 +463,9 @@ def _retired_review_identity_field(exc: RequestValidationError) -> str | None:
         return None
     purpose = body.get("purpose")
     role = body.get("role")
-    if isinstance(purpose, str) and purpose.strip() == "review":
+    if isinstance(purpose, str) and purpose.strip().casefold() == "review":
         return "purpose"
-    if isinstance(role, str) and role.strip() == "reviewer":
+    if isinstance(role, str) and role.strip().casefold() == "reviewer":
         return "role"
     return None
 

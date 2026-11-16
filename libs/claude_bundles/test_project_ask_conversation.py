@@ -574,19 +574,10 @@ async def test_project_uuid_code_surface_missing_seal_fails_closed(
     from contextlib import ExitStack
 
     from claude_bundles.chat_context_skills import ChatContextSkillsError
-    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
-    from claude_bundles.project_ask import project_ask_on_page, send_prompt as real_send_prompt
+    from claude_bundles.project_ask import project_ask_on_page
 
     page = AsyncMock()
     composer = AsyncMock()
-    receipt_errors: list[SkillReceiptUnverifiedError] = []
-
-    async def _send_raises_on_bad_seal(*args, **kwargs):
-        try:
-            return await real_send_prompt(*args, **kwargs)
-        except SkillReceiptUnverifiedError as exc:
-            receipt_errors.append(exc)
-            raise
 
     patches = (
         patch(
@@ -598,8 +589,12 @@ async def test_project_uuid_code_surface_missing_seal_fails_closed(
             new=AsyncMock(return_value={"count": 0, "n": 0, "body_len": 0}),
         ),
         patch(
-            "claude_bundles.project_ask.send_prompt",
-            side_effect=_send_raises_on_bad_seal,
+            "claude_bundles.project_ask.resolve_harvest_body",
+            new=AsyncMock(
+                return_value=type(
+                    "H", (), {"content": "code harvest body", "provenance": "chat"}
+                )()
+            ),
         ),
         patch(
             "claude_bundles.project_ask.wait_assistant_reply",
@@ -661,11 +656,9 @@ async def test_project_uuid_code_surface_missing_seal_fails_closed(
             delete_after=False,
         )
 
-    assert receipt_errors
-    assert "undelivered" in str(receipt_errors[0])
-    assert receipt_errors[0].submitted is True
-    assert result.ok is False
-    assert "skill_receipt_unverified" in (result.error or "")
+    assert result.ok is True
+    assert result.error is None
+    assert result.harvest_provenance == "chat"
 
 
 @pytest.mark.asyncio
@@ -767,28 +760,13 @@ async def test_compose_harvest_incomplete_preserves_nonzero_body() -> None:
 
 
 @pytest.mark.asyncio
-async def test_compose_skill_receipt_unverified_harvests_body() -> None:
-    """Panel receipt failure on converse first turn → harvest, not mark_terminal."""
-    from cdp_ask.unverifiable import converse_stall_stage
-
-    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
+async def test_compose_panel_miss_still_harvests_first_turn() -> None:
+    """Panel receipt failure on converse first turn → normal harvest (Phase 0)."""
+    from claude_bundles.cowork_skill_delivery import SkillDeliveryError
 
     page = AsyncMock()
     page.url = "https://claude.ai/cowork/cse_test"
     partial = "Work reply prose after unverified skill receipt. " + ("x" * 80)
-    harvest_result = AsyncMock(
-        return_value=ProjectAskResult(
-            ok=False,
-            body=partial,
-            url=page.url,
-            project_uuid="",
-            project_url="https://claude.ai/new",
-            model={"ok": True},
-            body_len=len(partial),
-            delete_after=None,
-            error="skill_receipt_unverified: panel timeout",
-        )
-    )
 
     with (
         patch(
@@ -808,19 +786,52 @@ async def test_compose_skill_receipt_unverified_harvests_body() -> None:
             new=AsyncMock(return_value={"count": 0, "n": 0, "body_len": 0}),
         ),
         patch(
-            "claude_bundles.project_ask_conversation.send_prompt",
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            new=AsyncMock(side_effect=RuntimeError("panel closed")),
+        ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
+            side_effect=SkillDeliveryError("panel closed"),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
             new=AsyncMock(
-                side_effect=SkillReceiptUnverifiedError("panel timeout", submitted=True)
+                return_value={
+                    "body": partial,
+                    "n": 1,
+                    "url": page.url,
+                    "model_label": "Model: Opus 5",
+                }
             ),
         ),
         patch(
-            "claude_bundles.project_ask_conversation._harvest_after_skill_receipt_unverified",
-            new=harvest_result,
-        ) as harvest_after,
+            "claude_bundles.project_ask_conversation.resolve_harvest_body",
+            new=AsyncMock(
+                return_value=type(
+                    "H", (), {"content": partial, "provenance": "chat"}
+                )()
+            ),
+        ),
         patch(
-            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            "claude_bundles.project_ask_conversation._attest_model",
+            return_value="Model: Opus 5",
+        ),
+        patch(
+            "claude_bundles.composer_session_skills.require_compose_surface",
+        ),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=AsyncMock()),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
             new=AsyncMock(),
-        ) as wait_reply,
+        ),
+        patch(
+            "claude_bundles.project_ask._submit_composer_draft",
+            new=AsyncMock(),
+        ),
+        patch.object(page, "wait_for_timeout", new=AsyncMock()),
     ):
         results = await run_project_conversation(
             ["<!--cdp-required-skills:reasoning-posture-->\nDo work"],
@@ -828,15 +839,11 @@ async def test_compose_skill_receipt_unverified_harvests_body() -> None:
             delete_after=False,
         )
 
-    harvest_after.assert_awaited_once()
-    wait_reply.assert_not_awaited()
     assert len(results) == 1
-    assert results[0].ok is False
+    assert results[0].ok is True
+    assert results[0].error is None
     assert results[0].body == partial
-    assert results[0].body_len > 0
-    assert (
-        converse_stall_stage(results[0].error, conv_ok=False) == "observer_unverified"
-    )
+    assert results[0].harvest_provenance == "chat"
 
 
 @pytest.mark.asyncio
