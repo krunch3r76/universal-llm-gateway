@@ -38,7 +38,7 @@ __all__ = [
     "to_model_card_dict",
 ]
 
-DESCRIPTOR_VERSION: Final[str] = "2026-09-25"
+DESCRIPTOR_VERSION: Final[str] = "2026-11-16"
 
 # Emergency denylist for cursor-sdk substrate admission (bare ids, lowercased).
 # Dispatch refuse/override for barred models lives in route_policy ``model_bans``;
@@ -291,21 +291,19 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         # Live ListModels probe 2026-07-14 — same knob surface as claude-fable-5.
         probed_at="2026-07-14",
     ),
-    # Sonnet 5.5. Knob surface mirrored from claude-sonnet-5.
-    # Inherits sonnet-5 ListModels stamp until a diverging probe.
+    # Sonnet 5.5 — live catalog GET :8091/api/v1/cursor/catalog 2026-11-16:
+    # context, reasoning_effort (no thinking knob on wire).
     "claude-sonnet-5-5": ModelCapability(
         knobs={
-            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
             "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
             "effort": KnobSpec(accepted=_FULL_EFFORT),
         },
         default_variant={
-            "thinking": "true",
             "context": "1m",
             "effort": "high",
         },
         instruction_profile="reasoner",
-        probed_at="2026-07-14",
+        probed_at="2026-11-16",
     ),
     # Live ListModels probe 2026-07-14 — same knob surface as claude-sonnet-5
     # (thinking/context/effort; no fast; no cyber fixed_param).

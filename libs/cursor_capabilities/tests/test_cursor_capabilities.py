@@ -97,9 +97,19 @@ def test_governed_rows_carry_instruction_profile_classifications() -> None:
     assert opus55.probed_at == opus5.probed_at
     sonnet5 = CURSOR_MODEL_CAPABILITIES["claude-sonnet-5"]
     sonnet55 = CURSOR_MODEL_CAPABILITIES["claude-sonnet-5-5"]
-    assert sonnet55.knobs == sonnet5.knobs
+    assert set(sonnet55.knobs) == {"context", "effort"}
+    assert sonnet55.knobs["context"].accepted == ("300k", "1m")
+    assert sonnet55.knobs["context"].default == "1m"
+    assert sonnet55.knobs["effort"].accepted == (
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    )
     assert sonnet55.fixed_params == sonnet5.fixed_params
-    assert sonnet55.default_variant == sonnet5.default_variant
+    assert sonnet55.default_variant == {"context": "1m", "effort": "high"}
+    assert sonnet55.probed_at == "2026-11-16"
     for model_id, expected in _GOVERNED_INSTRUCTION_PROFILES.items():
         assert CURSOR_MODEL_CAPABILITIES[model_id].instruction_profile == expected
 

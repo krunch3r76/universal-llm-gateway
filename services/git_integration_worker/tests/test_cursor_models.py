@@ -191,6 +191,7 @@ def test_card_knob_wire_map_maps_reasoning_effort_pairs() -> None:
         ("gemini-4-carbon", "effort"),
         ("gemini-4-hydrogen", "effort"),
         ("muse-wonder-1.0", "effort"),
+        ("claude-sonnet-5-5", "effort"),
     }
     assert not hasattr(cm_mod, "_PARAM_WIRE_ID")
     assert cm_mod.card_knob_wire_id("gemini-4-argon", "effort") == "reasoning_effort"
@@ -230,6 +231,56 @@ def test_build_model_selection_muse_wonder_omit_defaults_300k() -> None:
         "context": "300k",
         "reasoning_effort": "xhigh",
     }
+
+
+def test_build_model_selection_sonnet_55_maps_effort_wire_id() -> None:
+    cfg = resolve_cursor("claude-sonnet-5-5")
+    sel = build_model_selection(cfg, {"effort": "high"})
+    assert {p.id: p.value for p in sel.params} == {
+        "context": "1m",
+        "reasoning_effort": "high",
+    }
+    omit = build_model_selection(cfg)
+    assert {p.id: p.value for p in omit.params} == {"context": "1m"}
+
+
+def test_claude_sonnet_55_live_catalog_admission() -> None:
+    effort_values = [
+        ModelParameterDefinitionValue(value=v, display_name=v)
+        for v in ("low", "medium", "high", "xhigh", "max")
+    ]
+    sonnet55 = SDKModel(
+        id="claude-sonnet-5-5",
+        display_name="claude-sonnet-5-5",
+        description="claude-sonnet-5-5",
+        parameters=[
+            ModelParameterDefinition(
+                id="context",
+                display_name="context",
+                values=[
+                    ModelParameterDefinitionValue(value="300k", display_name="300k"),
+                    ModelParameterDefinitionValue(value="1m", display_name="1m"),
+                ],
+            ),
+            ModelParameterDefinition(
+                id="reasoning_effort",
+                display_name="reasoning_effort",
+                values=effort_values,
+            ),
+        ],
+        variants=[
+            ModelVariant(
+                params=[
+                    ModelParameterValue(id="context", value="1m"),
+                    ModelParameterValue(id="reasoning_effort", value="high"),
+                ],
+                display_name="default",
+                description="default",
+                is_default=True,
+            )
+        ],
+    )
+    assert live_admission_error("claude-sonnet-5-5", [sonnet55]) is None
 
 
 def test_card_knob_catalog_projection_maps_reasoning_effort_to_effort() -> None:
