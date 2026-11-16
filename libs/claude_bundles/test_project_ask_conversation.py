@@ -288,7 +288,6 @@ async def test_converse_emits_page_url_after_send_prompt() -> None:
 @pytest.mark.asyncio
 async def test_converse_path_threads_ids_via_project_ask_on_page() -> None:
     """Converse + project_uuid must pass Stargate/satellite ids into on_page."""
-    from claude_bundles.project_ask import ProjectAskResult
 
     page = AsyncMock()
     page.url = "https://claude.ai/project/abc"

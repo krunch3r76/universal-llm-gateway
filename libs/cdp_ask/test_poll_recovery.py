@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from cdp_ask.cse_session_models import HarvestResponse
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.poll_recovery import (
     RECOVERED_UNVERIFIED_DOM_ERROR,
@@ -16,7 +17,6 @@ from cdp_ask.poll_recovery import (
     snapshot_from_archive_token,
     stargate_id_from_satellite,
 )
-from cdp_ask.cse_session_models import HarvestResponse
 
 pytestmark = pytest.mark.offline
 
@@ -425,16 +425,15 @@ async def test_receipt_miss_harvest_http_poll_agrees(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """T-R3 HTTP — store-miss GET after converse attest miss still reports ok harvest."""
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, patch
 
+    from claude_bundles.cowork_skill_delivery import SkillDeliveryError
     from fastapi.testclient import TestClient
 
     from cdp_ask.app import create_app
     from cdp_ask.execution_store import ExecutionStore
     from cdp_ask.models import SubmitProjectAskRequest
     from cdp_ask.runner import run_execution
-
-    from claude_bundles.cowork_skill_delivery import SkillDeliveryError
 
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     marked = (
