@@ -137,7 +137,6 @@ def _reconcile_send_args(args: dict[str, Any]) -> tuple[dict[str, Any] | None, l
     advisories: list[str] = []
     if "idempotency_key" not in args:
         return None, advisories
-    key = args["idempotency_key"]
     has_new_slug = args.get("new_slug") is not None
     has_thread = bool(args.get("thread"))
     if has_new_slug and not has_thread:

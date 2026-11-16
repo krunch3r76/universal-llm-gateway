@@ -30,6 +30,29 @@ from ._write_validation import (
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
 
+_SQLITE_INT64_MIN = -(2**63)
+_SQLITE_INT64_MAX = 2**63 - 1
+
+
+def _assertion_id_out_of_sqlite_range(value: int) -> bool:
+    return value < _SQLITE_INT64_MIN or value > _SQLITE_INT64_MAX
+
+
+def _invalid_assertion_id_response(assertion_id: object, *, detail: str | None = None) -> dict[str, Any]:
+    message = detail or (
+        f"invalid assertion_id {assertion_id!r}; expected integer, digit "
+        "string, 'a:N', or 'assertion:N'"
+    )
+    return validation_error_response(
+        [
+            field_error(
+                "assertion_id",
+                message,
+                code="invalid_assertion_id",
+            )
+        ]
+    )
+
 _ASSERTION_UPDATE_ACCEPTED_KEYS: frozenset[str] = frozenset(
     {
         "superseded_by",
@@ -123,6 +146,14 @@ def _resolve_assertion_get_id(
             ]
         )
     if isinstance(assertion_id, int):
+        if _assertion_id_out_of_sqlite_range(assertion_id):
+            return None, _invalid_assertion_id_response(
+                assertion_id,
+                detail=(
+                    f"invalid assertion_id {assertion_id!r}; id must fit SQLite "
+                    "signed 64-bit integer range"
+                ),
+            )
         return assertion_id, None
     if not isinstance(assertion_id, str):
         return None, validation_error_response(
@@ -142,17 +173,20 @@ def _resolve_assertion_get_id(
             raw = raw[len(prefix) :].strip()
             break
     if raw.isdigit():
-        return int(raw), None
-    return None, validation_error_response(
-        [
-            field_error(
-                "assertion_id",
-                f"invalid assertion_id {assertion_id!r}; expected integer, digit "
-                "string, 'a:N', or 'assertion:N'",
-                code="invalid_assertion_id",
+        try:
+            resolved = int(raw)
+        except ValueError:
+            return None, _invalid_assertion_id_response(assertion_id)
+        if _assertion_id_out_of_sqlite_range(resolved):
+            return None, _invalid_assertion_id_response(
+                assertion_id,
+                detail=(
+                    f"invalid assertion_id {assertion_id!r}; id must fit SQLite "
+                    "signed 64-bit integer range"
+                ),
             )
-        ]
-    )
+        return resolved, None
+    return None, _invalid_assertion_id_response(assertion_id)
 
 
 def _op_assertion_get(
