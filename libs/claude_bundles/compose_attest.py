@@ -193,10 +193,15 @@ def approval_mode_chip(fp: dict[str, Any]) -> ApprovalMode:
 _COMPOSE_SURFACE_TITLE_FPS = frozenset({"new_session", "new_chat", "new_task"})
 
 
+def _claude_ai_host(url: str) -> str:
+    """Lowercase hostname without default-port suffix (``claude.ai:443`` → ``claude.ai``)."""
+    return (urlparse(url).hostname or "").lower()
+
+
 def _url_path_is_claude_code_compose(url: str) -> bool:
     """``claude.ai`` ``/code`` compose (not ``/codex`` or ``/code-foo``)."""
     parsed = urlparse(url)
-    host = (parsed.netloc or "").lower()
+    host = _claude_ai_host(url)
     if host and host not in ("claude.ai", "www.claude.ai"):
         return False
     path = (parsed.path or "").lower()
@@ -230,24 +235,21 @@ def dispatch_approval_refuse_reason(
 
     ``surface=None`` preserves Cowork/Chat behavior via
     ``cowork_auto_refuse_reason``. ``surface='code'`` accepts Skip or Auto;
-    Manual is refused, and missing chips on compose surfaces (``new_*`` title,
-    ``/new``, or ``/code`` URL) also refuse. Callers on ``/code`` must not flip the chip
-    to Skip.
+    Manual is refused; any absent chip refuses regardless of URL. Callers on
+    ``/code`` must not flip the chip to Skip.
     """
     surf = (surface or "").strip().lower() or None
     if surf != "code":
         return cowork_auto_refuse_reason(fp)
 
-    aria = _approval_aria(fp)
-    mode = fp.get("mode")
-    if not aria:
-        if _is_compose_surface_fingerprint(fp):
-            return (
-                "code dispatch refused: Permission mode Skip or Auto not attested "
-                f"(mode={mode!r} approval={fp.get('approval')!r})"
-            )
-        return None
     chip = approval_mode_chip(fp)
+    mode = fp.get("mode")
+    aria = _approval_aria(fp)
+    if chip == "absent":
+        return (
+            "code dispatch refused: Permission mode Skip or Auto not attested "
+            f"(mode={mode!r} approval={fp.get('approval')!r})"
+        )
     if chip in ("skip", "auto"):
         return None
     if chip == "manual":
@@ -256,7 +258,15 @@ def dispatch_approval_refuse_reason(
             f"code dispatch refused: surface=code approval {seen!r} "
             "(code accepts skip, auto)"
         )
-    return cowork_auto_refuse_reason(fp)
+    if chip == "unknown":
+        return (
+            "code dispatch refused: Permission mode Skip or Auto not attested "
+            f"(mode={mode!r} approval={fp.get('approval')!r})"
+        )
+    return (
+        "code dispatch refused: Permission mode Skip or Auto not attested "
+        f"(mode={mode!r} approval={fp.get('approval')!r} chip={chip!r})"
+    )
 
 
 def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:

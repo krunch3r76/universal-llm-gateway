@@ -322,7 +322,29 @@ async def resolve_cursor_sdk_thread_targets(
 
 
 CURSOR_WORKER_THREAD_OCCUPIED = "CURSOR_WORKER_THREAD_OCCUPIED"
+CURSOR_WORKER_OCCUPANCY_PROBE_FAILED = "CURSOR_WORKER_OCCUPANCY_PROBE_FAILED"
 _LIVE_WORKER_STATUSES = frozenset({"queued", "admitted", "running", "parked_waiting"})
+
+
+def _raise_occupancy_probe_failed(
+    *,
+    request_id: str,
+    reuse_thread: str,
+    reason: str,
+) -> None:
+    from .admission import FrontierEndpointError
+
+    raise FrontierEndpointError(
+        request_id=request_id,
+        field="reuse_thread",
+        reason=reason,
+        status_code=503,
+        code=CURSOR_WORKER_OCCUPANCY_PROBE_FAILED,
+        details={
+            "retryable": True,
+            "holder_thread_id": reuse_thread,
+        },
+    )
 
 
 async def refuse_occupied_worker_thread(
@@ -338,8 +360,10 @@ async def refuse_occupied_worker_thread(
     Must fire before ``admit_handoff_dispatch`` — a second execution_id on the
     same thread orphans the first (9675#8). ``nest_under`` is a legal park.
     Read-only admits do not occupy the write slot. Pending-empty shells have
-    no occupant. GIW unreachable on a thread that already has turns is
-    fail-closed. ``resume_of`` naming the ``parked_waiting`` holder is legal
+    no occupant. GIW occupancy probe transport/HTTP failure on a thread that
+    already has turns is fail-closed via
+    ``CURSOR_WORKER_OCCUPANCY_PROBE_FAILED`` (503, retryable). ``resume_of``
+    naming the ``parked_waiting`` holder is legal
     only when ``park_kind`` is ``nest_parent_run_exited`` (the parent's own
     run already finished). A steer park, a live nest park, a fresh generate,
     or ``resume_of`` of a different id still raises
@@ -366,29 +390,25 @@ async def refuse_occupied_worker_thread(
             )
     except httpx.HTTPError:
         if probed is not None and int(probed.get("turn_count") or 0) >= 1:
-            raise FrontierEndpointError(
+            _raise_occupancy_probe_failed(
                 request_id=request_id,
-                field="reuse_thread",
+                reuse_thread=reuse_thread,
                 reason=(
                     f"worker thread {reuse_thread!r} may still hold a live "
                     "dispatch; GIW occupancy probe failed — refuse second "
                     "top-level generate"
                 ),
-                status_code=422,
-                code=CURSOR_WORKER_THREAD_OCCUPIED,
             )
         return
     if resp.status_code != 200:
         if probed is not None and int(probed.get("turn_count") or 0) >= 1:
-            raise FrontierEndpointError(
+            _raise_occupancy_probe_failed(
                 request_id=request_id,
-                field="reuse_thread",
+                reuse_thread=reuse_thread,
                 reason=(
                     f"worker thread {reuse_thread!r} occupancy probe HTTP "
                     f"{resp.status_code}; refuse second top-level generate"
                 ),
-                status_code=422,
-                code=CURSOR_WORKER_THREAD_OCCUPIED,
             )
         return
     payload = resp.json()

@@ -15,14 +15,19 @@ from durable_io.atomic import durable_write_text
 from fastapi import HTTPException, Response
 from universal_logging import get_logger
 
-from ..db import WRITE_LOCK, cortex_conn, execute, json_encode, query
+from ..db import WRITE_LOCK, cortex_conn, execute, json_encode
 from ..models import AssertionCreate
 from ..routes.assertions._create import (
     _write_assertion_locked,
     prepare_assertion_write,
     start_new_assertion_side_effects,
 )
-from ..routes.deadlines import _RESOLVED_OUTCOMES, _list_deadlines_impl
+from ..routes.deadlines import (
+    _RESOLVED_OUTCOMES,
+    _deadline_resolve_eligibility,
+    _deadline_resolve_ineligible_error,
+    _list_deadlines_impl,
+)
 from ..routes.session_journals import (
     _create_session_journal_impl,
     _list_session_journals_impl,
@@ -70,23 +75,22 @@ def _op_deadline_resolve(
     claim = f"RESOLVED — {resolution_note}"
     evidence_text = evidence or f"deadline_resolve called; resolved_at={resolved_at}"
     observed_at = datetime.now(UTC).isoformat()
-    # Cheap existence check before belief-guard embeddings. The locked
+    # Cheap eligibility check before belief-guard embeddings. The locked
     # re-read below is still authoritative under BEGIN IMMEDIATE.
     probe = cortex_conn()
     try:
-        probe_rows = query(
-            probe,
-            "SELECT id FROM entities WHERE id = ? AND type = 'deadline'",
-            (deadline_id,),
-        )
+        probe_row = _deadline_resolve_eligibility(probe, deadline_id)
     finally:
         probe.close()
-    if not probe_rows:
-        return {
-            "error": (
-                f"Deadline entity not found or not type='deadline': {deadline_id}"
-            )
-        }
+    if probe_row is None:
+        err_conn = cortex_conn()
+        try:
+            err_msg = _deadline_resolve_ineligible_error(err_conn, deadline_id)
+        finally:
+            err_conn.close()
+        return {"error": err_msg}
+    probe_entity_type = str(probe_row["type"])
+    probe_workflow_state = probe_row.get("workflow_state")
     assertion_body = AssertionCreate(
         entity_id=deadline_id,
         claim=claim,
@@ -109,25 +113,21 @@ def _op_deadline_resolve(
             "step": "assert",
         }
 
+    entity_type = probe_entity_type
+    workflow_state = probe_workflow_state
     try:
         with WRITE_LOCK:
             conn = cortex_conn()
             try:
                 conn.execute("BEGIN IMMEDIATE")
-                rows = query(
-                    conn,
-                    "SELECT id, type, attributes FROM entities "
-                    "WHERE id = ? AND type = 'deadline'",
-                    (deadline_id,),
-                )
-                if not rows:
-                    return {
-                        "error": (
-                            "Deadline entity not found or not type='deadline': "
-                            f"{deadline_id}"
-                        )
-                    }
-                attrs_raw = rows[0]["attributes"]
+                locked_row = _deadline_resolve_eligibility(conn, deadline_id)
+                if locked_row is None:
+                    err_msg = _deadline_resolve_ineligible_error(conn, deadline_id)
+                    conn.rollback()
+                    return {"error": err_msg}
+                entity_type = str(locked_row["type"])
+                workflow_state = locked_row.get("workflow_state")
+                attrs_raw = locked_row["attributes"]
                 current_attrs: dict[str, Any] = (
                     json.loads(attrs_raw)
                     if isinstance(attrs_raw, str) and attrs_raw
@@ -173,6 +173,9 @@ def _op_deadline_resolve(
                     "UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?",
                     (json_encode(merged_attrs), now, deadline_id),
                 )
+            except (sqlite3.Error, HTTPException):
+                conn.rollback()
+                raise
             finally:
                 conn.close()
     except (sqlite3.Error, HTTPException) as exc:
@@ -222,6 +225,8 @@ def _op_deadline_resolve(
         "resolution_assertion_id": resolution_assertion_id,
         "outcome": outcome,
         "outcome_set": True,
+        "entity_type": entity_type,
+        "workflow_state": workflow_state,
     }
 
 

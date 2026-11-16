@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from closeout_memo.models import NEXT_RE
+
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_write_hop_admit_probe_failed_sidecar,
 )
@@ -42,6 +43,20 @@ def test_probe_failed_422_normalizes_retryable_true_not_permanent_after_one() ->
     assert _admit_error_permanent({"record_json": record_json}) is False
 
 
+def test_probe_failed_503_normalizes_retryable_true_not_permanent_after_one() -> None:
+    merged = merge_hop_admit_error(
+        None,
+        {
+            "last_error": _PROBE_FAILED,
+            "last_status_code": 503,
+        },
+    )
+    assert merged["retryable"] is True
+    assert merged["attempts"] == 1
+    record_json = merge_hop_patch("", {"hop_admit_error": merged})
+    assert _admit_error_permanent({"record_json": record_json}) is False
+
+
 def test_live_holder_422_overrides_prior_retryable_true_on_merge() -> None:
     prior = merge_hop_admit_error(
         None,
@@ -63,6 +78,96 @@ def test_occupancy_probe_http_marker_is_retryable() -> None:
     )
     merged = merge_hop_admit_error(None, {"last_error": err, "last_status_code": 422})
     assert merged["retryable"] is True
+
+
+def test_probe_failed_sidecar_503_writes_with_actual_status(tmp_path: Path) -> None:
+    """F1: probe-failed sidecar must fire for 503, not only legacy 422."""
+    conductor_id = "9e95cbd2a1d1-eabd9b97"
+    row = {
+        "dispatch_id": conductor_id,
+        "source_repo": str(tmp_path),
+        "record_json": "{}",
+    }
+    with patch(
+        "services.git_integration_worker.cursor_sdk_deliverables.write_repo_sidecar"
+    ) as write_mock:
+        maybe_write_hop_admit_probe_failed_sidecar(
+            row,
+            last_error=_PROBE_FAILED,
+            status_code=503,
+        )
+    write_mock.assert_called_once()
+    _repo, _sidecar_id, body = write_mock.call_args[0]
+    assert body.startswith("hop_admit_refused: HTTP 503\n")
+    assert "GIW occupancy probe failed" in body
+
+
+def test_arbitrary_503_without_probe_marker_skips_sidecar(tmp_path: Path) -> None:
+    row = {
+        "dispatch_id": "cond-503-generic",
+        "source_repo": str(tmp_path),
+        "record_json": "{}",
+    }
+    with patch(
+        "services.git_integration_worker.cursor_sdk_deliverables.write_repo_sidecar"
+    ) as write_mock:
+        maybe_write_hop_admit_probe_failed_sidecar(
+            row,
+            last_error=json.dumps(
+                {"status_code": 503, "error": "stargate_unreachable"},
+                sort_keys=True,
+            ),
+            status_code=503,
+        )
+    write_mock.assert_not_called()
+
+
+def test_probe_failed_serialized_envelope_retryable_and_sidecar(
+    tmp_path: Path,
+) -> None:
+    detail = {
+        "status_code": 503,
+        "error": {
+            "error": {
+                "code": "CURSOR_WORKER_OCCUPANCY_PROBE_FAILED",
+                "message": _PROBE_FAILED,
+            },
+            "field": "reuse_thread",
+            "request_id": "req-serialized",
+            "details": {"retryable": True, "holder_thread_id": "23783"},
+        },
+    }
+    error_text = json.dumps(detail, sort_keys=True)
+    merged = merge_hop_admit_error(
+        None,
+        {"last_error": error_text, "last_status_code": detail["status_code"]},
+    )
+    assert merged["retryable"] is True
+    assert merged["last_status_code"] == 503
+    assert merged["attempts"] == 1
+    record_json = merge_hop_patch("", {"hop_admit_error": merged})
+    assert _admit_error_permanent({"record_json": record_json}) is False
+    assert "CURSOR_WORKER_OCCUPANCY_PROBE_FAILED" in merged["last_error"]
+
+    conductor_id = "9e95cbd2a1d1-eabd9b98"
+    row = {
+        "dispatch_id": conductor_id,
+        "source_repo": str(tmp_path),
+        "record_json": record_json,
+    }
+    with patch(
+        "services.git_integration_worker.cursor_sdk_deliverables.write_repo_sidecar"
+    ) as write_mock:
+        maybe_write_hop_admit_probe_failed_sidecar(
+            row,
+            last_error=error_text,
+            status_code=503,
+        )
+    write_mock.assert_called_once()
+    _repo, sidecar_id, body = write_mock.call_args[0]
+    assert sidecar_id == f"hop-admit-{conductor_id}"
+    assert "hop_admit_refused: HTTP 503\n" in body
+    assert "CURSOR_WORKER_OCCUPANCY_PROBE_FAILED" in body
 
 
 def test_write_repo_sidecar_uses_hop_admit_prefix_and_leaves_memo_sidecar_ref(

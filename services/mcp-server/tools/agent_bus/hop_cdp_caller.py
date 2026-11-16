@@ -7,7 +7,7 @@ from typing import Any
 
 def resolve_hop_cdp_caller_agent(explicit_caller_agent: str | None) -> str | None:
     """Return deliverable ``caller_agent`` when explicitly supplied; never derive."""
-    from systems.frontier_consult.cdp_admit_identity import is_valid_cdp_caller_agent
+    from cdp_caller_identity import is_valid_cdp_caller_agent
 
     cand = (explicit_caller_agent or "").strip()
     if not cand:

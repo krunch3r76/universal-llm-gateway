@@ -53,6 +53,7 @@ from claude_bundles.chat_session_hygiene import (
     pick_chat_page,
 )
 from claude_bundles.compose_attest import (
+    _claude_ai_host,
     approval_mode_chip,
     await_compose_attest,
     compose_mode_fingerprint,
@@ -892,10 +893,10 @@ def _is_code_compose_surface(
 
 def _is_claude_ai_code_page_url(page_url: str) -> bool:
     """True when the browser is on claude.ai /code compose (not /codex or /code-foo)."""
-    parsed = urlparse(page_url or "")
-    if parsed.netloc != "claude.ai":
+    host = _claude_ai_host(page_url or "")
+    if host not in ("claude.ai", "www.claude.ai"):
         return False
-    path = parsed.path or ""
+    path = urlparse(page_url or "").path or ""
     return path == "/code" or path.startswith("/code/")
 
 

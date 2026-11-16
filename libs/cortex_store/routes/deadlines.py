@@ -24,6 +24,25 @@ router = APIRouter(prefix="/deadlines", tags=["deadlines"])
 
 _RESOLVED_OUTCOMES = frozenset({"defaulted", "met", "withdrawn", "superseded"})
 _OPEN_WORKFLOW_STATES = frozenset({"open", "in_progress"})
+_BOARD_EXCLUDED_LIFECYCLES = ("retired", "merged", "deprecated", "reaped")
+
+
+def _board_lifecycle_clause(alias: str) -> str:
+    excluded = ", ".join(f"'{life}'" for life in _BOARD_EXCLUDED_LIFECYCLES)
+    return f"({alias}.lifecycle IS NULL OR {alias}.lifecycle NOT IN ({excluded}))"
+
+
+def _board_todo_predicate_sql(alias: str = "t") -> str:
+    open_states = ", ".join(f"'{ws}'" for ws in sorted(_OPEN_WORKFLOW_STATES))
+    return (
+        f"{alias}.type = 'todo'\n"
+        f"      AND json_extract({alias}.attributes, '$.deadline_date') IS NOT NULL\n"
+        f"      AND ({alias}.workflow_state IS NULL OR "
+        f"{alias}.workflow_state IN ({open_states}))\n"
+        f"      AND {_board_lifecycle_clause(alias)}"
+    )
+
+
 _RESOLVED_CLAIM_RE = re.compile(r"\bRESOLVED\b")
 _RESOLVED_VIA_ORDER = ("urgency", "outcome", "resolved_claim", "fold")
 _ROW_POP_KEYS = (
@@ -57,7 +76,7 @@ _IN_CLAUSE_CHUNK = 500
 # items — agents reading the boot don't care about the source-table distinction.
 # The matter_id/matter_name cells are repurposed to point at the todo itself
 # so the briefing card render shape is unchanged.
-_DEADLINES_SQL = """
+_DEADLINES_SQL = f"""
     SELECT
         m.id AS matter_id,
         m.name AS matter_name,
@@ -77,6 +96,7 @@ _DEADLINES_SQL = """
     FROM entities m
     JOIN relationships r ON r.to_entity = m.id AND r.type = 'deadline_for'
     JOIN entities d ON r.from_entity = d.id
+    WHERE {_board_lifecycle_clause("d")}
 
     UNION ALL
 
@@ -94,12 +114,52 @@ _DEADLINES_SQL = """
         t.attributes AS subject_attributes,
         1 AS edge_active
     FROM entities t
-    WHERE t.type = 'todo'
-      AND json_extract(t.attributes, '$.deadline_date') IS NOT NULL
-      AND (t.workflow_state IS NULL OR t.workflow_state IN ('open', 'in_progress'))
+    WHERE {_board_todo_predicate_sql("t")}
 
     ORDER BY deadline_date
 """
+
+
+def _deadline_resolve_eligibility(
+    conn: sqlite3.Connection, entity_id: str
+) -> dict[str, Any] | None:
+    """Return entity row when *entity_id* may be closed via deadline_resolve."""
+    rows = query(
+        conn,
+        f"""
+        SELECT e.id, e.type, e.attributes, e.workflow_state, e.lifecycle
+        FROM entities e
+        WHERE e.id = ?
+          AND (
+            e.type = 'deadline'
+            OR ({_board_todo_predicate_sql("e")})
+          )
+        """,
+        (entity_id,),
+    )
+    if not rows:
+        return None
+    return dict(rows[0])
+
+
+def _deadline_resolve_ineligible_error(
+    conn: sqlite3.Connection, entity_id: str
+) -> str:
+    rows = query(
+        conn,
+        "SELECT id, type, workflow_state, lifecycle FROM entities WHERE id = ?",
+        (entity_id,),
+    )
+    if not rows:
+        return (
+            f"Entity not resolve-eligible for deadline_resolve: not found: {entity_id}"
+        )
+    row = rows[0]
+    return (
+        f"Entity not resolve-eligible for deadline_resolve: {entity_id} "
+        f"(type={row['type']}, workflow_state={row.get('workflow_state')}, "
+        f"lifecycle={row.get('lifecycle')})"
+    )
 
 
 def _head_closes(attrs: dict[str, Any], field: str, current: object | None) -> bool:

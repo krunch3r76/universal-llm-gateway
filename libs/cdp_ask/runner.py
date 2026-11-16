@@ -42,6 +42,7 @@ from cortex_store.files_path_normalize import normalize_cortex_files_path
 
 from cdp_ask.models import SubmitProjectAskRequest, classify_stall_stage
 from cdp_ask.overlay_effort_retry import run_with_overlay_retry
+from cdp_ask.project_select import apply_project_select
 from cdp_ask.page_liveness import (
     LadderAdvanceState,
     LadderCallbacks,
@@ -853,6 +854,10 @@ async def run_execution(
             )
             code_surface_extra = {"project_uuid_ignored_for_code_surface": True}
     try:
+        req = await apply_project_select(req, cdp_url=reg.cdp_url)
+        if surface != "code":
+            run_no_project = req.no_project_uuid
+            run_project_uuid = req.project_uuid
         if effective_converse:
             delete_after = (
                 bool(req.delete_after) if req.delete_after is not None else False

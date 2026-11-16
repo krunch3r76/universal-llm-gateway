@@ -1606,32 +1606,46 @@ def _admit_detail_retryable_once(detail: dict[str, Any]) -> bool:
     return False
 
 
+_OCCUPANCY_PROBE_FAILED_CODE = "CURSOR_WORKER_OCCUPANCY_PROBE_FAILED"
+
+
+def _hop_admit_is_occupancy_probe_failure(last_error: str) -> bool:
+    """Probe-failed refuse (marker or code), not a confirmed live holder."""
+    from services.git_integration_worker.cursor_sdk_ledger_hop import (
+        hop_admit_last_error_retryable,
+    )
+
+    text = last_error or ""
+    if hop_admit_last_error_retryable(text) is True:
+        return True
+    return _OCCUPANCY_PROBE_FAILED_CODE in text
+
+
 def maybe_write_hop_admit_probe_failed_sidecar(
     row: dict[str, Any],
     *,
     last_error: str,
     status_code: Any,
 ) -> None:
-    """Write a hop-admit sidecar for probe-failed 422; leave memo pointers unchanged."""
-    from services.git_integration_worker.cursor_sdk_deliverables import write_repo_sidecar
-    from services.git_integration_worker.cursor_sdk_ledger_hop import (
-        hop_admit_last_error_retryable,
+    """Write a hop-admit sidecar for occupancy probe failures; leave memo unchanged."""
+    from services.git_integration_worker.cursor_sdk_deliverables import (
+        write_repo_sidecar,
     )
 
+    if not _hop_admit_is_occupancy_probe_failure(last_error):
+        return
     try:
         code = int(status_code) if status_code is not None else None
     except (TypeError, ValueError):
         return
-    if code != 422:
-        return
-    if hop_admit_last_error_retryable(last_error) is not True:
+    if code is None:
         return
     conductor_id = str(row.get("dispatch_id") or "").strip()
     if not conductor_id:
         return
     sidecar_dispatch_id = f"hop-admit-{conductor_id}"
     content = (
-        "hop_admit_refused: HTTP 422\n"
+        f"hop_admit_refused: HTTP {code}\n"
         "cause: GIW occupancy probe failed\n\n"
         f"{last_error.strip()}\n"
     )

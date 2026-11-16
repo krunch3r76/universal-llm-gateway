@@ -29,6 +29,7 @@ from services.git_integration_worker.cursor_sdk_await_reply import (
     AWAIT_REPLY_TTL_ENV,
     PARK_KIND_AWAIT_REPLY,
     AwaitedGenerate,
+    AwaitResumeSummary,
     announce_await_parked,
     build_await_resume_request,
     find_reply,

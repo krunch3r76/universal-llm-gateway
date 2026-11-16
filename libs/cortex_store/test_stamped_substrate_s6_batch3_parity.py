@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import json
 import sqlite3
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +14,14 @@ from fastapi.testclient import TestClient
 
 from cortex_store import db as cortex_db
 from cortex_store._intent_card_test_fixtures import insert_entity
+from cortex_store._stamped_route_resolution_testkit import (
+    assert_baseline_route_resolution,
+)
 from cortex_store._test_db_bootstrap import copy_template_db
 from cortex_store.conftest import bind_cortex_db
 from cortex_store.dispatch_ops import execute_op
-from cortex_store._stamped_route_resolution_testkit import assert_baseline_route_resolution
 from cortex_store.main import create_app
+from cortex_store.routes.deadlines import _list_deadlines_impl
 
 _DISPATCH_ENVELOPE_KEYS = frozenset({"_next", "_hint", "skill_hint"})
 _VOLATILE_ENTRY_KEYS = frozenset({"id", "created_at"})
@@ -228,6 +230,27 @@ def _seed_deadline(conn: sqlite3.Connection, *, deadline_id: str = "deadline:s6-
     conn.commit()
 
 
+def _seed_todo_with_deadline(
+    conn: sqlite3.Connection, *, todo_id: str = "todo:t43903-dispatch"
+) -> None:
+    insert_entity(
+        conn,
+        entity_id=todo_id,
+        entity_type="todo",
+        name="t43903 dispatch todo",
+        workflow_state="open",
+        attributes=json.dumps({"deadline_date": "2026-12-01"}),
+    )
+    conn.commit()
+
+
+def _open_board_ids() -> set[str]:
+    return {
+        str(i["deadline_id"])
+        for i in _list_deadlines_impl(include_resolved=False)["items"]
+    }
+
+
 def _fetch_resolution_assertion(
     conn: sqlite3.Connection, deadline_id: str
 ) -> dict[str, Any]:
@@ -418,6 +441,45 @@ def test_deadline_resolve_dispatch_matches_typed_route(
     assert dispatch_assertion == typed_assertion
     assert dispatch_entity["attributes"].get("outcome") == "met"
     assert dispatch_assertion["fulfillment_assertion_id"] == fulfill_id
+
+
+@pytest.mark.offline
+def test_deadline_resolve_todo_dispatch_matches_typed_route(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    todo_id = "todo:t43903-dispatch-parity"
+    body = {
+        "resolution_note": "t43903 parity resolution",
+        "resolved_at": "2026-10-05T12:00:00Z",
+        "evidence": "parity evidence text",
+        "outcome": "met",
+    }
+    dispatch_args = {"deadline_id": todo_id, **body}
+
+    bind_db = tmp_path / "cortex_dispatch_todo_dl.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    _seed_todo_with_deadline(cortex_db.cortex_conn(), todo_id=todo_id)
+    assert todo_id in _open_board_ids()
+    dispatch_raw = execute_op("deadline_resolve", dispatch_args)
+    assert "error" not in dispatch_raw, dispatch_raw
+    dispatch_body = _normalize_deadline_resolve(dispatch_raw)
+    assert todo_id not in _open_board_ids()
+
+    typed_client = _isolated_client(
+        migrated_db_template, tmp_path, monkeypatch, suffix="typed_todo_dl"
+    )
+    _seed_todo_with_deadline(cortex_db.cortex_conn(), todo_id=todo_id)
+    http_resp = typed_client.post(f"/deadlines/{todo_id}/resolve", json=body)
+    assert http_resp.status_code == 200, http_resp.text
+    typed_body = _normalize_deadline_resolve(http_resp.json())
+    assert dispatch_body == typed_body
+    assert typed_body.get("entity_type") == "todo"
+    assert typed_body.get("outcome") == "met"
+    assert typed_body.get("outcome_set") is True
+    assert todo_id not in _open_board_ids()
 
 
 @pytest.mark.offline
