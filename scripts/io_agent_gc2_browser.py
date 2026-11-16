@@ -75,8 +75,3 @@ def gc2_service_environment(*, home: Path | None = None) -> dict[str, str]:
     }
 
 
-def format_systemd_environment_block(env: dict[str, str]) -> str:
-    lines = []
-    for key in sorted(env):
-        lines.append(f"Environment={key}={env[key]}")
-    return "\n".join(lines)

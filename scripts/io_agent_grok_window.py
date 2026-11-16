@@ -6,10 +6,8 @@ import os
 from pathlib import Path
 
 from grokbot_box_mcp.window_units import GrokWindowProfile, load_window_profile
-from io_agent_gc2_browser import (
-    format_systemd_environment_block,
-    provision_gc2_browser_config,
-)
+from io_agent_display_browser import format_systemd_environment_block
+from io_agent_gc2_browser import provision_gc2_browser_config
 
 
 def grok_service_environment(
