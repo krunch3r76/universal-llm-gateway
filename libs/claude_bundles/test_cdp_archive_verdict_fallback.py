@@ -335,7 +335,10 @@ def test_disagreeing_verdict_lines_stay_failed(tmp_path: Path) -> None:
     assert "archive_verdict" not in (out.extras or {})
 
 
-def test_repeated_identical_approve_still_promotes(tmp_path: Path) -> None:
+def test_repeated_identical_approve_fails_closed(tmp_path: Path) -> None:
+    """F1 strict grammar: exactly one verdict line. Two identical APPROVE lines
+    used to promote (unified-token rule); a second line is now ambiguity
+    (draft vs recap cannot be told apart) and fails closed."""
     archive = tmp_path / "repeat-approve.md"
     archive.write_text(
         "\n".join(
@@ -359,8 +362,8 @@ def test_repeated_identical_approve_still_promotes(tmp_path: Path) -> None:
         archive_uri=f"file://{archive}",
     )
     out = apply_archive_verdict_fallback_gated(result, purpose="review")
-    assert out.ok is True
-    assert out.extras.get("archive_verdict") == "APPROVE"
+    assert out.ok is False
+    assert "archive_verdict" not in (out.extras or {})
 
 
 def test_gated_request_changes_stays_failed(tmp_path: Path) -> None:
@@ -589,51 +592,209 @@ def test_body_veto_bare_request_changes_token(tmp_path: Path) -> None:
     assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
 
 
-def test_enum_echo_line_does_not_body_veto(tmp_path: Path) -> None:
-    archive = tmp_path / "enum-echo.md"
-    archive.write_text(
+def _fails_closed(tmp_path: Path, name: str, text: str) -> None:
+    archive = tmp_path / name
+    archive.write_text(text, encoding="utf-8")
+    out = apply_archive_verdict_fallback(_receipt_result(f"file://{archive}"))
+    assert out.ok is False, text
+    assert "archive_verdict" not in (out.extras or {}), text
+    assert out.error == _RECEIPT_ERR
+
+
+def _promotes(tmp_path: Path, name: str, text: str, token: str) -> None:
+    archive = tmp_path / name
+    archive.write_text(text, encoding="utf-8")
+    out = apply_archive_verdict_fallback(_receipt_result(f"file://{archive}"))
+    assert out.ok is True, text
+    assert out.extras.get("archive_verdict") == token
+
+
+_APPROVE_LINE = "VERDICT: APPROVE range=a..b head=b"
+
+
+def test_enum_echo_line_vetoes_fail_closed(tmp_path: Path) -> None:
+    """F1 strict grammar: the enum-echo exemption is dropped. An archive that
+    echoes the allowed enum used to promote; any REQUEST_CHANGES substring now
+    vetoes, so this legitimate-looking archive fails closed by design."""
+    _fails_closed(
+        tmp_path,
+        "enum-echo.md",
         "\n".join(
             [
-                "VERDICT: APPROVE range=a..b head=b",
+                _APPROVE_LINE,
                 "Allowed values: APPROVE | APPROVE_WITH_NITS | REQUEST_CHANGES",
             ]
         ),
-        encoding="utf-8",
     )
-    out = apply_archive_verdict_fallback(_receipt_result(f"file://{archive}"))
-    assert out.ok is True
-    assert out.extras.get("archive_verdict") == "APPROVE"
 
 
 def test_smuggle_pipe_segment_request_changes_before_merge_does_not_promote(
     tmp_path: Path,
 ) -> None:
-    archive = tmp_path / "smuggle-rc-prose.md"
-    archive.write_text(
-        "\n".join(
-            [
-                "VERDICT: APPROVE range=a..b head=b",
-                "APPROVE | REQUEST_CHANGES before merge",
-            ]
-        ),
-        encoding="utf-8",
+    _fails_closed(
+        tmp_path,
+        "smuggle-rc-prose.md",
+        "\n".join([_APPROVE_LINE, "APPROVE | REQUEST_CHANGES before merge"]),
     )
-    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
 
 
-def test_enum_echo_near_miss_substrings_do_not_promote(tmp_path: Path) -> None:
-    archive = tmp_path / "enum-near-miss.md"
-    archive.write_text(
-        "\n".join(
-            [
-                "VERDICT: APPROVE range=a..b head=b",
-                "REQUEST_CHANGES_PENDING | xAPPROVE",
-                "APPROVE-ish | REQUEST_CHANGES",
-            ]
-        ),
-        encoding="utf-8",
+def test_open_hole_note_colon_enum_echo_does_not_promote(tmp_path: Path) -> None:
+    """The F1 open hole: post-colon enum-echo allowance on any pipe segment."""
+    _fails_closed(
+        tmp_path,
+        "note-colon.md",
+        "\n".join([_APPROVE_LINE, "Note: APPROVE | REQUEST_CHANGES"]),
     )
-    assert apply_archive_verdict_fallback(_receipt_result(f"file://{archive}")).ok is False
+
+
+def test_colon_segments_status_blocker_does_not_promote(tmp_path: Path) -> None:
+    _fails_closed(
+        tmp_path,
+        "status-blocker.md",
+        "\n".join([_APPROVE_LINE, "Status: APPROVE | Blocker: REQUEST_CHANGES"]),
+    )
+
+
+def test_wrapped_enum_echo_segments_do_not_promote(tmp_path: Path) -> None:
+    _fails_closed(
+        tmp_path,
+        "wrapped-echo.md",
+        "\n".join([_APPROVE_LINE, "`APPROVE` | **REQUEST_CHANGES**"]),
+    )
+
+
+def test_bulleted_verdict_request_changes_does_not_promote(tmp_path: Path) -> None:
+    _fails_closed(
+        tmp_path,
+        "bulleted.md",
+        "\n".join([_APPROVE_LINE, "- Verdict: REQUEST_CHANGES"]),
+    )
+
+
+def test_bold_verdict_request_changes_does_not_promote(tmp_path: Path) -> None:
+    _fails_closed(
+        tmp_path,
+        "bold-line.md",
+        "\n".join([_APPROVE_LINE, "**VERDICT: REQUEST_CHANGES**"]),
+    )
+
+
+def test_bold_label_request_changes_does_not_promote(tmp_path: Path) -> None:
+    _fails_closed(
+        tmp_path,
+        "bold-label.md",
+        "\n".join([_APPROVE_LINE, "**Verdict:** REQUEST_CHANGES"]),
+    )
+
+
+def test_hyphen_and_lowercase_request_changes_veto(tmp_path: Path) -> None:
+    _fails_closed(
+        tmp_path,
+        "rc-hyphen.md",
+        "\n".join([_APPROVE_LINE, "Nit: REQUEST-CHANGES on naming"]),
+    )
+    _fails_closed(
+        tmp_path,
+        "rc-lower.md",
+        "\n".join([_APPROVE_LINE, "the seat said request_changes earlier"]),
+    )
+
+
+# Near misses -----------------------------------------------------------------
+
+
+def test_near_miss_request_changes_pending_fails_closed(tmp_path: Path) -> None:
+    """REQUEST_CHANGES_PENDING is not the enum token, but the strict grammar
+    vetoes on the substring; ambiguity fails closed rather than promoting."""
+    _fails_closed(
+        tmp_path,
+        "near-miss-pending.md",
+        "\n".join([_APPROVE_LINE, "state: REQUEST_CHANGES_PENDING"]),
+    )
+
+
+def test_near_miss_x_approve_verdict_token_does_not_promote(tmp_path: Path) -> None:
+    _fails_closed(tmp_path, "near-miss-xapprove.md", "VERDICT: xAPPROVE range=a..b\n")
+    _fails_closed(tmp_path, "near-miss-approvex.md", "VERDICT: APPROVEx range=a..b\n")
+
+
+def test_near_miss_approve_ish_pipe_request_changes_does_not_promote(
+    tmp_path: Path,
+) -> None:
+    _fails_closed(
+        tmp_path,
+        "near-miss-ish.md",
+        "\n".join([_APPROVE_LINE, "APPROVE-ish | REQUEST_CHANGES"]),
+    )
+
+
+def test_near_miss_approve_ish_sole_verdict_does_not_promote(tmp_path: Path) -> None:
+    _fails_closed(tmp_path, "approve-ish-sole.md", "VERDICT: APPROVE-ish\n")
+
+
+def test_two_conflicting_verdict_lines_fail_closed(tmp_path: Path) -> None:
+    _fails_closed(
+        tmp_path,
+        "conflict.md",
+        "\n".join(["VERDICT: APPROVE_WITH_NITS range=a..b", "VERDICT: PASS"]),
+    )
+
+
+def test_no_verdict_line_fails_closed(tmp_path: Path) -> None:
+    _fails_closed(tmp_path, "none.md", "## Body\n\nLooks fine to me. Ship it.\n")
+
+
+# Strict grammar edges --------------------------------------------------------
+
+
+def test_lowercase_label_or_token_fails_closed(tmp_path: Path) -> None:
+    _fails_closed(tmp_path, "lower-label.md", "Verdict: APPROVE range=a..b\n")
+    _fails_closed(tmp_path, "lower-token.md", "VERDICT: approve range=a..b\n")
+
+
+def test_indented_canonical_line_fails_closed(tmp_path: Path) -> None:
+    _fails_closed(tmp_path, "indented.md", "  VERDICT: APPROVE range=a..b\n")
+
+
+def test_second_prose_verdict_mention_fails_closed(tmp_path: Path) -> None:
+    _fails_closed(
+        tmp_path,
+        "prose-mention.md",
+        "\n".join([_APPROVE_LINE, "The verdict above stands."]),
+    )
+
+
+def test_second_enum_token_in_tail_fails_closed(tmp_path: Path) -> None:
+    _fails_closed(tmp_path, "tail-enum.md", "VERDICT: APPROVE RATIFY range=a..b\n")
+    _fails_closed(tmp_path, "tail-pipe.md", "VERDICT: APPROVE | PASS\n")
+
+
+def test_non_advance_sole_verdict_fails_closed(tmp_path: Path) -> None:
+    _fails_closed(tmp_path, "ratify.md", "VERDICT: RATIFY range=a..b\n")
+    _fails_closed(tmp_path, "ship.md", "VERDICT: SHIP\n")
+
+
+def test_plain_approve_with_nits_tail_promotes(tmp_path: Path) -> None:
+    _promotes(
+        tmp_path,
+        "nits.md",
+        "## Body\n\nVERDICT: APPROVE_WITH_NITS range=a..b head=b\n\nDone.\n",
+        "APPROVE_WITH_NITS",
+    )
+
+
+def test_plain_approve_trailing_whitespace_and_crlf_promotes(tmp_path: Path) -> None:
+    _promotes(tmp_path, "crlf.md", "## Body\r\n\r\nVERDICT: APPROVE  \r\n", "APPROVE")
+
+
+def test_parse_sole_request_changes_line_returns_token() -> None:
+    assert parse_canonical_verdict_line("VERDICT: REQUEST_CHANGES range=a..b\n") == (
+        "REQUEST_CHANGES"
+    )
+
+
+def test_parse_duplicate_lines_returns_none() -> None:
+    assert parse_canonical_verdict_line("VERDICT: APPROVE\nVERDICT: APPROVE\n") is None
 
 
 def test_plain_loose_verdict_request_changes_does_not_promote(tmp_path: Path) -> None:

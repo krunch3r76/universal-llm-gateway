@@ -13,16 +13,22 @@ from claude_bundles.cdp_model_endpoint import CdpGenerateResult
 logger = logging.getLogger(__name__)
 
 _SKILL_RECEIPT = "skill_receipt_unverified"
+
+# Strict whole-archive grammar (F1, ruling 23609#343). Promotion requires:
+#   1. no REQUEST_CHANGES / REQUEST-CHANGES substring anywhere in the archive
+#      (case-insensitive, no word boundaries, no enum-echo exemption), and
+#   2. exactly one line in the archive that mentions "verdict" at all, and
+#   3. that line is the literal canonical form ``VERDICT: <TOKEN> [tail]`` with
+#      TOKEN an uppercase advance enum member and a tail free of ``|``, ``<``,
+#      ``>`` and other enum tokens.
+# Every other shape (loose labels, bold/HTML wrappers, table cells, bare colon,
+# template echo, duplicate or conflicting lines, lowercase tokens) fails closed.
+_REQUEST_CHANGES_ANYWHERE_RE = re.compile(r"(?i)REQUEST[_-]?CHANGES")
+_VERDICT_MENTION = "verdict"
 _CANONICAL_VERDICT_LINE_RE = re.compile(
-    r"(?m)^VERDICT:[ \t]*(?P<raw>.+?)[ \t]*$",
-    re.IGNORECASE,
+    r"^VERDICT:[ \t]*(?P<token>[A-Z][A-Z_]*)(?:[ \t]+(?P<tail>\S.*?))?[ \t]*$"
 )
-_LOOSE_VERDICT_LINE_RE = re.compile(
-    r"(?i)\bverdict\b[^\w\n]{0,4}?(?:[:=\u2014\u2013]|\s-\s)[^\w\n]*(?P<token>\w+)",
-)
-_REQUEST_CHANGES_BODY_RE = re.compile(r"(?i)\bREQUEST_CHANGES\b")
-_BARE_VERDICT_COLON_LINE_RE = re.compile(r"(?im)^VERDICT:\s*$")
-_PROMPT_ECHO_VERDICT_RE = re.compile(r"(?im)^VERDICT\s*<")
+_TAIL_FORBIDDEN_CHARS = frozenset("|<>")
 _ADVANCE_VERDICTS = frozenset({"APPROVE", "APPROVE_WITH_NITS"})
 _VERDICT_ENUM_TOKENS = frozenset(
     {
@@ -34,6 +40,11 @@ _VERDICT_ENUM_TOKENS = frozenset(
         "PASS",
         "SHIP",
     }
+)
+_ENUM_TOKEN_IN_TAIL_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:"
+    + "|".join(sorted(_VERDICT_ENUM_TOKENS))
+    + r")(?![A-Za-z0-9_])"
 )
 
 
@@ -47,49 +58,44 @@ def _is_receipt_only_error(error: str | None) -> bool:
     return ";" not in err
 
 
-def _token_from_verdict_line_raw(raw: str) -> str | None:
-    """First token on the canonical ``VERDICT:`` line; None for template echoes."""
-    stripped = (raw or "").strip()
-    if not stripped:
+def _verdict_mention_lines(body: str) -> list[str]:
+    """Every archive line that mentions ``verdict`` in any case or wrapper."""
+    return [line for line in body.splitlines() if _VERDICT_MENTION in line.lower()]
+
+
+def _canonical_line_token(line: str) -> str | None:
+    """Enum token of a literal ``VERDICT: <TOKEN> [tail]`` line, else None.
+
+    The line is matched unstripped: leading whitespace, list markers, bold or
+    HTML wrappers, prefixes such as ``Final`` or ``Overall``, and table pipes
+    all fail. The tail may carry ``range=..``/``head=..`` but no ``|``, ``<``,
+    ``>`` or second enum token, so template echoes and smuggled pipes fail.
+    """
+    match = _CANONICAL_VERDICT_LINE_RE.match(line)
+    if not match:
         return None
-    if "<" in stripped and "|" in stripped:
+    token = match.group("token")
+    if token not in _VERDICT_ENUM_TOKENS:
         return None
-    first = stripped.split()[0]
-    if "|" in first:
+    tail = match.group("tail") or ""
+    if _TAIL_FORBIDDEN_CHARS.intersection(tail):
         return None
-    return first.upper().replace("-", "_")
+    if _ENUM_TOKEN_IN_TAIL_RE.search(tail):
+        return None
+    return token
 
 
 def parse_canonical_verdict_line(body: str) -> str | None:
-    """Return the first ``^VERDICT:`` line token, or None."""
-    match = _CANONICAL_VERDICT_LINE_RE.search(body)
-    if not match:
-        return None
-    return _token_from_verdict_line_raw(match.group("raw"))
+    """Token of the sole canonical ``VERDICT:`` line, or None on any ambiguity.
 
-
-def _all_verdict_line_tokens(body: str) -> list[str] | None:
-    """Every ``^VERDICT:`` token in document order; None if any line is unparseable."""
-    tokens: list[str] = []
-    for match in _CANONICAL_VERDICT_LINE_RE.finditer(body):
-        token = _token_from_verdict_line_raw(match.group("raw"))
-        if token is None:
-            return None
-        tokens.append(token)
-    return tokens
-
-
-def _unified_advance_verdict(body: str) -> str | None:
-    """Promote only when every ``^VERDICT:`` line names the same advance token."""
-    tokens = _all_verdict_line_tokens(body)
-    if not tokens:
+    Returns None when zero or more than one line mentions ``verdict``, or when
+    the single mention is not the literal canonical form. The REQUEST_CHANGES
+    veto is not applied here; see ``_strict_advance_verdict``.
+    """
+    mentions = _verdict_mention_lines(body)
+    if len(mentions) != 1:
         return None
-    if len(set(tokens)) != 1:
-        return None
-    token = tokens[0]
-    if not _verdict_advances(token):
-        return None
-    return token
+    return _canonical_line_token(mentions[0])
 
 
 def parse_archive_verdict(body: str) -> str | None:
@@ -101,86 +107,19 @@ def _verdict_advances(token: str | None) -> bool:
     return token in _ADVANCE_VERDICTS if token else False
 
 
-def _normalize_verdict_token(raw: str) -> str:
-    return raw.upper().replace("-", "_")
+def _request_changes_anywhere(body: str) -> bool:
+    """Fail-closed veto: any REQUEST_CHANGES substring, in any line, any wrapper."""
+    return _REQUEST_CHANGES_ANYWHERE_RE.search(body) is not None
 
 
-def _line_bounds(body: str, index: int) -> tuple[int, int]:
-    start = body.rfind("\n", 0, index) + 1
-    end = body.find("\n", index)
-    if end == -1:
-        end = len(body)
-    return start, end
-
-
-def _clean_pipe_segment(segment: str) -> str:
-    """Strip whitespace and light markdown wrappers from a pipe segment."""
-    cleaned = segment.strip()
-    if len(cleaned) >= 2 and cleaned[0] == "`" and cleaned[-1] == "`":
-        cleaned = cleaned[1:-1].strip()
-    if len(cleaned) >= 4 and cleaned.startswith("**") and cleaned.endswith("**"):
-        cleaned = cleaned[2:-2].strip()
-    return cleaned.strip()
-
-
-def _segment_names_enum_token(segment: str) -> str | None:
-    """Return the verdict enum token only when the segment is exactly that token."""
-    candidates = [_clean_pipe_segment(segment)]
-    if ":" in segment:
-        candidates.append(_clean_pipe_segment(segment.rsplit(":", 1)[-1]))
-    for cleaned in candidates:
-        normalized = _normalize_verdict_token(cleaned)
-        if normalized in _VERDICT_ENUM_TOKENS:
-            return normalized
-    return None
-
-
-def _line_is_pure_verdict_enum_echo(line: str) -> bool:
-    """True when ``REQUEST_CHANGES`` appears only in a pipe-delimited enum listing."""
-    stripped = line.strip()
-    if not _REQUEST_CHANGES_BODY_RE.search(stripped):
-        return False
-    loose = _LOOSE_VERDICT_LINE_RE.search(stripped)
-    if loose and _normalize_verdict_token(loose.group("token")) == "REQUEST_CHANGES":
-        return False
-    if "|" not in stripped:
-        return False
-    segments = [seg.strip() for seg in stripped.split("|") if seg.strip()]
-    if len(segments) < 2:
-        return False
-    saw_request_changes = False
-    for seg in segments:
-        token = _segment_names_enum_token(seg)
-        if token is None:
-            return False
-        if token == "REQUEST_CHANGES":
-            saw_request_changes = True
-    return saw_request_changes
-
-
-def _body_request_changes_blocks_promotion(body: str) -> bool:
-    """Fail-closed when ``REQUEST_CHANGES`` appears outside pure enum-echo lines."""
-    for match in _REQUEST_CHANGES_BODY_RE.finditer(body):
-        start, end = _line_bounds(body, match.start())
-        if not _line_is_pure_verdict_enum_echo(body[start:end]):
-            return True
-    return False
-
-
-def _loose_veto_blocks_promotion(body: str) -> bool:
-    """Fail-closed when any loose ``verdict`` line names a non-advance token."""
-    for match in _LOOSE_VERDICT_LINE_RE.finditer(body):
-        token = _normalize_verdict_token(match.group("token"))
-        if token == "VERDICT":
-            return True
-        if not _verdict_advances(token):
-            return True
-    return False
-
-
-def _bare_verdict_colon_blocks_promotion(body: str) -> bool:
-    """Fail-closed when a canonical ``VERDICT:`` line has no token."""
-    return _BARE_VERDICT_COLON_LINE_RE.search(body) is not None
+def _strict_advance_verdict(body: str) -> str | None:
+    """Advance token when the whole archive satisfies the strict grammar, else None."""
+    if _request_changes_anywhere(body):
+        return None
+    token = parse_canonical_verdict_line(body)
+    if not _verdict_advances(token):
+        return None
+    return token
 
 
 def _read_archive_text(archive_uri: str | None) -> str | None:
@@ -235,15 +174,7 @@ def apply_archive_verdict_fallback(result: CdpGenerateResult) -> CdpGenerateResu
     text = _read_archive_text(result.archive_uri)
     if not text:
         return result
-    if _PROMPT_ECHO_VERDICT_RE.search(text):
-        return result
-    if _body_request_changes_blocks_promotion(text):
-        return result
-    if _bare_verdict_colon_blocks_promotion(text):
-        return result
-    if _loose_veto_blocks_promotion(text):
-        return result
-    verdict = _unified_advance_verdict(text)
+    verdict = _strict_advance_verdict(text)
     if not verdict:
         return result
     preserved_err = result.error
