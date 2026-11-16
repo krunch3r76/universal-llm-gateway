@@ -221,7 +221,7 @@ def validate_knobs(config: CursorSdkModelConfig, overrides: Mapping[str, str]) -
 
 # Live ListModels names this knob reasoning_effort. Sending effort makes the
 # SDK status ERROR: Invalid parameters for registry model "grok-4.7" /
-# "gemini-4-argon" / "claude-sonnet-5-5".
+# "gemini-4-argon" / "claude-sonnet-5-5" / "claude-opus-5-5" / "claude-fable-5-2".
 _CARD_KNOB_WIRE_ID: Final[dict[tuple[str, str], str]] = {
     ("grok-4.7", "effort"): "reasoning_effort",
     ("gemini-4-argon", "effort"): "reasoning_effort",
@@ -229,6 +229,8 @@ _CARD_KNOB_WIRE_ID: Final[dict[tuple[str, str], str]] = {
     ("gemini-4-hydrogen", "effort"): "reasoning_effort",
     ("muse-wonder-1.0", "effort"): "reasoning_effort",
     ("claude-sonnet-5-5", "effort"): "reasoning_effort",
+    ("claude-opus-5-5", "effort"): "reasoning_effort",
+    ("claude-fable-5-2", "effort"): "reasoning_effort",
 }
 
 

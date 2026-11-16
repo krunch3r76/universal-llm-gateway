@@ -192,6 +192,8 @@ def test_card_knob_wire_map_maps_reasoning_effort_pairs() -> None:
         ("gemini-4-hydrogen", "effort"),
         ("muse-wonder-1.0", "effort"),
         ("claude-sonnet-5-5", "effort"),
+        ("claude-opus-5-5", "effort"),
+        ("claude-fable-5-2", "effort"),
     }
     assert not hasattr(cm_mod, "_PARAM_WIRE_ID")
     assert cm_mod.card_knob_wire_id("gemini-4-argon", "effort") == "reasoning_effort"
@@ -242,6 +244,137 @@ def test_build_model_selection_sonnet_55_maps_effort_wire_id() -> None:
     }
     omit = build_model_selection(cfg)
     assert {p.id: p.value for p in omit.params} == {"context": "1m"}
+
+
+def test_build_model_selection_opus_55_maps_effort_wire_id() -> None:
+    cfg = resolve_cursor("claude-opus-5-5")
+    sel = build_model_selection(cfg, {"effort": "high"})
+    assert {p.id: p.value for p in sel.params} == {
+        "context": "1m",
+        "reasoning_effort": "high",
+    }
+    omit = build_model_selection(cfg)
+    assert {p.id: p.value for p in omit.params} == {"context": "1m"}
+
+
+def test_build_model_selection_fable_52_maps_effort_wire_id() -> None:
+    cfg = resolve_cursor("claude-fable-5-2")
+    sel = build_model_selection(cfg, {"effort": "high"})
+    assert {p.id: p.value for p in sel.params} == {
+        "context": "1m",
+        "reasoning_effort": "high",
+    }
+    omit = build_model_selection(cfg)
+    assert {p.id: p.value for p in omit.params} == {"context": "1m"}
+
+
+def test_claude_opus_55_live_catalog_admission() -> None:
+    effort_values = [
+        ModelParameterDefinitionValue(value=v, display_name=v)
+        for v in ("low", "medium", "high", "xhigh", "max")
+    ]
+    opus55 = SDKModel(
+        id="claude-opus-5-5",
+        display_name="claude-opus-5-5",
+        description="claude-opus-5-5",
+        parameters=[
+            ModelParameterDefinition(
+                id="context",
+                display_name="context",
+                values=[
+                    ModelParameterDefinitionValue(value="300k", display_name="300k"),
+                    ModelParameterDefinitionValue(value="1m", display_name="1m"),
+                ],
+            ),
+            ModelParameterDefinition(
+                id="reasoning_effort",
+                display_name="reasoning_effort",
+                values=effort_values,
+            ),
+            ModelParameterDefinition(
+                id="fast",
+                display_name="fast",
+                values=[
+                    ModelParameterDefinitionValue(value="false", display_name="false"),
+                    ModelParameterDefinitionValue(value="true", display_name="true"),
+                ],
+            ),
+        ],
+        variants=[
+            ModelVariant(
+                params=[
+                    ModelParameterValue(id="cyber", value="false"),
+                    ModelParameterValue(id="context", value="1m"),
+                    ModelParameterValue(id="reasoning_effort", value="medium"),
+                    ModelParameterValue(id="fast", value="false"),
+                ],
+                display_name="default",
+                description="default",
+                is_default=True,
+            )
+        ],
+    )
+    projected = card_knob_catalog_projection([opus55])
+    assert not [
+        e
+        for e in catalog_divergences(projected)
+        if "claude-opus-5-5" in e
+    ]
+    assert live_admission_error("claude-opus-5-5", [opus55]) is None
+
+
+def test_claude_fable_52_live_catalog_admission() -> None:
+    effort_values = [
+        ModelParameterDefinitionValue(value=v, display_name=v)
+        for v in ("low", "medium", "high", "xhigh", "max")
+    ]
+    fable52 = SDKModel(
+        id="claude-fable-5-2",
+        display_name="claude-fable-5-2",
+        description="claude-fable-5-2",
+        parameters=[
+            ModelParameterDefinition(
+                id="context",
+                display_name="context",
+                values=[
+                    ModelParameterDefinitionValue(value="300k", display_name="300k"),
+                    ModelParameterDefinitionValue(value="1m", display_name="1m"),
+                ],
+            ),
+            ModelParameterDefinition(
+                id="reasoning_effort",
+                display_name="reasoning_effort",
+                values=effort_values,
+            ),
+            ModelParameterDefinition(
+                id="fast",
+                display_name="fast",
+                values=[
+                    ModelParameterDefinitionValue(value="false", display_name="false"),
+                    ModelParameterDefinitionValue(value="true", display_name="true"),
+                ],
+            ),
+        ],
+        variants=[
+            ModelVariant(
+                params=[
+                    ModelParameterValue(id="context", value="1m"),
+                    ModelParameterValue(id="reasoning_effort", value="high"),
+                    ModelParameterValue(id="fast", value="false"),
+                ],
+                display_name="default",
+                description="default",
+                is_default=True,
+            )
+        ],
+    )
+    projected = card_knob_catalog_projection([fable52])
+    assert not [
+        e
+        for e in catalog_divergences(projected)
+        if "claude-fable-5-2" in e
+    ]
+    assert live_admission_error("claude-fable-5-2", [fable52]) is None
 
 
 def test_claude_sonnet_55_live_catalog_admission() -> None:

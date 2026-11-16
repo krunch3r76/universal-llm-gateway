@@ -232,16 +232,10 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         # Live ListModels probe 2026-10-03.
         probed_at="2026-10-03",
     ),
-    # Opus 5.5 (Anthropic 2026-09-22, API id claude-opus-5-5). Same Cursor
-    # knob surface as claude-opus-5 until a ListModels probe diverges.
-    # API adaptive thinking cannot be turned off; the thinking knob stays so
-    # this card remains interchangeable with claude-opus-5 at admission.
-    # probed_at inherits the claude-opus-5 ListModels stamp (2026-10-03):
-    # admit requires a non-null stamp, and this id is a live SDK model, not a
-    # draft row. Re-stamp if a later probe diverges knobs or default_variant.
+    # Opus 5.5 — live catalog GET :8091/api/v1/cursor/catalog 2026-11-16:
+    # context, effort, fast (no thinking knob on wire).
     "claude-opus-5-5": ModelCapability(
         knobs={
-            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
             "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
             "effort": KnobSpec(accepted=_FULL_EFFORT),
             "fast": KnobSpec(accepted=("false", "true")),
@@ -249,13 +243,12 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         fixed_params={"cyber": "false"},
         default_variant={
             "cyber": "false",
-            "thinking": "true",
             "context": "1m",
-            "effort": "high",
+            "effort": "medium",
             "fast": "false",
         },
         instruction_profile="reasoner",
-        probed_at="2026-10-03",
+        probed_at="2026-11-16",
     ),
     "claude-opus-4-8": ModelCapability(
         knobs={
@@ -338,22 +331,21 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         # Live ListModels probe 2026-10-03.
         probed_at="2026-10-03",
     ),
-    # Fable 5.2 (Anthropic launch 2026-11-09). Cursor pool/price unlisted; rate
-    # row mirrors API (8/40/0.20). Card is for provenance fold + explicit pins
-    # under cursor_sdk_other_models_pool deny.
+    # Fable 5.2 — live catalog GET :8091/api/v1/cursor/catalog 2026-11-16:
+    # context, effort, fast (no thinking knob on wire).
     "claude-fable-5-2": ModelCapability(
         knobs={
-            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
             "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
             "effort": KnobSpec(accepted=_FULL_EFFORT),
+            "fast": KnobSpec(accepted=("false", "true")),
         },
         default_variant={
-            "thinking": "true",
             "context": "1m",
             "effort": "high",
+            "fast": "false",
         },
         instruction_profile="reasoner",
-        probed_at="2026-11-10",
+        probed_at="2026-11-16",
     ),
     # Routed-but-untrusted consult models (team_dispatch reviewer/skeptic/cheap-recon
     # targets) promoted into the trusted dispatch allowlist. Allowlist = trust/route

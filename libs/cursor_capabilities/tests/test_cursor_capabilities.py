@@ -89,12 +89,20 @@ def test_model_capability_default_instruction_profile_is_mechanical() -> None:
 
 def test_governed_rows_carry_instruction_profile_classifications() -> None:
     assert len(CURSOR_MODEL_CAPABILITIES) == 26
-    opus5 = CURSOR_MODEL_CAPABILITIES["claude-opus-5"]
     opus55 = CURSOR_MODEL_CAPABILITIES["claude-opus-5-5"]
-    assert opus55.knobs == opus5.knobs
-    assert opus55.fixed_params == opus5.fixed_params
-    assert opus55.default_variant == opus5.default_variant
-    assert opus55.probed_at == opus5.probed_at
+    assert set(opus55.knobs) == {"context", "effort", "fast"}
+    assert opus55.fixed_params == {"cyber": "false"}
+    assert opus55.default_variant == {
+        "cyber": "false",
+        "context": "1m",
+        "effort": "medium",
+        "fast": "false",
+    }
+    assert opus55.probed_at == "2026-11-16"
+    fable52 = CURSOR_MODEL_CAPABILITIES["claude-fable-5-2"]
+    assert set(fable52.knobs) == {"context", "effort", "fast"}
+    assert fable52.default_variant == {"context": "1m", "effort": "high", "fast": "false"}
+    assert fable52.probed_at == "2026-11-16"
     sonnet5 = CURSOR_MODEL_CAPABILITIES["claude-sonnet-5"]
     sonnet55 = CURSOR_MODEL_CAPABILITIES["claude-sonnet-5-5"]
     assert set(sonnet55.knobs) == {"context", "effort"}
