@@ -81,6 +81,57 @@ def test_propose_rejects_never_partial_plan(cortex_client: TestClient) -> None:
     assert any(r["code"] == "refused_op" for r in body["rejects"])
 
 
+_INVALID_AC1C_PATCHES = [
+    (
+        [{"@id": "todo:x", "noted": "claim", "derivation_type": "bogus"}],
+        "literal_type",
+    ),
+    (
+        [{"@id": "todo:x", "noted": "claim", "evidence_uris": []}],
+        "literal_type",
+    ),
+    (
+        [{"@id": "todo:x", "noted": "claim", "evidence_uris": "x"}],
+        "literal_type",
+    ),
+    (
+        [{"@id": "todo:x", "noted": "claim", "confidence_score": 0.5}],
+        "unknown_predicate",
+    ),
+]
+
+
+def test_propose_invalid_noted_matrix_zero_writes(
+    cortex_client: TestClient, migrated_conn: sqlite3.Connection
+) -> None:
+    _seed(migrated_conn)
+    before_assertions = migrated_conn.execute(
+        "SELECT COUNT(*) FROM assertions"
+    ).fetchone()[0]
+
+    for graph, expected_code in _INVALID_AC1C_PATCHES:
+        patch = {"@context": "cortex.life/v1", "@graph": graph}
+        resp = cortex_client.post("/graph/imprint/propose", json={"patch": patch})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["rejects"]
+        assert body["op_plan"] == []
+        assert body["proposal_id"] is None
+        assert any(r["code"] == expected_code for r in body["rejects"])
+
+        resp_commit = cortex_client.post(
+            "/graph/imprint/commit",
+            json={"proposal_id": "00000000-0000-4000-8000-000000000099"},
+        )
+        assert resp_commit.status_code == 422
+        assert resp_commit.json()["code"] == "unknown_proposal"
+
+    after_assertions = migrated_conn.execute(
+        "SELECT COUNT(*) FROM assertions"
+    ).fetchone()[0]
+    assert after_assertions == before_assertions
+
+
 def test_propose_zero_db_mutations(cortex_client: TestClient, migrated_conn) -> None:
     _seed(migrated_conn)
     before_entities = migrated_conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]

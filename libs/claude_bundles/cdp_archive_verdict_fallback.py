@@ -85,7 +85,9 @@ def _read_archive_text(archive_uri: str | None) -> str | None:
     return None
 
 
-def apply_archive_verdict_fallback(result: CdpGenerateResult) -> CdpGenerateResult:
+def _salvage_archive_verdict_on_result(
+    result: CdpGenerateResult,
+) -> CdpGenerateResult:
     """When skill_receipt_unverified, prefer a canonical archive ``VERDICT:`` line."""
     if not _is_receipt_only_error(result.error):
         return result
@@ -127,6 +129,11 @@ def apply_archive_verdict_fallback(result: CdpGenerateResult) -> CdpGenerateResu
         poll_snapshots=result.poll_snapshots,
         extras=extras,
     )
+
+
+def apply_archive_verdict_fallback(result: CdpGenerateResult) -> CdpGenerateResult:
+    """Return ``result`` unchanged — archive prose does not promote gate authority."""
+    return result
 
 
 def _payload_archive_uri(payload: dict[str, Any]) -> str | None:
@@ -213,7 +220,7 @@ def _apply_archive_verdict_fallback_terminal_payload(
         stall_stage=payload.get("stall_stage"),
         extras=extras,
     )
-    out = apply_archive_verdict_fallback(result)
+    out = _salvage_archive_verdict_on_result(result)
     if not out.ok:
         return payload
     return _merge_promoted_payload(payload, out, preserved_err=err or None)

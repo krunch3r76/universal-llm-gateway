@@ -122,6 +122,14 @@ models:
     output_rate_per_m: 10.0
     source: manual_seed
     pinned: true
+  # Gemini 4 Hydrogen — https://cursor.com/docs/models-and-pricing,
+  # https://cursor.com/docs/models/gemini-4-hydrogen (read 2026-11-15).
+  - model_id: cursor/gemini-4-hydrogen
+    input_rate_per_m: 1.5
+    cache_read_rate_per_m: 0.075
+    output_rate_per_m: 7.5
+    source: manual_seed
+    pinned: true
   - model_id: cursor/glm-5.2
     input_rate_per_m: 1.4
     cache_read_rate_per_m: 0.26

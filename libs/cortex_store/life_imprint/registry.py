@@ -13,13 +13,37 @@ _VALID_CLASSES = frozenset({"typing", "relationship", "literal"})
 _REQUIRED_PRED_FIELDS = frozenset({"class", "cortex_op"})
 
 
+def _normalize_domain(
+    raw: object,
+    *,
+    predicate: str,
+    entity_types: frozenset[str],
+) -> tuple[str, ...] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        members = (raw,)
+    elif isinstance(raw, list):
+        if not raw:
+            raise ValueError(f"predicates.{predicate}.domain must not be empty list")
+        members = tuple(str(v) for v in raw)
+    else:
+        raise ValueError(f"predicates.{predicate}.domain must be string or list")
+    unknown = [m for m in members if m not in entity_types]
+    if unknown:
+        raise ValueError(
+            f"predicates.{predicate}.domain unknown entity types: {sorted(unknown)}"
+        )
+    return members
+
+
 @dataclass(frozen=True)
 class PredicateSpec:
     name: str
     klass: str
     cortex_op: str
     aliases: tuple[str, ...] = ()
-    domain: str | None = None
+    domain: tuple[str, ...] | None = None
     range: str | None = None
     literal_type: str | None = None
     enum_values: tuple[str, ...] = ()
@@ -62,7 +86,9 @@ def _require_mapping(data: object, label: str) -> dict[str, Any]:
     return data
 
 
-def _parse_predicate(name: str, raw: object) -> PredicateSpec:
+def _parse_predicate(
+    name: str, raw: object, entity_types: frozenset[str]
+) -> PredicateSpec:
     spec = _require_mapping(raw, f"predicates.{name}")
     klass = spec.get("class")
     cortex_op = spec.get("cortex_op")
@@ -74,13 +100,19 @@ def _parse_predicate(name: str, raw: object) -> PredicateSpec:
     enum_raw = spec.get("enum_values") or []
     if enum_raw and not isinstance(enum_raw, list):
         raise ValueError(f"predicates.{name}.enum_values must be a list")
+    domain = _normalize_domain(
+        spec.get("domain"), predicate=name, entity_types=entity_types
+    )
+    range_raw = spec.get("range")
+    if range_raw is not None and range_raw not in entity_types:
+        raise ValueError(f"predicates.{name}.range unknown entity type: {range_raw!r}")
     return PredicateSpec(
         name=name,
         klass=str(klass),
         cortex_op=str(cortex_op),
         aliases=tuple(str(a) for a in aliases),
-        domain=spec.get("domain"),
-        range=spec.get("range"),
+        domain=domain,
+        range=str(range_raw) if range_raw is not None else None,
         literal_type=spec.get("literal_type"),
         enum_values=tuple(str(v) for v in enum_raw),
         allowlisted_attribute=spec.get("allowlisted_attribute"),
@@ -113,7 +145,7 @@ def load_registry(path: Path | None = None) -> LifeVocabRegistry:
     for name, pred_raw in predicates_raw.items():
         if name in predicates:
             raise ValueError(f"duplicate predicate: {name}")
-        pred = _parse_predicate(name, pred_raw)
+        pred = _parse_predicate(name, pred_raw, entity_types)
         missing = _REQUIRED_PRED_FIELDS - set(pred_raw.keys())
         if missing:
             raise ValueError(f"predicates.{name} missing fields: {sorted(missing)}")

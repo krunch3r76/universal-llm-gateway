@@ -225,6 +225,7 @@ _CARD_KNOB_WIRE_ID: Final[dict[tuple[str, str], str]] = {
     ("grok-4.7", "effort"): "reasoning_effort",
     ("gemini-4-argon", "effort"): "reasoning_effort",
     ("gemini-4-carbon", "effort"): "reasoning_effort",
+    ("gemini-4-hydrogen", "effort"): "reasoning_effort",
     ("muse-wonder-1.0", "effort"): "reasoning_effort",
 }
 

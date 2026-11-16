@@ -75,7 +75,7 @@ def test_read_timeout_not_pre_paste() -> None:
 
 
 def test_post_paste_error_not_pre_paste() -> None:
-    assert not is_pre_paste_failure("skill_receipt_unverified: x")
+    assert not is_pre_paste_failure("generic post-paste failure: x")
 
 
 def test_pre_paste_retry_three_backoffs() -> None:

@@ -16,6 +16,19 @@ _METADATA_KEYS = frozenset(
     {"@context", "@graph", "@version", "@vocab", "@id", "name", "description"}
 )
 _TYPED_ENTITY_ATTRS = frozenset({"name", "description", "aliases", "attributes"})
+_NOTED_MODIFIER_KEYS = frozenset(
+    {
+        "derivation_type",
+        "evidence",
+        "evidence_uris",
+        "valid_from",
+        "reasoning_summary",
+    }
+)
+
+IMPRINT_NOTED_DEFAULT_EVIDENCE = (
+    "recorded via life imprint noted; caller supplied no evidence"
+)
 
 
 @dataclass(frozen=True)
@@ -189,6 +202,30 @@ def resolve_entity_id(
     return None, None, None
 
 
+def _collect_planned_ids(patch: dict[str, Any]) -> frozenset[str]:
+    ids: set[str] = set()
+    for stmt in _iter_statements(patch):
+        if stmt.get("@type") or stmt.get("a"):
+            subject = stmt.get("@id")
+            if isinstance(subject, str):
+                ids.add(subject)
+    return frozenset(ids)
+
+
+def _assert_args_for_noted(stmt: dict[str, Any], claim: str, entity_id: str) -> dict[str, Any]:
+    args: dict[str, Any] = {
+        "entity_id": entity_id,
+        "claim": claim,
+        "confidence": "believed",
+        "evidence": stmt.get("evidence") or IMPRINT_NOTED_DEFAULT_EVIDENCE,
+        "derivation_type": stmt.get("derivation_type") or "agent_observation",
+    }
+    for key in ("evidence_uris", "valid_from", "reasoning_summary"):
+        if key in stmt:
+            args[key] = stmt[key]
+    return args
+
+
 def _typing_args(stmt: dict[str, Any], subject: str) -> dict[str, Any]:
     entity_type = stmt.get("@type") or stmt.get("a")
     args: dict[str, Any] = {"id": subject, "type": entity_type}
@@ -204,26 +241,32 @@ def build_op_plan(
     conn: sqlite3.Connection,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Return (op_plan, candidates). Skips statements with unresolved ambiguity."""
-    plan: list[dict[str, Any]] = []
+    creates: list[dict[str, Any]] = []
+    others: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
-    planned_ids: set[str] = set()
+    planned_ids = _collect_planned_ids(patch)
 
     for idx, stmt in enumerate(_iter_statements(patch)):
         subject = stmt["@id"]
         typing_key = "@type" if "@type" in stmt else ("a" if "a" in stmt else None)
-        planned = frozenset(planned_ids)
+        planned = planned_ids
+        skip_stmt = False
 
         if typing_key:
-            plan.append(
+            creates.append(
                 OpPlanEntry(
                     op="entity_create",
                     args=_typing_args(stmt, subject),
                 ).as_dict()
             )
-            planned_ids.add(subject)
 
         for key, value in stmt.items():
-            if key in _METADATA_KEYS or key.startswith("@") or key in {"@type", "a"}:
+            if (
+                key in _METADATA_KEYS
+                or key in _NOTED_MODIFIER_KEYS
+                or key.startswith("@")
+                or key in {"@type", "a"}
+            ):
                 continue
             if typing_key and key in _TYPED_ENTITY_ATTRS:
                 continue
@@ -240,7 +283,8 @@ def build_op_plan(
             )
             if subj_cand:
                 candidates.append(subj_cand.as_dict())
-                continue
+                skip_stmt = True
+                break
             if subj_id is None:
                 candidates.append(
                     CandidateMatch(
@@ -250,7 +294,8 @@ def build_op_plan(
                         [],
                     ).as_dict()
                 )
-                continue
+                skip_stmt = True
+                break
 
             if spec.klass == "relationship":
                 obj_ref = _object_ref(value)
@@ -265,18 +310,20 @@ def build_op_plan(
                 )
                 if tgt_cand:
                     candidates.append(tgt_cand.as_dict())
-                    continue
+                    skip_stmt = True
+                    break
                 if tgt_id is None:
                     candidates.append(
                         CandidateMatch(idx, "object", obj_ref, []).as_dict()
                     )
-                    continue
+                    skip_stmt = True
+                    break
                 resolves = {}
                 if subj_note:
                     resolves["subject"] = subj_note
                 if tgt_note:
                     resolves["object"] = tgt_note
-                plan.append(
+                others.append(
                     OpPlanEntry(
                         op="relationship_create",
                         args={
@@ -289,24 +336,17 @@ def build_op_plan(
                 )
 
             elif spec.klass == "literal" and spec.cortex_op == "assert":
-                plan.append(
+                others.append(
                     OpPlanEntry(
                         op="assert",
-                        args={
-                            "entity_id": subj_id,
-                            "claim": value,
-                            "confidence": "believed",
-                            "evidence": "operator-stated via imprint",
-                            "derivation_type": "user_statement",
-                            "confidence_score": 0.9,
-                        },
+                        args=_assert_args_for_noted(stmt, str(value), subj_id),
                         resolves={"subject": subj_note} if subj_note else None,
                     ).as_dict()
                 )
 
             elif spec.klass == "literal" and spec.cortex_op == "entity_update":
                 attr = spec.allowlisted_attribute or key
-                plan.append(
+                others.append(
                     OpPlanEntry(
                         op="entity_update",
                         args={
@@ -317,7 +357,10 @@ def build_op_plan(
                     ).as_dict()
                 )
 
-    return plan, candidates
+        if skip_stmt:
+            continue
+
+    return creates + others, candidates
 
 
 def normalize_patch(patch: dict[str, Any], registry: LifeVocabRegistry) -> dict[str, Any]:
