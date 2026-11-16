@@ -70,6 +70,7 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
 
 
 def get_holder(conn: sqlite3.Connection, holder_id: str) -> dict[str, Any] | None:
+    """Return the ``cse_session_holders`` row for *holder_id*, or None when absent."""
     row = conn.execute(
         "SELECT * FROM cse_session_holders WHERE holder_id=?",
         (holder_id,),
@@ -80,6 +81,7 @@ def get_holder(conn: sqlite3.Connection, holder_id: str) -> dict[str, Any] | Non
 def get_driving_holder_for_lane(
     conn: sqlite3.Connection, lane_thread_id: str
 ) -> dict[str, Any] | None:
+    """Return the newest driving holder row on *lane_thread_id*, or None when vacant."""
     lane = (lane_thread_id or "").strip()
     if not lane:
         return None
@@ -987,6 +989,7 @@ def resolve_maestro_holder_id_for_lane(lane_thread_id: str | None) -> str | None
 def resolve_holder_by_registration(
     conn: sqlite3.Connection, registration_id: str
 ) -> dict[str, Any] | None:
+    """Return the newest holder row bound to *registration_id*, or None when unknown."""
     reg = (registration_id or "").strip()
     if not reg:
         return None
@@ -999,6 +1002,7 @@ def resolve_holder_by_registration(
 
 
 def lookup_holder_for_owed_wake(holder_id: str) -> dict[str, Any] | None:
+    """Look up a persisted holder row by *holder_id* on the dispatch ledger."""
     hid = (holder_id or "").strip()
     if not hid:
         return None
@@ -1008,6 +1012,7 @@ def lookup_holder_for_owed_wake(holder_id: str) -> dict[str, Any] | None:
 
 
 def resolve_superseded_holder_live(registration_id: str) -> dict[str, Any] | None:
+    """Return a driving or dormant holder row matching *registration_id*, else None."""
     with _ledger_conn() as conn:
         ensure_schema(conn)
         row = resolve_holder_by_registration(conn, registration_id)
@@ -1020,6 +1025,7 @@ def resolve_superseded_holder_live(registration_id: str) -> dict[str, Any] | Non
 
 
 def lane_thread_uses_bridge_wake(lane_thread_id: str) -> bool:
+    """Return True when *lane_thread_id* routes wakes via Xvfb display push-wake."""
     try:
         from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (  # noqa: E501
             _summoning_thread_uses_xvfb_push_wake,
@@ -1135,6 +1141,7 @@ def _import_cse_session_warm_module():
 
 
 def build_owed_wake_deps():
+    """Assemble ``OwedWakeDeps`` callbacks wired to agent-bus and CSE warm followup."""
     from scripts.model_manager.ui.controller.owed_wake_ledger import OwedWakeDeps
 
     cse_session_warm = _import_cse_session_warm_module()
