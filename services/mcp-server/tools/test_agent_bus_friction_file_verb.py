@@ -215,3 +215,47 @@ def test_friction_file_dispatch_accepts_from_agent_via_agent_bus(agent_bus_fn) -
         )
     assert "error" not in result
     assert filed.call_args.kwargs["agent"] == "cursor-sdk"
+
+
+def test_friction_file_agent_bus_rejects_from_and_from_agent_conflict(
+    agent_bus_fn,
+) -> None:
+    with patch("tools.agent_bus.friction_file.file_friction") as filed:
+        result = asyncio.run(
+            agent_bus_fn(
+                tool="substrate_friction_file",
+                arguments=json.dumps(
+                    {
+                        "owner": "service:mcp-server",
+                        "note": "alias conflict ingress",
+                        "from": "cursor",
+                        "from_agent": "grok-bot",
+                    }
+                ),
+            )
+        )
+    assert filed.call_count == 0
+    assert "error" in result
+    assert result["reason"] == "friction_file_agent_alias_conflict"
+
+
+def test_friction_file_agent_bus_rejects_agent_and_from_agent_conflict(
+    agent_bus_fn,
+) -> None:
+    with patch("tools.agent_bus.friction_file.file_friction") as filed:
+        result = asyncio.run(
+            agent_bus_fn(
+                tool="substrate_friction_file",
+                arguments=json.dumps(
+                    {
+                        "owner": "service:mcp-server",
+                        "note": "alias conflict ingress",
+                        "agent": "cursor",
+                        "from_agent": "grok-bot",
+                    }
+                ),
+            )
+        )
+    assert filed.call_count == 0
+    assert "error" in result
+    assert result["reason"] == "friction_file_agent_conflict"
