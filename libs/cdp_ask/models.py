@@ -28,6 +28,7 @@ StallStage = Literal[
     "observer_unverified",
     "select_no_attest",
     "compose_surface",
+    "recovered_unverified_dom",
     "unknown",
 ]
 
@@ -297,6 +298,8 @@ class ExecutionPollResponse(BaseModel):
             "fail after compose-attest without CSE-death proof and without a select "
             "record (a:30678); `select_no_attest` — picker click did not leave the "
             "chip on the requested model; "
+            "`recovered_unverified_dom` — poll_recovery DOM scrape archived for "
+            "forensics only without verified harvest attestation; "
             "`unknown` — unclassified. "
             "Non-null on failed terminals so consumers distinguish stall from dual-completion lag."
         ),
@@ -373,6 +376,26 @@ class ExecutionPollResponse(BaseModel):
             "semantics as ``error_banner_match`` — not a live DOM mirror on every poll. "
             "Optional for mixed deploys."
         ),
+    )
+    archive_verdict: str | None = Field(
+        default=None,
+        description=(
+            "Canonical ``VERDICT:`` token when receipt salvage promoted a failed harvest."
+        ),
+    )
+    verdict_source: str | None = Field(
+        default=None,
+        description="Provenance for ``archive_verdict`` (e.g. ``archive`` after salvage).",
+    )
+    skill_receipt_warning: str | None = Field(
+        default=None,
+        description=(
+            "Original ``skill_receipt_unverified`` error preserved when salvage promoted ok."
+        ),
+    )
+    warnings: list[str] | None = Field(
+        default=None,
+        description="Non-fatal receipt or harvest warnings surfaced on terminal poll.",
     )
     grade_trace: dict[str, Any] | None = Field(
         default=None,

@@ -18,9 +18,9 @@ _REFUSED_ROLE = "reviewer"
 def _refuse_review_identity(*, purpose: str | None, role: str | None) -> None:
     """Retired review identity is not a job. Validation fails; the proxy handler
     answers ``job_unknown`` (not ``job_retired``)."""
-    if isinstance(purpose, str) and purpose.strip() == _REFUSED_PURPOSE:
+    if isinstance(purpose, str) and purpose.strip().casefold() == _REFUSED_PURPOSE:
         raise ValueError("purpose 'review' is not a registry job")
-    if isinstance(role, str) and role.strip() == _REFUSED_ROLE:
+    if isinstance(role, str) and role.strip().casefold() == _REFUSED_ROLE:
         raise ValueError("role 'reviewer' is not a registry job")
 
 

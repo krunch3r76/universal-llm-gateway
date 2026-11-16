@@ -3481,7 +3481,7 @@ def test_terminal_failure_snapshot_carries_archive_uri_to_bus_body() -> None:
     snapshot = {
         "status": "failed",
         "stall_stage": "observer_unverified",
-        "error": "skill_receipt_unverified: attest failed",
+        "error": "generic post-paste failure: attest failed",
         "body": "partial harvest " * 200,
         "archive_uri": archive,
         "url": "https://claude.ai/code/cse_terminal",

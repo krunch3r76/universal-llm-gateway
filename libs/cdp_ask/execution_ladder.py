@@ -25,6 +25,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from claude_bundles import cdp_registry
+from claude_bundles.cdp_archive_verdict_fallback import (
+    apply_archive_verdict_fallback_terminal_payload,
+)
 
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.models import classify_stall_stage
@@ -197,6 +200,11 @@ async def finish_execution(
     store: ExecutionStore, execution_id: str, payload: dict[str, Any]
 ) -> None:
     """Apply a run payload to the store — the single completion decision for an execution."""
+    record = await store.get(execution_id)
+    purpose = getattr(record, "purpose", None) if record else None
+    payload = apply_archive_verdict_fallback_terminal_payload(
+        payload, execution_id=execution_id, purpose=purpose
+    )
     if payload.get("awaiting_wake_debt") and payload.get("ok"):
         await store.mark_awaiting_wake(execution_id, result=payload)
         return

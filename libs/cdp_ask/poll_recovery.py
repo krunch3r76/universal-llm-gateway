@@ -58,6 +58,11 @@ _ARCHIVE_TRACE_MATCH_CAP = 120
 _RECOVERY_MIN_RETRY_S = 60.0
 _recovery_last_attempt: dict[str, float] = {}
 
+RECOVERED_UNVERIFIED_DOM_ERROR = (
+    "poll_recovery: execution store evicted without verified harvest archive; "
+    "DOM text archived for forensics only"
+)
+
 
 def correlation_tokens(execution_id: str) -> list[str]:
     """Satellite id, Stargate id, and inflight alias — deduped in probe order."""
@@ -190,18 +195,22 @@ def snapshot_from_archive_path(
     stamped = read_archive_execution_id(str(path)) or execution_id
     failure_error = read_archive_failure_error(text)
     if failure_error is not None:
+        if failure_error == RECOVERED_UNVERIFIED_DOM_ERROR:
+            stall_stage = "recovered_unverified_dom"
+        else:
+            stall_stage = classify_stall_stage(failure_error)
         snapshot = {
             "execution_id": stamped,
             "status": "failed",
             "ok": False,
             "error": failure_error,
-            "stall_stage": classify_stall_stage(failure_error),
+            "stall_stage": stall_stage,
             "archive_uri": _path_to_cortex_uri(path),
             "body": body,
             "body_len": len(body),
             "url": url,
             "attested_model": attested,
-            "harvest_provenance": "chat",
+            "harvest_provenance": None,
             "completion_phase": "terminal",
         }
     else:
@@ -301,9 +310,6 @@ async def _harvest_chat_to_snapshot(
         return None
     archive_path = _default_recovery_archive_path(satellite_id)
     try:
-        # HarvestResponse has no error_banner_text / error_banner_match, so this
-        # recovery archive cannot record a banner until the harvest model grows
-        # those fields.
         archive_uri = archive_harvest(
             body=body,
             url=chat_url,
@@ -313,20 +319,22 @@ async def _harvest_chat_to_snapshot(
             archive_path=archive_path,
             execution_id=satellite_id,
             stargate_execution_id=stargate_execution_id,
+            failure_error=RECOVERED_UNVERIFIED_DOM_ERROR,
         )
     except Exception:
         archive_uri = None
-    provenance = response.content_provenance or "cse-dom"
     return {
         "execution_id": satellite_id,
-        "status": "completed",
-        "ok": True,
+        "status": "failed",
+        "ok": False,
+        "error": RECOVERED_UNVERIFIED_DOM_ERROR,
+        "stall_stage": "recovered_unverified_dom",
         "archive_uri": archive_uri,
         "body": body,
         "body_len": len(body),
         "url": chat_url,
         "attested_model": attested,
-        "harvest_provenance": provenance,
+        "harvest_provenance": None,
         "completion_phase": "terminal",
     }
 

@@ -24,9 +24,8 @@ def recover_induction_slugs_on_rail_error(
     ``induction=``, so echoing the expected ``induction_slugs`` (or ``attached``)
     here would let a missing rail pass the skill-receipt attest (R2 F2).
     Slugs proven by composer chips still pass through attest's own
-    ``attached=`` channel. On the combined (marked) submit an attest failure is
-    re-raised by ``send_prompt`` as ``SkillReceiptUnverifiedError(submitted=True)``,
-    so the work reply is still harvested and the send is not reported as unsent.
+    ``attached=`` channel.     On the combined (marked) submit an attest failure is debug-logged in
+    ``send_prompt`` (a:27142) and the normal harvest/archive path still runs.
 
     On ``claude_surface`` code, delegates to ``project_ask._code_rail_induction_fallback``
     (not-on-the-rail, still-collapsed, and no-toggle are all recoverable there).

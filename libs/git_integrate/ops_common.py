@@ -32,12 +32,19 @@ from git_integrate.schema import (
     RC_SUITE_DIGEST_MISMATCH,
     RC_SUITE_DIGEST_UNCOMPUTABLE,
 )
-from services.git_integration_worker.giw_land_pytest import (
-    land_gate_pytest_session_timeout_s,
-)
 
 _GATE_TIMEOUT = 300.0
-_SUITE_DIGEST_TIMEOUT = float(land_gate_pytest_session_timeout_s() + 120)
+
+
+def _suite_digest_timeout() -> float:
+    """Land-gate pytest session budget + digest slack (GIW-only import)."""
+    from services.git_integration_worker.giw_land_pytest import (
+        land_gate_pytest_session_timeout_s,
+    )
+
+    return float(land_gate_pytest_session_timeout_s() + 120)
+
+
 _SUITE_FIELDS = ("computed", "anchor", "added", "removed")
 _GATE_OUTPUT_TAIL_LINES = 20
 _logger = get_logger(__name__)
@@ -207,7 +214,7 @@ async def integrate_retry_loop(
             suite = await _run_command(
                 suite_digest_cmd,
                 cwd=worktree_path,
-                timeout=_SUITE_DIGEST_TIMEOUT,
+                timeout=_suite_digest_timeout(),
             )
             if suite.returncode != 0:
                 await reset_hard_to(worktree_path, arc_tip_before)
