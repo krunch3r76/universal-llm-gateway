@@ -4523,6 +4523,12 @@ All signals: `role="observation"`, `scope="node"`.
 | `git_worker.started` | `worker_id`, `pid`, `port`, `version`, `origin_service`, `schema_version`, `started_at`, `source_repo`, `bind_host`, `build_sha?`, `health_url?` | - |
 <!-- GENERATED:END region=git_worker -->
 
+**GIW CSE holder signals (`cse.holder.*`).** Source: `git_integration_worker` (`workspaces://universal-llm-gateway/services/git_integration_worker/cse_session_holders.py`, best-effort UDS publisher via `publish_lib_signal`).
+
+| Signal | Required Payload | Notes |
+|--------|------------------|-------|
+| `cse.holder.upsert_refused` | `holder_id`, `registration_id`, `reason` | Emitted before `HolderProjectionRefusedError` when `upsert_holder` refuses a houseless registration (`reason="houseless_registration"`). No holder ledger row is written. |
+
 **Hop-cadence signals (`mcp.agentbus.hop_cadence_*`).** Source: `libs/claude_bundles/hop_cadence_lease_events.py`. Seat binding, succession confirm, release-deferral, and census OVERLAP. There is no `hop_cadence_orphan_released` signal — extras are non-holders released by rebind.
 
 Hand-maintained renames (a:38728). `scripts/gen_event_catalog` rewrites only `GENERATED` regions; this block sits between them and is not regenerated:
@@ -4626,9 +4632,9 @@ All signals: `role="observation"`, `scope="node"`.
 authority for attachment replay; UDS mirrors may exist but must not replace the
 journal.
 
-| Event | Payload keys (always present on the line) | Repair-bind semantics |
-|-------|------------------------------------------|------------------------|
-| `session_address_bound` | `registration_id`, `chat_url`, `execution_id`, `target_id`, `defer_seat_commit`, `bound_by`, `attach_proof` | Ordinary binds carry `bound_by=null`, `attach_proof=null`. Repair bind via `cse_session.bind_address` sets `bound_by=cse_session.bind_address`, `attach_proof=repair_harvest_url` (see `libs/cdp_ask/app.py`). Idempotent repair still appends a line when `bound_by` is set. |
+| Event | Payload keys (always present on the line) | Repair-bind & holder-projection semantics |
+|-------|------------------------------------------|-------------------------------------------|
+| `session_address_bound` | `registration_id`, `chat_url`, `execution_id`, `target_id`, `defer_seat_commit`, `bound_by`, `attach_proof`, `holder_projection` | Ordinary binds carry `bound_by=null`, `attach_proof=null`. Repair bind via `cse_session.bind_address` sets `bound_by="cse_session.bind_address"`, `attach_proof="repair_harvest_url"` (see `workspaces://universal-llm-gateway/libs/cdp_ask/app.py`). `holder_projection` ∈ {`"applies"`, `"not_applicable"`, `"deferred"`} records the registry-side GIW holder decision (`"applies"` for non-houseless rows, `"not_applicable"` for houseless rows, `"deferred"` when `defer_seat_commit=true`; see `workspaces://universal-llm-gateway/libs/claude_bundles/cdp_registry/session_address.py`). Idempotent repair still appends a line when `bound_by` is set. |
 
 `.rejected` `reason_code` enum (Phase 3): `arc_branch_mismatch`, `approval_missing`, `diff_mismatch`, `integrate_conflict`, `gate_failed`, `max_attempts_exhausted`, `worktree_not_found`, `not_a_git_repo`.
 

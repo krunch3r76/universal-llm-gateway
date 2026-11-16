@@ -349,3 +349,64 @@ def test_bind_url_unified_chat() -> None:
     assert normalize_cse_bind_url("https://claude.ai/new") is None
     assert normalize_cse_bind_url("https://claude.ai/code") is None
     assert normalize_cse_bind_url("junk") is None
+
+
+def test_associate_without_holder_projection_skips_upsert(
+    bus_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """holder_projection=False skips both append and same-pair holder upserts (AC24)."""
+    from services.git_integration_worker import cse_session_holders
+
+    holder_calls: list[dict[str, object]] = []
+
+    def _counting_upsert(**kwargs: object) -> cse_session_holders.RemoteUpsert:
+        holder_calls.append(dict(kwargs))
+        return cse_session_holders.RemoteUpsert.OK
+
+    monkeypatch.setattr(
+        cse_session_holders, "upsert_holder_remote", _counting_upsert
+    )
+
+    hl_lane = _create_lane(bus_client, "cse-no-holder-proj")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        appended = associate_cse(
+            thread_id=hl_lane,
+            cse_chat_url=_CHAT,
+            cse_registration_id="reg-hl-1",
+            holder_projection=False,
+        )
+        repeat = associate_cse(
+            thread_id=hl_lane,
+            cse_chat_url=_CHAT,
+            cse_registration_id="reg-hl-1",
+            holder_projection=False,
+        )
+    assert appended is not None
+    assert repeat is None
+    assert holder_calls == []
+    with connect() as conn:
+        hl_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM thread_cse_associations WHERE thread_id = ?",
+            (hl_lane,),
+        ).fetchone()["n"]
+    assert hl_count == 1
+
+    house_lane = _create_lane(bus_client, "cse-with-holder-proj")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        first = associate_cse(
+            thread_id=house_lane,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-house-1",
+        )
+        second = associate_cse(
+            thread_id=house_lane,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-house-1",
+        )
+    assert first is not None
+    assert second is None
+    assert len(holder_calls) == 2
+    assert holder_calls[0]["registration_id"] == "reg-house-1"
+    assert holder_calls[0]["lane_thread_id"] == house_lane
+    assert holder_calls[1]["registration_id"] == "reg-house-1"
+    assert holder_calls[1]["lane_thread_id"] == house_lane
