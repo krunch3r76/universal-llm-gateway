@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from cursor_capabilities import effective_knobs
 
 from event_store import model_rate_table as mrt
+from event_store.dispatch_economics_core import map_sdk_row
 from event_store.dispatch_economics_pricing import (
     _build_pricing_audit,
     _index_wire_members,
@@ -141,6 +143,48 @@ def test_resolve_rate_alias_and_resolved_model() -> None:
     assert row is not None
     assert row.model_id == "cursor/composer-2.5"
     assert resolve_rate(None, resolved_model="cursor/composer-2.5") is not None
+
+
+def test_composer_fast_is_knob_variant_not_fake_model_slug() -> None:
+    rows, _aliases = load_manual_rows()
+    assert "cursor/composer-2.5" in rows
+    assert "cursor/composer-2.5-fast" not in rows
+    standard = resolve_rate("composer-2.5")
+    assert standard is not None
+    assert standard.input_rate_per_m == 0.5
+    assert standard.cache_read_rate_per_m == 0.2
+    assert standard.output_rate_per_m == 2.5
+    assert resolve_rate("composer-2.5", knobs={}) == standard
+    assert resolve_rate("composer-2.5", knobs={"fast": "false"}) == standard
+    fast = resolve_rate("composer-2.5", knobs={"fast": "true"})
+    assert fast is not None
+    assert fast.input_rate_per_m == 3.0
+    assert fast.cache_read_rate_per_m == 0.5
+    assert fast.output_rate_per_m == 15.0
+
+
+def test_composer_fast_join_path_effective_knobs_map_sdk_price_row() -> None:
+    knobs = effective_knobs("composer-2.5", {})
+    assert knobs == {"fast": "true"}
+    mapped = map_sdk_row(
+        {"seq": 1},
+        {
+            "execution_id": "e-composer-fast",
+            "resolved_model": "cursor/composer-2.5",
+            "model_knobs_requested": knobs,
+            "usage_capture_status": "captured",
+            "usage": {
+                "input_tokens": 1_000_000,
+                "output_tokens": 1,
+                "cache_read_tokens": 1,
+            },
+        },
+    )
+    priced = _price_row(mapped, None)
+    assert priced["cost_source"] == "rate_x_tokens"
+    assert priced["input_rate_per_m"] == 3.0
+    assert priced["cache_read_rate_per_m"] == 0.5
+    assert priced["output_rate_per_m"] == 15.0
 
 
 def test_grok_fast_is_knob_variant_not_fake_model_id() -> None:
