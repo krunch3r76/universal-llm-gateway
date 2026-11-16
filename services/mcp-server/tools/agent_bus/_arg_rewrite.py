@@ -159,6 +159,48 @@ def _reconcile_send_args(args: dict[str, Any]) -> tuple[dict[str, Any] | None, l
     return None, advisories
 
 
+def _nonblank(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _reconcile_substrate_friction_file_args(
+    args: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Map bus-style ``from`` / ``from_agent`` onto friction ``agent``."""
+    advisories: list[str] = []
+    agent_val = _nonblank(args.get("agent"))
+    from_val = _nonblank(args.pop("from", None))
+    from_agent_val = _nonblank(args.pop("from_agent", None))
+    alias_vals = [v for v in (from_val, from_agent_val) if v]
+    if len(alias_vals) > 1 and alias_vals[0] != alias_vals[1]:
+        return {
+            "error": (
+                "substrate_friction_file: from and from_agent disagree; "
+                "pass one agent alias."
+            ),
+            "reason": "friction_file_agent_alias_conflict",
+        }, advisories
+    alias_val = alias_vals[0] if alias_vals else None
+    if agent_val and alias_val and agent_val != alias_val:
+        return {
+            "error": (
+                "substrate_friction_file: agent and from/from_agent disagree; "
+                "pass one agent address."
+            ),
+            "reason": "friction_file_agent_conflict",
+        }, advisories
+    if alias_val and not agent_val:
+        args["agent"] = alias_val
+        key_used = "from" if from_val else "from_agent"
+        advisories.append(
+            _advisory(f"substrate_friction_file: remapped {key_used} → agent")
+        )
+    return None, advisories
+
+
 def _reconcile_create_thread_args(
     args: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, list[str]]:
@@ -230,6 +272,12 @@ def reconcile_dispatch_arguments(
 
     if tool == "create_thread":
         err, adv = _reconcile_create_thread_args(args)
+        advisories.extend(adv)
+        if err is not None:
+            return args, err, advisories
+
+    if tool == "substrate_friction_file":
+        err, adv = _reconcile_substrate_friction_file_args(args)
         advisories.extend(adv)
         if err is not None:
             return args, err, advisories

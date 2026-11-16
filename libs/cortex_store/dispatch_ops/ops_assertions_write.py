@@ -121,6 +121,7 @@ def _op_assert(
     raw_id: bool = False,
     session_id: str | None = None,
     related: list[dict[str, Any]] | None = None,
+    agent: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     missing = collect_missing_required(
@@ -177,10 +178,15 @@ def _op_assert(
     if related is not None:
         from agent_seat.session_id import agent_slug_from_session_id
 
+        explicit_agent = str(agent).strip() if agent and str(agent).strip() else None
         edge_agent = (
-            str(seeded_by).strip()
-            if seeded_by and str(seeded_by).strip()
-            else (agent_slug_from_session_id(session_id) if session_id else None)
+            explicit_agent
+            if explicit_agent
+            else (
+                str(seeded_by).strip()
+                if seeded_by and str(seeded_by).strip()
+                else (agent_slug_from_session_id(session_id) if session_id else None)
+            )
         )
         with cortex_conn() as conn:
             prepared_related, rel_err = prepare_related_edges(

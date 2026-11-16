@@ -313,3 +313,46 @@ def test_related_with_both_or_neither_target_keys_rejects(related_db: Path) -> N
     assert prepared_both is None and err_both is not None
     assert err_both["status_code"] == 422
     assert err_both["error"]["field"] == "related[0]"
+
+
+@pytest.mark.offline
+def test_assert_explicit_agent_overrides_seeded_by_on_related_edge(
+    related_db: Path,
+) -> None:
+    """Explicit ``agent`` wins over ``seeded_by`` for related-edge authorship."""
+    created = _op_assert(
+        entity_id="service:mcp-server",
+        claim="Explicit agent on assert must attribute related edges to that seat",
+        confidence="believed",
+        evidence="verified in libs/cortex_store/dispatch_ops/ops_assertions_write.py",
+        evidence_uris=["cortex://notes/system/threads/15851-plan-cortex-link-and-grok-bot-seat-fable.md"],
+        seeded_by="cursor",
+        agent="grok-bot",
+        derivation_type="agent_observation",
+        confidence_score=0.75,
+        session_id=_VALID_SESSION,
+        related=[{"to_node": "service:mcp-server"}],
+    )
+    assert "error" not in created, created
+    edge_item = created["related_edges"][0]
+    assert edge_item["agent"] == "grok-bot"
+
+
+@pytest.mark.offline
+def test_assert_related_edge_agent_falls_back_to_seeded_by_without_explicit_agent(
+    related_db: Path,
+) -> None:
+    created = _op_assert(
+        entity_id="service:mcp-server",
+        claim="Related edges without explicit agent still use seeded_by",
+        confidence="believed",
+        evidence="verified in libs/cortex_store/dispatch_ops/ops_assertions_write.py",
+        evidence_uris=["cortex://notes/system/threads/15851-plan-cortex-link-and-grok-bot-seat-fable.md"],
+        seeded_by="cursor",
+        derivation_type="agent_observation",
+        confidence_score=0.75,
+        session_id=_VALID_SESSION,
+        related=[{"to_node": "service:mcp-server"}],
+    )
+    assert "error" not in created, created
+    assert created["related_edges"][0]["agent"] == "cursor"
