@@ -847,6 +847,124 @@ async def test_compose_panel_miss_still_harvests_first_turn() -> None:
 
 
 @pytest.mark.asyncio
+async def test_attest_miss_turn_one_still_runs_turn_two_and_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-R4 — turn-1 attest miss continues to turn 2 and delete_chat_if_active."""
+    from claude_bundles.cowork_skill_delivery import SkillDeliveryError
+
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_tr4"
+    turn1 = "Turn one body after attest miss. " + ("a" * 80)
+    turn2 = "Turn two follow-up body. " + ("b" * 80)
+    delete_after = AsyncMock(return_value={"deleted": True})
+    attest_calls = 0
+
+    def _attest_miss(*_a, **_kw):
+        nonlocal attest_calls
+        attest_calls += 1
+        if attest_calls == 1:
+            raise SkillDeliveryError("undelivered=['reasoning-posture']")
+        return []
+
+    async def _wait_reply(*_a, **_kw):
+        if attest_calls <= 1:
+            return {
+                "body": turn1,
+                "n": 1,
+                "url": page.url,
+                "model_label": "Model: Opus 5",
+            }
+        return {
+            "body": turn2,
+            "n": 2,
+            "url": page.url,
+            "model_label": "Model: Opus 5",
+        }
+
+    def _resolve_body(*_a, **_kw):
+        content = turn1 if attest_calls <= 1 else turn2
+        return type("H", (), {"content": content, "provenance": "chat"})()
+
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.connect_cdp",
+            new=AsyncMock(return_value=(AsyncMock(), None, None, None)),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.pick_chat_page",
+            new=AsyncMock(return_value=page),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True, "current_model": "Model: Opus 5"}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0, "n": 0, "body_len": 0}),
+        ),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            new=AsyncMock(
+                return_value=type("P", (), {"skills": ["reasoning-posture"]})()
+            ),
+        ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
+            side_effect=_attest_miss,
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=AsyncMock(side_effect=_wait_reply),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.resolve_harvest_body",
+            new=AsyncMock(side_effect=_resolve_body),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._attest_model",
+            return_value="Model: Opus 5",
+        ),
+        patch(
+            "claude_bundles.composer_session_skills.require_compose_surface",
+        ),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=AsyncMock()),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask._submit_composer_draft",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.delete_chat_if_active",
+            new=delete_after,
+        ),
+        patch.object(page, "wait_for_timeout", new=AsyncMock()),
+    ):
+        results = await run_project_conversation(
+            [
+                "<!--cdp-required-skills:reasoning-posture-->\nTurn one",
+                "Turn two",
+            ],
+            model="opus-5",
+            delete_after=True,
+        )
+
+    assert len(results) == 2
+    assert all(r.ok for r in results)
+    assert results[0].harvest_provenance == "chat"
+    assert results[1].harvest_provenance == "chat"
+    assert all("skill_receipt_unverified" not in (r.error or "") for r in results)
+    assert results[-1].delete_after is not None
+    delete_after.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_code_surface_two_turn_conversation_passes_every_approval_check(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

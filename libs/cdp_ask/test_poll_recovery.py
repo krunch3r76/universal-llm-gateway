@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -373,6 +373,198 @@ async def test_harvest_chat_to_snapshot_archive_replay_second_poll(
     assert second["stall_stage"] == "recovered_unverified_dom"
     assert second["harvest_provenance"] is None
     assert second["error"] == RECOVERED_UNVERIFIED_DOM_ERROR
+
+
+@pytest.mark.asyncio
+async def test_harvest_dom_recovery_http_poll_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """T2 HTTP — GET after live _harvest_chat_to_snapshot (ExecutionPollResponse)."""
+    from fastapi.testclient import TestClient
+
+    from cdp_ask.app import create_app
+    from cdp_ask.execution_store import ExecutionStore
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    exe = "e" * 32
+    cse = "https://claude.ai/cowork/cse_t2http"
+    page = AsyncMock()
+    harvest = HarvestResponse(outcome="harvested", turns=(), content_provenance="cse-dom")
+    harvest.turns = (type("T", (), {"text": "http poll dom body " * 5})(),)
+
+    async def _attach(*_a, **_kw):
+        return type("O", (), {"ok": True, "page": page})()
+
+    monkeypatch.setattr("cdp_ask.followup_reattach.ensure_cse_attached", _attach)
+    monkeypatch.setattr(
+        "cdp_ask.poll_recovery.current_model_label", AsyncMock(return_value="Opus 5")
+    )
+    monkeypatch.setattr("cdp_ask.poll_recovery.harvest_page", AsyncMock(return_value=harvest))
+    monkeypatch.setattr("cdp_ask.cse_session_harvest_open._teardown_opened", AsyncMock())
+
+    snap = await _harvest_chat_to_snapshot(
+        chat_url=cse,
+        satellite_id=exe,
+        stargate_execution_id=None,
+    )
+    assert snap and snap["ok"] is False
+
+    store = ExecutionStore()
+    client = TestClient(create_app(store=store))
+    response = client.get(f"/v1/project-ask/executions/{exe}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["stall_stage"] == "recovered_unverified_dom"
+    assert body["harvest_provenance"] is None
+    assert body["error"] == RECOVERED_UNVERIFIED_DOM_ERROR
+
+
+@pytest.mark.asyncio
+async def test_receipt_miss_harvest_http_poll_agrees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-R3 HTTP — store-miss GET after converse attest miss still reports ok harvest."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from fastapi.testclient import TestClient
+
+    from cdp_ask.app import create_app
+    from cdp_ask.execution_store import ExecutionStore
+    from cdp_ask.models import SubmitProjectAskRequest
+    from cdp_ask.runner import run_execution
+
+    from claude_bundles.cowork_skill_delivery import SkillDeliveryError
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    marked = (
+        "<!--cdp-required-skills:reasoning-posture-->\n"
+        "Turn one after attest miss."
+    )
+    harvested = "converse harvest after receipt miss " + ("y" * 80)
+    reg = MagicMock()
+    reg.registration_id = "reg-tr3"
+    reg.cdp_url = "http://127.0.0.1:9222"
+    reg.target_id = None
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_tr3"
+    attest_calls = 0
+
+    def _attest_miss(*_a, **_kw):
+        nonlocal attest_calls
+        attest_calls += 1
+        if attest_calls == 1:
+            raise SkillDeliveryError("undelivered=['reasoning-posture']")
+        return []
+
+    with (
+        patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
+        patch(
+            "claude_bundles.project_ask_conversation.connect_cdp",
+            new=AsyncMock(return_value=(AsyncMock(), None, None, None)),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.pick_chat_page",
+            new=AsyncMock(return_value=page),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True, "current_model": "Model: Opus 5"}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0, "n": 0, "body_len": 0}),
+        ),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            new=AsyncMock(
+                return_value=type("P", (), {"skills": ["reasoning-posture"]})()
+            ),
+        ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
+            side_effect=_attest_miss,
+        ),
+        patch(
+            "claude_bundles.composer_session_skills.require_compose_surface",
+        ),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=AsyncMock()),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask._submit_composer_draft",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=AsyncMock(
+                return_value={
+                    "body": harvested,
+                    "n": 1,
+                    "url": page.url,
+                    "model_label": "Model: Opus 5",
+                }
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.resolve_harvest_body",
+            new=AsyncMock(
+                return_value=type(
+                    "H", (), {"content": harvested, "provenance": "chat"}
+                )()
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._attest_model",
+            return_value="Model: Opus 5",
+        ),
+        patch("cdp_ask.runner.deregister_on_exit"),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("cdp_ask.runner.cdp_registry.bind_session_address"),
+        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
+        patch.object(page, "wait_for_timeout", new=AsyncMock()),
+    ):
+        exec_id = "f" * 32
+        payload = await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text=marked,
+                converse=True,
+                no_project_uuid=True,
+                delete_after=True,
+            ),
+            execution_id=exec_id,
+            abort_check=AsyncMock(return_value=False),
+        )
+
+    assert payload["ok"] is True
+    assert payload.get("error") is None
+    assert payload.get("stall_stage") is None
+    assert payload.get("harvest_provenance") == "chat"
+    assert payload.get("archive_uri")
+
+    store = ExecutionStore()
+    record = await store.create(holder="tr3", purpose="ask")
+    await store.mark_terminal(
+        record.execution_id,
+        status="completed",
+        result=payload,
+        stall_stage=payload.get("stall_stage"),
+    )
+    client = TestClient(create_app(store=store))
+    poll = client.get(f"/v1/project-ask/executions/{record.execution_id}")
+    assert poll.status_code == 200
+    data = poll.json()
+    assert data["ok"] is True
+    assert data["error"] is None
+    assert data["harvest_provenance"] == "chat"
+    assert data["archive_uri"]
+    assert data["stall_stage"] is None
+    assert "skill_receipt_unverified" not in (data.get("error") or "")
 
 
 def test_stargate_id_from_satellite(
