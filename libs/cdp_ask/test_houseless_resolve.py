@@ -135,10 +135,22 @@ class _RegistryProvenanceClient:
 def test_bind_unified_chat_resolves_houseless_unmocked(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
+    import json
+
     from claude_bundles import cdp_registry as reg
     from claude_bundles import cdp_registry_store as store
+    from claude_bundles import cdp_registry_store as store_mod
     from claude_bundles import cse_provenance
     from claude_bundles.cdp_registry import session_address
+    from services.git_integration_worker import cse_session_holders
+    from services.git_integration_worker.cse_session_holders import (
+        RemoteUpsert,
+        ensure_schema,
+        upsert_holder,
+    )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
 
     root = tmp_path / "cdp-registry"
     root.mkdir()
@@ -153,8 +165,6 @@ def test_bind_unified_chat_resolves_houseless_unmocked(
         "PORTS_LOCK": root / "ports.lock",
         "REGISTRATIONS_DIR": regs,
     }
-    from claude_bundles import cdp_registry_store as store_mod
-
     for name, value in paths.items():
         monkeypatch.setattr(store, name, value)
         monkeypatch.setattr(cse_provenance.store, name, value)
@@ -162,28 +172,24 @@ def test_bind_unified_chat_resolves_houseless_unmocked(
     store.ensure_dirs()
     monkeypatch.setattr(reg._store, "is_seat_authority", lambda: True)
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "holder-data"))
-    from services.git_integration_worker.cse_session_holders import (
-        RemoteUpsert,
-        ensure_schema,
-        get_holder,
-        upsert_holder,
-    )
-    from services.git_integration_worker.cursor_dispatch_ledger import (
-        CursorDispatchLedger,
-    )
-
-    CursorDispatchLedger._instance = None
+    monkeypatch.setattr(CursorDispatchLedger, "_instance", None)
     ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        ensure_schema(conn)
 
-    def _local_holder_upsert(**kw: object) -> RemoteUpsert:
+    holder_calls: list[dict[str, object]] = []
+
+    def _counting_holder_upsert(**kw: object) -> RemoteUpsert:
+        holder_calls.append(dict(kw))
         with ledger._connect() as conn:
             ensure_schema(conn)
             upsert_holder(conn, **dict(kw))  # type: ignore[arg-type]
         return RemoteUpsert.OK
 
     monkeypatch.setattr(
-        "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
-        _local_holder_upsert,
+        cse_session_holders,
+        "upsert_holder_remote",
+        _counting_holder_upsert,
     )
     store.write_active(
         {
@@ -210,12 +216,21 @@ def test_bind_unified_chat_resolves_houseless_unmocked(
     assert res.ok is True
     assert res.chat_url == _UNIFIED
     assert res.reason != "no_chat_url"
+
+    bound_logs = [
+        json.loads(line)
+        for line in store.REGISTRY_LOG.read_text(encoding="utf-8").splitlines()
+        if json.loads(line).get("event") == "session_address_bound"
+        and json.loads(line).get("registration_id") == _REG_HOUSELESS
+    ]
+    assert len(bound_logs) == 1
+    assert bound_logs[0].get("holder_projection") == "not_applicable"
+    assert holder_calls == []
     with ledger._connect() as conn:
-        ensure_schema(conn)
-        holder = get_holder(conn, f"chat_{_UUID}")
-    assert holder is not None
-    assert holder["holder_id"] == f"chat_{_UUID}"
-    assert holder["chat_url"] == _UNIFIED
+        count = conn.execute(
+            "SELECT COUNT(*) AS n FROM cse_session_holders"
+        ).fetchone()["n"]
+    assert count == 0
 
 
 def test_resolve_houseless_memoizes_per_registration() -> None:

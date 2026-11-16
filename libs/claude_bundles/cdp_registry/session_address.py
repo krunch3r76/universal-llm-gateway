@@ -44,17 +44,64 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-def _holder_registration_id_for_upsert(
+def holder_projection_applies(row: dict[str, Any]) -> bool:
+    """Return True when *row* projects a GIW holder row (non-houseless purpose)."""
+    from claude_bundles.what_is_running_view import is_houseless_purpose
+
+    return not is_houseless_purpose(row.get("purpose"))
+
+
+def _project_holder(
     registration_id: str,
     *,
     row: dict[str, Any],
-) -> str | None:
-    """Omit registration_id for houseless rows — GIW ledger excludes them."""
-    from claude_bundles.what_is_running_view import is_houseless_purpose
+    chat_url: str,
+    execution_id: str | None,
+) -> str:
+    """Project *registration_id* to GIW when applicable; log non-OK outcomes without raising."""
+    if not holder_projection_applies(row):
+        return "not_applicable"
+    from services.git_integration_worker.cse_session_holders import (
+        RemoteUpsert,
+        upsert_holder_remote,
+    )
 
-    if is_houseless_purpose(str(row.get("purpose") or "")):
-        return None
-    return registration_id
+    try:
+        upsert_result = upsert_holder_remote(
+            chat_url=chat_url,
+            registration_id=registration_id,
+            execution_id=execution_id,
+        )
+    except Exception:
+        logger.exception(
+            "session_address holder upsert failed registration_id=%s",
+            registration_id,
+        )
+        return RemoteUpsert.UNAVAILABLE.value
+    if upsert_result is RemoteUpsert.LANE_CONFLICT:
+        logger.warning(
+            "session_address holder upsert lane_conflict registration_id=%s",
+            registration_id,
+        )
+    elif upsert_result is RemoteUpsert.UNAVAILABLE:
+        logger.warning(
+            "session_address holder upsert unavailable registration_id=%s",
+            registration_id,
+        )
+    elif upsert_result is RemoteUpsert.REFUSED:
+        from claude_bundles.holder_strings import holder_id_from_chat_url
+
+        reason = (
+            "invalid_chat_url"
+            if not holder_id_from_chat_url(chat_url)
+            else "houseless_registration"
+        )
+        logger.error(
+            "session_address holder upsert refused registration_id=%s reason=%s",
+            registration_id,
+            reason,
+        )
+    return upsert_result.value
 
 
 def attachment_for_chat_url(chat_url: str) -> Registration | None:
@@ -205,6 +252,15 @@ def bind_session_address(
                 updated=updated,
                 execution_id=execution_id,
             )
+            holder_proj = (
+                "deferred"
+                if defer_seat_commit
+                else (
+                    "applies"
+                    if holder_projection_applies(updated)
+                    else "not_applicable"
+                )
+            )
             if bound_by is not None:
                 _store.append_log(
                     "session_address_bound",
@@ -216,28 +272,17 @@ def bind_session_address(
                         "defer_seat_commit": defer_seat_commit,
                         "bound_by": bound_by,
                         "attach_proof": attach_proof,
+                        "holder_projection": holder_proj,
                         "idempotent_repair": True,
                     },
                 )
             if not defer_seat_commit:
-                from services.git_integration_worker.cse_session_holders import (
-                    RemoteUpsert,
-                    upsert_holder_remote,
-                )
-
-                upsert_result = upsert_holder_remote(
+                _project_holder(
+                    registration_id,
+                    row=updated,
                     chat_url=url,
-                    registration_id=_holder_registration_id_for_upsert(
-                        registration_id, row=updated
-                    ),
                     execution_id=execution_id,
                 )
-                if upsert_result is RemoteUpsert.LANE_CONFLICT:
-                    logger.warning(
-                        "bind_session_address holder upsert lane_conflict "
-                        "registration_id=%s",
-                        registration_id,
-                    )
             return True
         if prior and row_execution_in_flight(row):
             # A seat driving a live execution is addressed by that execution's
@@ -278,6 +323,16 @@ def bind_session_address(
                         if r.get("registration_id")
                     ],
                 )
+        written_row = active[registration_id]
+        holder_proj = (
+            "deferred"
+            if defer_seat_commit
+            else (
+                "applies"
+                if holder_projection_applies(written_row)
+                else "not_applicable"
+            )
+        )
         _store.append_log(
             "session_address_bound",
             {
@@ -288,35 +343,24 @@ def bind_session_address(
                 "defer_seat_commit": defer_seat_commit,
                 "bound_by": bound_by,
                 "attach_proof": attach_proof,
+                "holder_projection": holder_proj,
             },
         )
         _append_lane_less_episode(
             url=url,
             registration_id=registration_id,
-            updated=active[registration_id],
+            updated=written_row,
             execution_id=execution_id,
         )
     if defer_seat_commit:
         return True
     _emit_seat_axis_events(bound_row, released_rows)
-    from services.git_integration_worker.cse_session_holders import (
-        RemoteUpsert,
-        upsert_holder_remote,
-    )
-
-    bound_row = active.get(registration_id) or {}
-    upsert_result = upsert_holder_remote(
+    _project_holder(
+        registration_id,
+        row=written_row,
         chat_url=url,
-        registration_id=_holder_registration_id_for_upsert(
-            registration_id, row=bound_row
-        ),
         execution_id=execution_id,
     )
-    if upsert_result is RemoteUpsert.LANE_CONFLICT:
-        logger.warning(
-            "bind_session_address holder upsert lane_conflict registration_id=%s",
-            registration_id,
-        )
     return True
 
 
@@ -687,29 +731,12 @@ def commit_reattach_driving_seat(
             ],
         )
     _emit_seat_axis_events(bound_row, released_rows)
-    from services.git_integration_worker.cse_session_holders import (
-        RemoteUpsert,
-        upsert_holder_remote,
+    _project_holder(
+        rid,
+        row=bound_row,
+        chat_url=url,
+        execution_id=execution_id,
     )
-
-    try:
-        upsert_result = upsert_holder_remote(
-            chat_url=url,
-            registration_id=rid,
-            execution_id=execution_id,
-        )
-    except Exception:
-        logger.exception(
-            "commit_reattach_driving_seat holder upsert failed registration_id=%s",
-            rid,
-        )
-    else:
-        if upsert_result is RemoteUpsert.LANE_CONFLICT:
-            logger.warning(
-                "commit_reattach_driving_seat holder upsert lane_conflict "
-                "registration_id=%s",
-                rid,
-            )
     return "committed"
 
 
@@ -770,29 +797,12 @@ def commit_followup_lane_seat(
             ],
         )
     _emit_seat_axis_events(bound_row, released_rows)
-    from services.git_integration_worker.cse_session_holders import (
-        RemoteUpsert,
-        upsert_holder_remote,
+    _project_holder(
+        rid,
+        row=bound_row,
+        chat_url=url,
+        execution_id=execution_id,
     )
-
-    try:
-        upsert_result = upsert_holder_remote(
-            chat_url=url,
-            registration_id=rid,
-            execution_id=execution_id,
-        )
-    except Exception:
-        logger.exception(
-            "commit_followup_lane_seat holder upsert failed registration_id=%s",
-            rid,
-        )
-    else:
-        if upsert_result is RemoteUpsert.LANE_CONFLICT:
-            logger.warning(
-                "commit_followup_lane_seat holder upsert lane_conflict "
-                "registration_id=%s",
-                rid,
-            )
     return "committed"
 
 
@@ -1111,7 +1121,7 @@ def backfill_orphaned_retry_chat_urls(
     """Classify + optionally bind ``chat_url`` for ``orphaned_retry`` rows.
 
     Verdict classes (arc 6885 / census 6893):
-    - ``scrape_bound`` / ``scrape_recoverable``: live ``/cowork/cse_`` on port
+    - ``scrape_bound`` / ``scrape_recoverable``: live unified chat or Cowork session URL on port
     - ``already_bound``: row already carries chat_url
     - ``irreversible_no_url``: Chrome alive or not, no CSE URL on port and none
       recorded — genuine irreversible population unless URL found elsewhere
