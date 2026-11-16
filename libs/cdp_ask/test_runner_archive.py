@@ -540,3 +540,154 @@ async def test_converse_skips_archive_when_failed_body_empty() -> None:
         )
     archive_mock.assert_not_called()
     assert payload.get("archive_uri") is None
+
+
+@pytest.mark.asyncio
+async def test_converse_receipt_miss_harvest_archives_ok_without_unverified_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """T-R2 — post-submit attest miss via run_project_conversation archives ok."""
+    import claude_bundles.composer_session_skills as session_skills_mod
+    import claude_bundles.composer_submit as composer_submit_mod
+    import claude_bundles.cowork_skill_delivery as skill_delivery_mod
+    import claude_bundles.project_ask as project_ask_mod
+    import claude_bundles.project_ask_conversation as conv_mod
+    import claude_bundles.skill_induction_panel as panel_mod
+
+    import cdp_ask.runner as runner_mod
+
+    root = tmp_path / "files"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    marked = (
+        "<!--cdp-required-skills:reasoning-posture-->\n"
+        "Turn one after attest miss."
+    )
+    harvested = "converse harvest after receipt miss " + ("y" * 80)
+    reg = MagicMock()
+    reg.registration_id = "reg-tr2"
+    reg.cdp_url = "http://127.0.0.1:9222"
+    reg.target_id = None
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_tr2"
+    page.wait_for_timeout = AsyncMock()
+    attest_calls = 0
+
+    def _attest_miss(*_a: object, **_kw: object) -> list[str]:
+        nonlocal attest_calls
+        attest_calls += 1
+        if attest_calls == 1:
+            raise skill_delivery_mod.SkillDeliveryError(
+                "undelivered=['reasoning-posture']"
+            )
+        return []
+
+    reply_state = {
+        "body": harvested,
+        "n": 1,
+        "url": page.url,
+        "model_label": "Model: Opus 5",
+    }
+    monkeypatch.setattr(
+        runner_mod, "bind_execution_lane", MagicMock(return_value=reg)
+    )
+    monkeypatch.setattr(
+        conv_mod,
+        "connect_cdp",
+        AsyncMock(return_value=(AsyncMock(), None, None, None)),
+    )
+    monkeypatch.setattr(
+        conv_mod, "pick_chat_page", AsyncMock(return_value=page)
+    )
+    monkeypatch.setattr(
+        conv_mod,
+        "_compose_model_selected",
+        AsyncMock(return_value={"ok": True, "current_model": "Model: Opus 5"}),
+    )
+    monkeypatch.setattr(
+        conv_mod,
+        "harvest_assistant",
+        AsyncMock(return_value={"count": 0, "n": 0, "body_len": 0}),
+    )
+    monkeypatch.setattr(
+        panel_mod,
+        "wait_for_induction_panel",
+        AsyncMock(
+            return_value=type("P", (), {"skills": ["reasoning-posture"]})()
+        ),
+    )
+    monkeypatch.setattr(
+        skill_delivery_mod, "attest_delivery_channels", _attest_miss
+    )
+    monkeypatch.setattr(
+        session_skills_mod, "require_compose_surface", MagicMock()
+    )
+    monkeypatch.setattr(
+        project_ask_mod, "find_composer", AsyncMock(return_value=AsyncMock())
+    )
+    monkeypatch.setattr(
+        composer_submit_mod, "clear_composer_verified", AsyncMock()
+    )
+    monkeypatch.setattr(project_ask_mod, "_submit_composer_draft", AsyncMock())
+    monkeypatch.setattr(
+        project_ask_mod,
+        "wait_assistant_reply",
+        AsyncMock(return_value=reply_state),
+    )
+    monkeypatch.setattr(
+        conv_mod, "wait_assistant_reply", AsyncMock(return_value=reply_state)
+    )
+    monkeypatch.setattr(
+        conv_mod,
+        "resolve_harvest_body",
+        AsyncMock(
+            return_value=type(
+                "H", (), {"content": harvested, "provenance": "chat"}
+            )()
+        ),
+    )
+    monkeypatch.setattr(
+        project_ask_mod,
+        "_attest_model",
+        MagicMock(return_value="Model: Opus 5"),
+    )
+    monkeypatch.setattr(
+        conv_mod, "_attest_model", MagicMock(return_value="Model: Opus 5")
+    )
+    monkeypatch.setattr(runner_mod, "deregister_on_exit", MagicMock())
+    monkeypatch.setattr(
+        runner_mod, "registration_has_wake_debt", MagicMock(return_value=False)
+    )
+    monkeypatch.setattr(
+        runner_mod.cdp_registry, "bind_session_address", MagicMock()
+    )
+    monkeypatch.setattr(
+        runner_mod, "_wake_debt_extras", MagicMock(return_value={})
+    )
+
+    payload = await run_execution(
+        SubmitProjectAskRequest(
+            prompt_text=marked,
+            converse=True,
+            no_project_uuid=True,
+            delete_after=True,
+        ),
+        execution_id="a" * 32,
+        abort_check=AsyncMock(return_value=False),
+    )
+
+    assert attest_calls == 1
+    assert payload["ok"] is True
+    assert payload["error"] is None
+    assert payload["stall_stage"] is None
+    assert payload["stall_stage"] != "observer_unverified"
+    uri = payload["archive_uri"]
+    assert uri
+    if uri.startswith("file://"):
+        full_path = Path(uri.removeprefix("file://"))
+    else:
+        full_path = root / uri.removeprefix("cortex://")
+    text = full_path.read_text(encoding="utf-8")
+    assert harvested in text
+    assert "- outcome: failed" not in text
+    assert "skill_receipt_unverified" not in text
