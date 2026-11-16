@@ -976,17 +976,14 @@ async def test_send_prompt_returns_idle_induction_before_work_paste() -> None:
 
 
 @pytest.mark.asyncio
-async def test_marked_submit_raises_unverified_when_panel_fails_after_send() -> None:
-    """Panel failure after combined submit → SkillReceiptUnverifiedError (a:37716).
-
-    The message is already submitted; channel attest does not run.
-    """
-    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
+async def test_marked_submit_falls_through_when_panel_fails_after_send() -> None:
+    """Panel failure after combined submit debug-logs and records receipt (a:27142)."""
     from claude_bundles.project_ask import send_prompt
 
     page, composer = _induction_page()
     submit = AsyncMock()
     attest = MagicMock()
+    record_receipt = AsyncMock()
     with contextlib.ExitStack() as stack:
         for ctx in _induction_patches(
             composer,
@@ -1005,15 +1002,20 @@ async def test_marked_submit_raises_unverified_when_panel_fails_after_send() -> 
                     "claude_bundles.cowork_skill_delivery.check_delivery_channels_before_submit",
                     return_value=[],
                 ),
+                patch(
+                    "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+                    new=record_receipt,
+                ),
             ),
         ):
             stack.enter_context(ctx)
-        with pytest.raises(SkillReceiptUnverifiedError, match="panel closed"):
-            await send_prompt(page, _SEALED, await_induction_reply=True)
+        baseline = await send_prompt(page, _SEALED, await_induction_reply=True)
+    assert baseline is None
     assert submit.await_count == 1
     draft = submit.await_args.kwargs["draft_text"]
     assert "Question. Is the desk memo" in draft
     attest.assert_not_called()
+    record_receipt.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1132,13 +1134,19 @@ async def test_compose_model_selected_code_page_url_guard(
 
 
 @pytest.mark.asyncio
-async def test_skill_receipt_unverified_harvest_failure_returns_ok_false() -> None:
-    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
+async def test_post_submit_attest_miss_still_harvests_archives_and_deletes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-R1: attest miss after submit → ok harvest, archive, delete — no receipt terminal."""
+    from claude_bundles.cowork_skill_delivery import SkillDeliveryError
     from claude_bundles.project_ask import project_ask_on_page
 
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     page = AsyncMock()
     page.url = "https://claude.ai/cowork/cse_x"
-    exc = SkillReceiptUnverifiedError("panel timeout", submitted=True)
+    harvested = "work reply after attest miss"
+    delete_after = AsyncMock(return_value={"deleted": True})
+    emit_loaded = MagicMock()
 
     with (
         patch(
@@ -1150,25 +1158,73 @@ async def test_skill_receipt_unverified_harvest_failure_returns_ok_false() -> No
             new=AsyncMock(return_value={"n": 0, "body_len": 0}),
         ),
         patch(
-            "claude_bundles.project_ask.send_prompt",
-            new=AsyncMock(side_effect=exc),
+            "claude_bundles.composer_session_skills.require_compose_surface",
         ),
         patch(
-            "claude_bundles.project_ask._harvest_after_skill_receipt_unverified",
-            new=AsyncMock(side_effect=RuntimeError("Target closed")),
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=AsyncMock()),
         ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask._submit_composer_draft",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            new=AsyncMock(return_value=type("P", (), {"skills": ["reasoning-posture"]})()),
+        ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
+            side_effect=SkillDeliveryError("undelivered=['reasoning-posture']"),
+        ),
+        patch(
+            "claude_bundles.skill_context_receipt.emit_skill_context_loaded",
+            new=emit_loaded,
+        ),
+        patch(
+            "claude_bundles.project_ask.wait_assistant_reply",
+            new=AsyncMock(
+                return_value={
+                    "body": harvested,
+                    "body_len": len(harvested),
+                    "n": 1,
+                    "url": page.url,
+                }
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask.resolve_harvest_body",
+            new=AsyncMock(
+                return_value=type(
+                    "H", (), {"content": harvested, "provenance": "chat"}
+                )()
+            ),
+        ),
+        patch("claude_bundles.project_ask._attest_model", return_value="Opus 5"),
+        patch(
+            "claude_bundles.project_ask.delete_chat_if_active",
+            new=delete_after,
+        ),
+        patch.object(page, "wait_for_timeout", new=AsyncMock()),
     ):
         result = await project_ask_on_page(
             page,
             _SEALED,
             project_uuid="019f6917-2ab2-772c-a1ec-f88434b08e32",
-            delete_after=False,
+            delete_after=True,
+            archive_path=str(tmp_path / "archive.md"),
+            execution_id="a" * 32,
         )
 
-    assert result.ok is False
-    assert result.error.startswith("skill_receipt_unverified:")
-    assert "harvest_failed" in result.error
-    assert "Target closed" in result.error
+    assert result.ok is True
+    assert result.error is None
+    assert "skill_receipt_unverified" not in (result.error or "")
+    assert result.archive_uri
+    assert result.harvest_provenance == "chat"
+    delete_after.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1255,8 +1311,8 @@ async def test_marked_context_rail_error_harvests_work_reply() -> None:
             delete_after=False,
         )
 
-    assert result.ok is False
-    assert result.error.startswith("skill_receipt_unverified:")
+    assert result.ok is True
+    assert result.error is None
     assert result.body == harvested
 
 
@@ -1410,7 +1466,7 @@ async def test_warm_followup_stale_turn1_slug_refuses_then_new_caption_passes() 
             new=AsyncMock(return_value={"n": 1, "body_len": 20}),
         ),
         patch(
-            "claude_bundles.project_ask.wait_assistant_reply",
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
             new=AsyncMock(
                 return_value={
                     "body": "Loaded the reasoning-posture skill.\n\nWarm reply body long enough.",
@@ -1420,7 +1476,20 @@ async def test_warm_followup_stale_turn1_slug_refuses_then_new_caption_passes() 
             ),
         ),
         patch(
-            "claude_bundles.project_ask._attest_model",
+            "claude_bundles.project_ask_conversation.resolve_harvest_body",
+            new=AsyncMock(
+                return_value=type(
+                    "H",
+                    (),
+                    {
+                        "content": "Loaded the reasoning-posture skill.\n\nWarm reply body long enough.",
+                        "provenance": "chat",
+                    },
+                )()
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._attest_model",
             return_value="Model: Opus 5.5 High",
         ),
     ):
@@ -1429,8 +1498,8 @@ async def test_warm_followup_stale_turn1_slug_refuses_then_new_caption_passes() 
         )
 
     assert events[:2] == ["snapshot_before_submit", "submit"]
-    assert stale_res.ok is False
-    assert (stale_res.error or "").startswith("skill_receipt_unverified:")
+    assert stale_res.ok is True
+    assert stale_res.error is None
 
     fresh_page = _WarmFollowupPage(mount_new_caption_on_submit=True)
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
@@ -68,10 +69,11 @@ from claude_bundles.cowork_output_download import (
     cortex_files_root_from_env,
     resolve_harvest_body,
 )
-from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
 from claude_bundles.project_chrome import project_url
 from claude_bundles.reply_anchor import ReplyAnchor, anchor_marker
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
+
+logger = logging.getLogger(__name__)
 
 _THINKING_LINE = re.compile(
     r"^(Thinking about .+|Thinking\b.*)$",
@@ -635,7 +637,6 @@ async def send_prompt(
     from claude_bundles.composer_session_skills import require_compose_surface
     from claude_bundles.cowork_skill_delivery import (
         SkillDeliveryError,
-        SkillReceiptUnverifiedError,
         attest_delivery_channels,
         await_committed_skill_seals,
         check_delivery_channels_before_submit,
@@ -707,8 +708,8 @@ async def send_prompt(
     if induction_slugs and marked:
         # One submitted message so the first turn has Use-lines and the work
         # body. Panel wait runs after submit (a:37716); panel failures and
-        # unrecoverable Context-rail errors become SkillReceiptUnverifiedError
-        # so callers still harvest the work reply.
+        # unrecoverable Context-rail errors are debug-logged in send_prompt (a:27142)
+        # and the normal harvest/archive path still runs.
         # claude_surface=code inlines shared_sync via <skills_inline> (a:41730).
         surf_norm = (claude_surface or "").strip().lower()
         skill_seals: list[tuple[str, str]] = []
@@ -800,10 +801,11 @@ async def send_prompt(
                 execution_id=str(stargate_execution_id or ""),
                 satellite_execution_id=str(satellite_execution_id or ""),
             )
-        except SkillDeliveryError as exc:
-            raise SkillReceiptUnverifiedError(str(exc), submitted=True) from exc
-        except ChatContextSkillsError as exc:
-            raise SkillReceiptUnverifiedError(str(exc), submitted=True) from exc
+        except (SkillDeliveryError, ChatContextSkillsError) as exc:
+            logger.debug(
+                "post-submit skill delivery miss (a:27142): %s",
+                exc,
+            )
     else:
         if induction_slugs:
             # Unmarked prompts keep the split turn (attach path unchanged).
@@ -1238,52 +1240,6 @@ async def _compose_model_selected(
     return model_info
 
 
-async def _harvest_after_skill_receipt_unverified(
-    page: Page,
-    *,
-    exc: SkillReceiptUnverifiedError,
-    anchor: ReplyAnchor,
-    project_uuid: str,
-    project_url: str,
-    model_info: dict,
-    model: str,
-    timeout_s: int,
-    min_growth: int,
-    min_body: int,
-    on_harvest: Callable[[dict], Awaitable[None]] | None,
-    purpose: str,
-) -> ProjectAskResult:
-    """Collect the work reply when the message submitted but receipt failed (a:37716)."""
-    state = await wait_assistant_reply(
-        page,
-        anchor=anchor,
-        tail_hold=True,
-        timeout_s=timeout_s,
-        poll_ms=500,
-        min_growth=min_growth,
-        min_body=min_body,
-        on_harvest=on_harvest,
-        require_review_verdict=(purpose or "").strip().lower() == "review",
-    )
-    body = finalize_scrape_body(state.get("body") or "")
-    attested = _attest_model(model, state, model_info)
-    err = f"skill_receipt_unverified: {exc}"
-    if not getattr(exc, "submitted", True):
-        err = str(exc)
-    return ProjectAskResult(
-        ok=False,
-        body=body,
-        url=str(state.get("url") or page.url),
-        project_uuid=project_uuid,
-        project_url=project_url,
-        model=model_info,
-        body_len=len(body),
-        delete_after=None,
-        error=err,
-        attested_model=attested,
-    )
-
-
 async def project_ask_on_page(
     page: Page,
     prompt: str,
@@ -1474,39 +1430,6 @@ async def project_ask_on_page(
             delete_after=None,
             error=str(exc),
         )
-    except SkillReceiptUnverifiedError as exc:
-        if not exc.submitted or anchor is None:
-            raise
-        try:
-            return await _harvest_after_skill_receipt_unverified(
-                page,
-                exc=exc,
-                anchor=anchor,
-                project_uuid=project_uuid,
-                project_url=dest,
-                model_info=model_info,
-                model=model,
-                timeout_s=timeout_s,
-                min_growth=min_growth,
-                min_body=min_body,
-                on_harvest=on_harvest,
-                purpose=purpose,
-            )
-        except Exception as harvest_exc:  # noqa: BLE001 — match sibling Exception path
-            return ProjectAskResult(
-                ok=False,
-                body="",
-                url=page.url or "",
-                project_uuid=project_uuid,
-                project_url=dest,
-                model={},
-                body_len=0,
-                delete_after=None,
-                error=(
-                    f"skill_receipt_unverified: {exc}; harvest_failed: "
-                    f"{type(harvest_exc).__name__}: {harvest_exc}"
-                ),
-            )
     except Exception as exc:  # noqa: BLE001 — surface to CLI ledger; ¬delete
         return ProjectAskResult(
             ok=False,
