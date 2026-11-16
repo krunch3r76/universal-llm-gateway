@@ -555,6 +555,7 @@ def test_hop_seated_uses_parent_thread_and_mint_bound_by() -> None:
         cse_registration_id=_REG,
         bound_by=HOP_SEATED_BOUND_BY,
         evidence="cdp.generate.seated",
+        holder_projection=True,
     )
 
 
@@ -892,3 +893,82 @@ def test_hop_seated_stamp_uses_hop_request_birth_over_standing_handoff_render(
     body = stamp_turns[0]["body"]
     assert f"successor_birth_id: {new_birth}" in body
     assert old_birth not in body
+
+
+def test_houseless_first_seat_makes_no_holder_projection(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Houseless paths in associate_hop_seated_cse skip GIW holder projection (AC24)."""
+    from agent_bus_store.db import create_thread
+    from agent_bus_store.db.cse_associations import (
+        HOUSELESS_FIRST_SEATED_BOUND_BY,
+        get_current_cse,
+    )
+    from services.git_integration_worker import cse_session_holders
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    mb_first = create_thread(
+        thread_id=None, slug="hl-first-no-holder", tags=["mailbox"]
+    )
+    mb_hop = create_thread(thread_id=None, slug="hl-hop-no-holder", tags=["mailbox"])
+    house_hop = create_thread(thread_id=None, slug="house-hop-with-holder")
+    assert mb_first is not None and mb_hop is not None and house_hop is not None
+    mb_first_id = str(mb_first["id"])
+    mb_hop_id = str(mb_hop["id"])
+    house_hop_id = str(house_hop["id"])
+
+    holder_calls: list[dict[str, object]] = []
+
+    def _counting_upsert(**kwargs: object) -> cse_session_holders.RemoteUpsert:
+        holder_calls.append(dict(kwargs))
+        return cse_session_holders.RemoteUpsert.OK
+
+    monkeypatch.setattr(
+        cse_session_holders, "upsert_holder_remote", _counting_upsert
+    )
+    cdp_hop_cse_bind._STAMP_POSTED.clear()
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_hop_seated_cse(
+            mission_kind=None,
+            thread_id=mb_first_id,
+            parent_thread=None,
+            chat_url=_UNIFIED_CHAT,
+            registration_id=_REG,
+            execution_id="f1f2f3f4-1111-4222-8333-444455556666",
+            purpose="houseless",
+            mailbox_thread=mb_first_id,
+        )
+        assert get_current_cse(thread_id=mb_first_id)["bound_by"] == (
+            HOUSELESS_FIRST_SEATED_BOUND_BY
+        )
+        assert holder_calls == []
+
+        associate_hop_seated_cse(
+            mission_kind="hop",
+            thread_id=mb_hop_id,
+            parent_thread=None,
+            chat_url="https://claude.ai/chat/98be84c4-48a8-4465-ba80-c0cd59fb3b29",
+            registration_id="reg-hl-hop",
+            execution_id="a1a2a3a4-bbbb-4ccc-8ddd-222222222222",
+            purpose="houseless",
+        )
+        assert get_current_cse(thread_id=mb_hop_id)["bound_by"] == HOP_SEATED_BOUND_BY
+        assert holder_calls == []
+
+        associate_hop_seated_cse(
+            mission_kind="hop",
+            thread_id=house_hop_id,
+            parent_thread=None,
+            chat_url=_SUCCESSOR,
+            registration_id="reg-blank-hop",
+            execution_id="b2b3b4b5-cccc-4ddd-8eee-333333333333",
+            purpose="",
+        )
+        assert (
+            get_current_cse(thread_id=house_hop_id)["bound_by"] == HOP_SEATED_BOUND_BY
+        )
+        assert len(holder_calls) == 1
+        assert holder_calls[0]["registration_id"] == "reg-blank-hop"
+        assert holder_calls[0]["lane_thread_id"] == house_hop_id
