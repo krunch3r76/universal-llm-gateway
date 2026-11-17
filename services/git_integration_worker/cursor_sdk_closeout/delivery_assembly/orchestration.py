@@ -55,6 +55,8 @@ def _assemble_closeout_delivery(
     finalize_oversize: bool = True,
     worktree_isolated: bool = False,
     resolved_model: str | None = None,
+    sdk_transcript_ref: str | None = None,
+    sdk_transcript_sha256: str | None = None,
 ) -> CloseoutDelivery:
     """Assemble implement closeout delivery.
 
@@ -279,6 +281,8 @@ def _assemble_closeout_delivery(
         sdk_mode=resolved_sdk_mode,
         packet_text=packet_text,
         hub_repo=binding.receipt_tree if binding is not None else source_repo,
+        sdk_transcript_ref=sdk_transcript_ref,
+        sdk_transcript_sha256=sdk_transcript_sha256,
     )
     return receipt_finalization.finalize_closeout_receipt(
         source_repo=write_tree,
@@ -329,6 +333,8 @@ async def _assemble_closeout_delivery_async(
     post_closeout_sidecar_fn: Callable[..., Any] | None = None,
     worktree_isolated: bool = False,
     resolved_model: str | None = None,
+    sdk_transcript_ref: str | None = None,
+    sdk_transcript_sha256: str | None = None,
 ) -> CloseoutDelivery:
     delivery = await asyncio.to_thread(
         _assemble_closeout_delivery,
@@ -353,6 +359,8 @@ async def _assemble_closeout_delivery_async(
         finalize_oversize=False,
         worktree_isolated=worktree_isolated,
         resolved_model=resolved_model,
+        sdk_transcript_ref=sdk_transcript_ref,
+        sdk_transcript_sha256=sdk_transcript_sha256,
     )
     full_body = delivery.body
     if len(full_body) <= MAX_TURN_BODY_CHARS:

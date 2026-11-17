@@ -1566,6 +1566,124 @@ def test_resolve_run_body_empty_when_no_output_anywhere() -> None:
     assert resolve_run_body("   ", []) == ""
 
 
+@pytest.fixture
+def cortex_files_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    root = tmp_path / "cortex-files"
+    root.mkdir()
+    monkeypatch.setattr(
+        "libs.cortex_store.dispatch_ops._pinned_deliverable._FILES_ROOT", root
+    )
+    return root
+
+
+def test_persist_sdk_transcript_sync_writes_stub_when_empty(
+    cortex_files_tmp: Path,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_transcript_persist import (
+        persist_sdk_transcript_sync,
+        sdk_transcript_rel_path,
+    )
+
+    dispatch_id = "disp-empty-transcript"
+    result = persist_sdk_transcript_sync(
+        dispatch_id=dispatch_id, turns=(), write_impl=None
+    )
+    rel = sdk_transcript_rel_path(dispatch_id)
+    target = cortex_files_tmp / rel
+    assert target.is_file()
+    assert target.read_text(encoding="utf-8") == "# empty transcript\n"
+    assert result.uri == f"cortex://{rel}"
+    assert result.sha256
+    assert result.deviation is None
+
+
+def test_persist_sdk_transcript_sync_reconstructs_turns(
+    cortex_files_tmp: Path,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_transcript_persist import (
+        persist_sdk_transcript_sync,
+    )
+
+    turn = _agent_turn(_toolcall_step(_shell_toolcall("pytest -q", "2 passed")))
+    dispatch_id = "disp-full-transcript"
+    result = persist_sdk_transcript_sync(
+        dispatch_id=dispatch_id, turns=[turn], write_impl=None
+    )
+    assert result.deviation is None
+    assert result.uri == (
+        f"cortex://notes/tmp/dispatches/{dispatch_id}/transcript.md"
+    )
+    body = (
+        cortex_files_tmp
+        / f"notes/tmp/dispatches/{dispatch_id}/transcript.md"
+    ).read_text(encoding="utf-8")
+    assert "pytest -q" in body
+    assert "2 passed" in body
+
+
+@pytest.mark.asyncio
+async def test_prepare_closeout_delivery_async_records_sdk_transcript_ref(
+    tmp_path: Path, cortex_files_tmp: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from libs.cortex_store.dispatch_ops._pinned_deliverable import (
+        write_pinned_deliverable_impl,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout import delivery_prep
+    from services.git_integration_worker.cursor_sdk_deliverables import (
+        PinnedResolution,
+    )
+
+    _init_git_repo(tmp_path)
+    turn = _agent_turn(_assistant_step("closeout summary"))
+    outcome = SdkRunOutcome(
+        body="closeout summary",
+        status="finished",
+        duration_ms=40,
+        tool_call_count=1,
+        conversation_turns=(turn,),
+    )
+    rel = "notes/tmp/dispatches/disp-transcript-closeout/transcript.md"
+
+    async def _fake_pinned(**kwargs: object) -> dict[str, object]:
+        return write_pinned_deliverable_impl(
+            str(kwargs["rel_path"]),
+            str(kwargs["content"]),
+            write_if_absent=bool(kwargs.get("write_if_absent")),
+        )
+
+    monkeypatch.setattr(
+        delivery_prep,
+        "resolve_cortex_pinned_deliverables",
+        AsyncMock(
+            return_value=PinnedResolution(uris=[], satisfied_rels=(), divergent_rels=())
+        ),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_transcript_persist"
+        ".default_post_pinned_deliverable",
+        _fake_pinned,
+    )
+
+    delivery = await delivery_prep.prepare_closeout_delivery_async(
+        source_repo=tmp_path,
+        dispatch_id="disp-transcript-closeout",
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="thread-transcript",
+        work_item_ref=None,
+        baseline={},
+        execution_id="exec-transcript",
+    )
+    payload = json.loads(delivery.body)
+    expected_uri = f"cortex://{rel}"
+    assert payload.get("sdk_transcript_ref") == expected_uri
+    assert payload.get("sdk_transcript_sha256")
+    assert expected_uri in payload["evidence_uris"]["artifact_paths"]
+    assert (cortex_files_tmp / rel).is_file()
+
+
 def test_empty_output_degraded_reason_finished_empty() -> None:
     outcome = SdkRunOutcome(
         body="", status="finished", duration_ms=100, tool_call_count=3

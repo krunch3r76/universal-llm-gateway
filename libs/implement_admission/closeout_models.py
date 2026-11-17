@@ -314,3 +314,6 @@ class ImplementCloseout(BaseModel):
     # Opt-in read-coverage gate (packet ``required_reads``); empty keeps legacy behaviour.
     required_reads: list[str] = Field(default_factory=list)
     read_inventory: list[ReadInventoryRow] = Field(default_factory=list)
+    # Full cursor-sdk run transcript on cortex scratch (notes/tmp/dispatches/...).
+    sdk_transcript_ref: str | None = None
+    sdk_transcript_sha256: str | None = None

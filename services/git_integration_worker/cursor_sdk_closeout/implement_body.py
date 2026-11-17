@@ -128,6 +128,8 @@ def build_implement_closeout_body(
     hub_repo: Path | None = None,
     worker_open_forks: list[dict[str, Any]] | None = None,
     acceptance_criteria: list[str] | None = None,
+    sdk_transcript_ref: str | None = None,
+    sdk_transcript_sha256: str | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -160,6 +162,8 @@ def build_implement_closeout_body(
         cortex_first=cortex_first,
         offgit_deliverable_uris=offgit_deliverable_uris or [],
     )
+    if sdk_transcript_ref and sdk_transcript_ref not in artifact_paths:
+        artifact_paths.append(sdk_transcript_ref)
     resolved_work_outcome = work_outcome
     if (
         resolved_work_outcome is None
@@ -414,6 +418,8 @@ def build_implement_closeout_body(
             propagation=list(propagation_rows),
             usage=stamp_usage_model_label(outcome.usage, resolved_model),
             usage_capture_status=outcome.usage_capture_status,  # type: ignore[arg-type]
+            sdk_transcript_ref=sdk_transcript_ref,
+            sdk_transcript_sha256=sdk_transcript_sha256,
         )
         payload = closeout.model_dump(mode="json")
         if degraded_reason:

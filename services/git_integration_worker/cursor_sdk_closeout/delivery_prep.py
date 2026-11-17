@@ -20,6 +20,11 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
     full_result_text,
     resolve_cortex_pinned_deliverables,
 )
+from services.git_integration_worker.cursor_sdk_transcript_persist import (
+    SdkTranscriptPersistResult,
+    persist_sdk_transcript_async,
+    persist_sdk_transcript_sync,
+)
 
 from .closeout_records import CloseoutDelivery, SdkRunOutcome
 from .deliverable_probe import _files_expected_for_pinning
@@ -51,6 +56,11 @@ def prepare_closeout_delivery(
     resolved_model: str | None = None,
 ) -> CloseoutDelivery:
     """Sync closeout assembly (tests). Production uses ``prepare_closeout_delivery_async``."""
+    transcript = persist_sdk_transcript_sync(
+        dispatch_id=dispatch_id,
+        turns=outcome.conversation_turns,
+    )
+    merged_deviations = _merge_transcript_deviation((), transcript)
     return _assemble_closeout_delivery(
         source_repo=source_repo,
         binding=binding,
@@ -67,9 +77,21 @@ def prepare_closeout_delivery(
         divergent_rels=divergent_rels,
         residual_expected_paths=residual_expected_paths,
         execution_id=execution_id,
+        extra_deviations=merged_deviations,
         post_closeout_sidecar_fn=post_closeout_sidecar_fn,
         resolved_model=resolved_model,
+        sdk_transcript_ref=transcript.uri,
+        sdk_transcript_sha256=transcript.sha256,
     )
+
+
+def _merge_transcript_deviation(
+    extra_deviations: tuple[str, ...],
+    transcript: SdkTranscriptPersistResult,
+) -> tuple[str, ...]:
+    if transcript.deviation:
+        return (*extra_deviations, transcript.deviation)
+    return extra_deviations
 
 
 async def prepare_closeout_delivery_async(
@@ -93,6 +115,12 @@ async def prepare_closeout_delivery_async(
     resolved_model: str | None = None,
 ) -> CloseoutDelivery:
     """Write sidecar, resolve pinned cortex deliverables, build closeout JSON."""
+    transcript = await persist_sdk_transcript_async(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        turns=outcome.conversation_turns,
+    )
+    extra_deviations = _merge_transcript_deviation(extra_deviations, transcript)
     write_tree, _, _ = _capture_trees(source_repo, binding)
     files_expected = _files_expected_for_pinning(
         packet_text,
@@ -138,4 +166,6 @@ async def prepare_closeout_delivery_async(
         post_closeout_sidecar_fn=post_closeout_sidecar_fn,
         worktree_isolated=worktree_isolated,
         resolved_model=resolved_model,
+        sdk_transcript_ref=transcript.uri,
+        sdk_transcript_sha256=transcript.sha256,
     )

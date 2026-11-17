@@ -63,6 +63,8 @@ class SdkRunOutcome:
     # Park-resume MCP connect token: ok is not produced today; failed:<reason>
     # or not_observed. None on fresh runs.
     mcp_handshake: str | None = None
+    # Post-wait ``run.conversation()`` turns — used for cortex transcript persist.
+    conversation_turns: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True)

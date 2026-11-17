@@ -1732,6 +1732,7 @@ def _run_sdk_sync(
             )
             return SdkRunOutcome(
                 body=resolve_run_body(result.result, turns),
+                conversation_turns=tuple(turns),
                 status=str(result.status),
                 duration_ms=result.duration_ms,
                 tool_call_count=tool_call_count,
