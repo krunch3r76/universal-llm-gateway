@@ -372,3 +372,62 @@ def test_repair_bind_houseless_makes_no_holder_projection(
     rows = _bound_journal_rows(rid)
     assert len(rows) == 1
     assert rows[0].get("holder_projection") == "not_applicable"
+
+
+def test_project_holder_non_enum_return_never_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_registry: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """D18: stale remote upsert shapes must not raise from bind or _project_holder."""
+    import logging
+
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.session_address import _project_holder
+    from services.git_integration_worker import cse_session_holders
+
+    caplog.set_level(logging.WARNING, logger="claude_bundles.cdp_registry.session_address")
+
+    stale_return: dict[str, object] = {"ok": True, "skipped": "pytest"}
+    calls: list[dict[str, object]] = []
+
+    def _stale_upsert(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return stale_return
+
+    monkeypatch.setattr(
+        cse_session_holders, "upsert_holder_remote", _stale_upsert
+    )
+
+    seat = reg.register_lane(
+        holder="d18-non-enum",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread="88901",
+        launch_chrome=lambda port, profile: 1,
+        is_listening=lambda _p: False,
+    )
+    rid = seat.registration_id
+
+    assert reg.bind_session_address(rid, chat_url=_UNIFIED) is True
+    assert len(calls) == 1
+
+    bind_warnings = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and rid in r.getMessage()
+        and "dict" in r.getMessage()
+    ]
+    assert len(bind_warnings) == 1
+
+    row = reg._store.load_active()[rid]
+    assert (
+        _project_holder(
+            rid,
+            row=row,
+            chat_url=_UNIFIED,
+            execution_id=None,
+        )
+        == cse_session_holders.RemoteUpsert.UNAVAILABLE.value
+    )

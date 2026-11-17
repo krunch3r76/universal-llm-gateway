@@ -78,6 +78,13 @@ def _project_holder(
             registration_id,
         )
         return RemoteUpsert.UNAVAILABLE.value
+    if not isinstance(upsert_result, RemoteUpsert):
+        logger.warning(
+            "session_address holder upsert unexpected_type registration_id=%s type=%s",
+            registration_id,
+            type(upsert_result).__name__,
+        )
+        return RemoteUpsert.UNAVAILABLE.value
     if upsert_result is RemoteUpsert.LANE_CONFLICT:
         logger.warning(
             "session_address holder upsert lane_conflict registration_id=%s",
