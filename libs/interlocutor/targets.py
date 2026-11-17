@@ -118,15 +118,10 @@ def resolve_grok_window_target(
 def _parse_cowork_url(target: str) -> CoworkUrlTarget | None:
     if "://" not in target:
         return None
-    parsed = urlparse(target.strip())
-    host = (parsed.hostname or "").lower()
     from claude_bundles.cse_url import parse_claude_seat_address
 
     seat = parse_claude_seat_address(target.strip())
-    if host == "claude.ai" and seat is not None and seat.kind in (
-        "unified_chat",
-        "cowork_cse",
-    ):
+    if seat is not None and seat.kind in ("unified_chat", "cowork_cse"):
         return CoworkUrlTarget(url=seat.canonical_url)
     return None
 
