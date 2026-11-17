@@ -43,9 +43,11 @@ def _registry_authority(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _no_remote_holder_upsert(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.git_integration_worker.cse_session_holders import RemoteUpsert
+
     monkeypatch.setattr(
         "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
-        lambda **_kw: {"ok": True, "skipped": "pytest"},
+        lambda **_kw: RemoteUpsert.UNAVAILABLE,
     )
 
 

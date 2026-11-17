@@ -187,9 +187,11 @@ def test_fold_replay_skips_u_scan_on_historical_attachment_observed(
     from cdp_ask.runner import _latch_streaming_attachment
 
     monkeypatch.setattr(reg, "_kill_listener", lambda _p: None)
+    from services.git_integration_worker.cse_session_holders import RemoteUpsert
+
     monkeypatch.setattr(
         "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
-        lambda **_k: None,
+        lambda **_k: RemoteUpsert.OK,
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cse_session_holders.release_holder_remote",

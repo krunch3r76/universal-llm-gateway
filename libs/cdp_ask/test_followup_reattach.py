@@ -918,9 +918,11 @@ async def test_operator_mint_with_lane_yields_seat_open_after_bind(
         _connect_factory(),
     )
 
+    from services.git_integration_worker.cse_session_holders import RemoteUpsert
+
     monkeypatch.setattr(
         "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
-        lambda **_kwargs: True,
+        lambda **_kwargs: RemoteUpsert.OK,
     )
     outcome = await ensure_cse_attached(
         CSE_A,
@@ -3470,9 +3472,11 @@ def test_step0_full_bind_second_gate_accepts_matched_reattach_host(
     from cdp_ask.followup_resolve import _lane_seat_followup_gate
     from cdp_ask.lane_admission import lane_seat_holder
 
+    from services.git_integration_worker.cse_session_holders import RemoteUpsert
+
     monkeypatch.setattr(
         "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
-        lambda **_kwargs: True,
+        lambda **_kwargs: RemoteUpsert.OK,
     )
     lane = "15404"
     reg, holder, borrowed = _open_operator_pair(lane)
@@ -3495,11 +3499,13 @@ def test_step0_full_bind_second_gate_accepts_matched_reattach_host(
 
 
 def _upsert_spy(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    from services.git_integration_worker.cse_session_holders import RemoteUpsert
+
     calls: list[dict[str, Any]] = []
 
-    def _record(**kwargs: Any) -> bool:
+    def _record(**kwargs: Any) -> RemoteUpsert:
         calls.append(kwargs)
-        return True
+        return RemoteUpsert.OK
 
     monkeypatch.setattr(
         "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
