@@ -384,6 +384,7 @@ def test_project_holder_non_enum_return_never_raises(
 
     from claude_bundles import cdp_registry as reg
     from claude_bundles.cdp_registry.session_address import _project_holder
+
     from services.git_integration_worker import cse_session_holders
 
     caplog.set_level(logging.WARNING, logger="claude_bundles.cdp_registry.session_address")

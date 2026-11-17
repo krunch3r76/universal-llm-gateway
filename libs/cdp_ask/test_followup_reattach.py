@@ -3471,7 +3471,6 @@ def test_step0_full_bind_second_gate_accepts_matched_reattach_host(
 
     from cdp_ask.followup_resolve import _lane_seat_followup_gate
     from cdp_ask.lane_admission import lane_seat_holder
-
     from services.git_integration_worker.cse_session_holders import RemoteUpsert
 
     monkeypatch.setattr(
