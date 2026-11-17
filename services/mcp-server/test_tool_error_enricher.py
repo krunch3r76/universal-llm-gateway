@@ -1,16 +1,63 @@
 """In-process tests for ToolErrorEnricher using fastmcp.client.Client against tiny FastMCP.
 
-Covers unexpected_keyword_argument (accepted/required/hint), type-mismatch (expected_type), and happy-path pass-through.
+Covers unexpected_keyword_argument (accepted/required/hint), type-mismatch (expected_type),
+dispatch-shape hints, and happy-path pass-through.
 """
 
+import re
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pytest
 from fastmcp import Client, FastMCP
+from tools._agent_tools import JsonArgStr
 from tool_error_enricher import register_tool_error_enricher
+
+_DISPATCH_PLACEHOLDER = '<op>", arguments=\'{"<param>": "<value>"}\')'
+
+
+def _dispatch_tool(mcp: FastMCP, name: str, *, selector: str) -> None:
+    """Register a dispatch-shaped stub with real outer signatures."""
+
+    if name == "agent_bus_read":
+
+        @mcp.tool(name=name)
+        def agent_bus_read(
+            tool: str,
+            arguments: JsonArgStr = "{}",
+            max_response_bytes: int | None = None,
+        ) -> dict[str, str]:
+            _ = (tool, arguments, max_response_bytes)
+            return {"ok": name}
+
+        return
+
+    if selector == "tool":
+
+        @mcp.tool(name=name)
+        def _fn_tool(tool: str, arguments: JsonArgStr = "{}") -> dict[str, str]:
+            _ = (tool, arguments)
+            return {"ok": name}
+
+    else:
+
+        @mcp.tool(name=name)
+        def _fn_op(op: str, arguments: JsonArgStr = "{}") -> dict[str, str]:
+            _ = (op, arguments)
+            return {"ok": name}
+
+
+def _example_call_args(example: str) -> dict[str, Any]:
+    match = re.match(
+        r'^[^(]+\((\w+)="([^"]*)",\s*arguments=\'(.+)\'\)$',
+        example,
+    )
+    assert match, example
+    selector, op_val, inner_json = match.groups()
+    return {selector: op_val, "arguments": inner_json}
 
 
 @pytest.mark.asyncio
@@ -24,7 +71,9 @@ async def test_unexpected_keyword_argument_enrichment():
     register_tool_error_enricher(mcp)
     client = Client(mcp)
     async with client:
-        res = await client.call_tool("fs", {"op": "read", "view_range": [1, 60]})
+        res = await client.call_tool(
+            "fs", {"op": "read", "view_range": [1, 60]}, raise_on_error=False
+        )
         env = res.structured_content
         assert env["error_type"] == "ValidationError"
         assert env["tool"] == "fs"
@@ -49,7 +98,9 @@ async def test_type_mismatch_enrichment_includes_expected_type():
     register_tool_error_enricher(mcp)
     client = Client(mcp)
     async with client:
-        res = await client.call_tool("sample", {"a": "not-a-number", "b": "ok"})
+        res = await client.call_tool(
+            "sample", {"a": "not-a-number", "b": "ok"}, raise_on_error=False
+        )
         env = res.structured_content
         assert env["error_type"] == "ValidationError"
         err0 = env["errors"][0]
@@ -90,7 +141,7 @@ async def test_missing_argument_enrichment_does_not_describe_payload_as_input():
     register_tool_error_enricher(mcp)
     client = Client(mcp)
     async with client:
-        res = await client.call_tool("fs", {"op": "search"})
+        res = await client.call_tool("fs", {"op": "search"}, raise_on_error=False)
         env = res.structured_content
         assert env["error_type"] == "ValidationError"
         assert env["tool"] == "fs"
@@ -123,7 +174,9 @@ async def test_multiple_errors_in_single_call_all_enriched():
     client = Client(mcp)
     async with client:
         res = await client.call_tool(
-            "sample", {"a": "not-a-number", "b": "also-not-a-number"}
+            "sample",
+            {"a": "not-a-number", "b": "also-not-a-number"},
+            raise_on_error=False,
         )
         env = res.structured_content
         assert env["error_type"] == "ValidationError"
@@ -166,7 +219,7 @@ async def test_body_internal_validation_error_not_enriched():
     register_tool_error_enricher(mcp)
     client = Client(mcp)
     async with client:
-        res = await client.call_tool("sample", {"op": "go"})
+        res = await client.call_tool("sample", {"op": "go"}, raise_on_error=False)
         env = res.structured_content if hasattr(res, "structured_content") else None
         # Whatever the FastMCP default error path produces, it must NOT be
         # the enricher's structured envelope — enricher must have re-raised.
@@ -196,22 +249,34 @@ async def test_schema_lookup_failure_degrades_gracefully():
 
     # Monkey-patch get_tool on the FastMCP instance so the schema lookup
     # raises mid-call. The enricher's inner try/except must swallow it.
-    async def _boom(_name: str) -> object:  # type: ignore[unused-argument]
+    orig_get_tool = mcp.get_tool
+    lookup_calls = 0
+
+    async def _flaky_get_tool(
+        name: str,
+        version: object = None,
+    ) -> object:
+        nonlocal lookup_calls
+        lookup_calls += 1
+        if lookup_calls == 1:
+            return await orig_get_tool(name, version=version)
         raise RuntimeError("simulated schema-registry failure")
 
-    mcp.get_tool = _boom  # type: ignore[assignment]
+    mcp.get_tool = _flaky_get_tool  # type: ignore[assignment]
 
     client = Client(mcp)
     async with client:
-        res = await client.call_tool("sample", {"bogus_param": "x"})
+        res = await client.call_tool(
+            "sample", {"bogus_param": "x"}, raise_on_error=False
+        )
         env = res.structured_content
         assert env["error_type"] == "ValidationError"
         assert env["tool"] == "sample"
-        err0 = env["errors"][0]
-        assert err0["type"] == "unexpected_keyword_argument"
+        bogus = next(e for e in env["errors"] if e.get("param") == "bogus_param")
+        assert bogus["type"] == "unexpected_keyword_argument"
         # Schema lookup failed → accepted_params is empty, hint says "none"
-        assert err0["accepted_params"] == []
-        assert "none" in err0["hint"]
+        assert bogus["accepted_params"] == []
+        assert "none" in bogus["hint"]
 
 
 @pytest.mark.asyncio
@@ -259,9 +324,181 @@ async def test_enricher_registered_outermost_relative_to_later_middleware():
 
     client = Client(mcp)
     async with client:
-        res = await client.call_tool("sample", {"bogus": "x"})
+        res = await client.call_tool("sample", {"bogus": "x"}, raise_on_error=False)
         env = res.structured_content
         # If the enricher is outermost, it caught the ValidationError; the
         # stub inner middleware saw and re-raised on its way out.
         assert env.get("error_type") == "ValidationError"
         assert "inner_caught_and_reraised" in inner_observations
+
+
+@pytest.mark.asyncio
+async def test_agent_bus_read_specimen_a44137_dispatch_shape_hint():
+    mcp = FastMCP("dispatch-hint")
+    _dispatch_tool(mcp, "agent_bus_read", selector="tool")
+    register_tool_error_enricher(mcp)
+    client = Client(mcp)
+    payload = {
+        "op": "fetch",
+        "thread": 24125,
+        "projection": "header",
+        "last": 3,
+    }
+    expected_example = (
+        'agent_bus_read(tool="fetch", arguments=\'{"thread": 24125, '
+        '"projection": "header", "last": 3}\')'
+    )
+    async with client:
+        res = await client.call_tool("agent_bus_read", payload, raise_on_error=False)
+    env = res.structured_content
+    assert env["example"] == expected_example
+    assert "dispatch-shape" in env["hint"]
+    assert list(env.keys())[:2] == ["hint", "example"]
+    replay_args = _example_call_args(expected_example)
+    async with client:
+        replay = await client.call_tool("agent_bus_read", replay_args)
+    assert replay.structured_content == {"ok": "agent_bus_read"}
+
+
+@pytest.mark.asyncio
+async def test_rag_dispatch_shape_uses_op_selector():
+    mcp = FastMCP("dispatch-hint-rag")
+    _dispatch_tool(mcp, "rag", selector="op")
+    register_tool_error_enricher(mcp)
+    client = Client(mcp)
+    async with client:
+        res = await client.call_tool(
+            "rag", {"tool": "search", "query": "x"}, raise_on_error=False
+        )
+    env = res.structured_content
+    assert env["example"] == 'rag(op="search", arguments=\'{"query": "x"}\')'
+
+
+@pytest.mark.parametrize(
+    "tool_name,selector,bad_payload",
+    [
+        ("cortex", "tool", {"entity_id": "x", "intent": "card"}),
+        ("agent_bus", "tool", {"thread": "1", "last": 3}),
+        ("agent_bus_read", "tool", {"op": "fetch", "thread": 1}),
+        ("dispatch", "tool", {"pipeline_id": "p"}),
+        ("rag", "op", {"tool": "search", "query": "z"}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_dispatch_shape_hint_parametrized(tool_name, selector, bad_payload):
+    mcp = FastMCP(f"dispatch-{tool_name}")
+    _dispatch_tool(mcp, tool_name, selector=selector)
+    register_tool_error_enricher(mcp)
+    client = Client(mcp)
+    async with client:
+        res = await client.call_tool(tool_name, bad_payload, raise_on_error=False)
+    env = res.structured_content
+    example = env.get("example", "")
+    if tool_name == "rag":
+        assert example == 'rag(op="search", arguments=\'{"query": "z"}\')'
+    elif tool_name == "agent_bus_read":
+        assert example == 'agent_bus_read(tool="fetch", arguments=\'{"thread": 1}\')'
+    else:
+        assert example.endswith(_DISPATCH_PLACEHOLDER)
+    assert list(env.keys())[:2] == ["hint", "example"]
+
+
+@pytest.mark.asyncio
+async def test_non_dispatch_tool_has_no_top_level_dispatch_example():
+    mcp = FastMCP("test-enricher")
+    @mcp.tool()
+    def fs(op: str, path: str = "") -> dict:
+        return {"op": op, "path": path}
+
+    register_tool_error_enricher(mcp)
+    client = Client(mcp)
+    async with client:
+        res = await client.call_tool(
+            "fs", {"op": "read", "view_range": [1, 60]}, raise_on_error=False
+        )
+    env = res.structured_content
+    assert "example" not in env
+
+
+@pytest.mark.asyncio
+async def test_type_mismatch_has_no_dispatch_shape_hint():
+    mcp = FastMCP("test-enricher")
+    @mcp.tool()
+    def agent_bus_read(tool: str, arguments: str = "{}") -> dict:
+        return {"tool": tool}
+
+    register_tool_error_enricher(mcp)
+    client = Client(mcp)
+    async with client:
+        res = await client.call_tool(
+            "agent_bus_read",
+            {"tool": 123, "arguments": "{}"},
+            raise_on_error=False,
+        )
+    env = res.structured_content
+    assert "example" not in env
+
+
+@pytest.mark.asyncio
+async def test_dispatch_shape_placeholder_when_arguments_key_present():
+    mcp = FastMCP("dispatch-placeholder")
+    _dispatch_tool(mcp, "agent_bus_read", selector="tool")
+    register_tool_error_enricher(mcp)
+    client = Client(mcp)
+    async with client:
+        res = await client.call_tool(
+            "agent_bus_read",
+            {"arguments": "{}", "thread": "1"},
+            raise_on_error=False,
+        )
+    env = res.structured_content
+    assert (
+        env["example"]
+        == 'agent_bus_read(tool="<op>", arguments=\'{"<param>": "<value>"}\')'
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_hint_builder_failure_returns_envelope_without_hint(monkeypatch):
+    mcp = FastMCP("hint-fail")
+    _dispatch_tool(mcp, "cortex", selector="tool")
+    register_tool_error_enricher(mcp)
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("hint build failed")
+
+    import tool_error_enricher as tee
+
+    monkeypatch.setattr(tee, "_build_dispatch_shape_hint", _boom)
+    client = Client(mcp)
+    async with client:
+        res = await client.call_tool(
+            "cortex", {"entity_id": "x"}, raise_on_error=False
+        )
+    env = res.structured_content
+    assert env["error_type"] == "ValidationError"
+    assert "example" not in env
+    assert "hint" not in env or "dispatch-style" not in str(env.get("hint", "")).lower()
+
+
+@pytest.mark.asyncio
+async def test_validation_error_event_records_dispatch_shape_hint(monkeypatch):
+    mcp = FastMCP("event-dispatch")
+    _dispatch_tool(mcp, "agent_bus_read", selector="tool")
+    register_tool_error_enricher(mcp)
+    captured: list[dict[str, Any]] = []
+
+    import tool_error_enricher as tee
+
+    def _record(signal: str, **fields: object) -> None:
+        if signal == "mcp.tool.validation.error":
+            captured.append(dict(fields))
+
+    monkeypatch.setattr(tee, "record", _record)
+    client = Client(mcp)
+    async with client:
+        await client.call_tool(
+            "agent_bus_read", {"op": "fetch", "thread": 1}, raise_on_error=False
+        )
+    assert captured
+    assert captured[-1].get("dispatch_shape_hint") is True
