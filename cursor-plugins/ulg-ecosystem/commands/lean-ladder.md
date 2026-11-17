@@ -5,8 +5,9 @@ Lean ladder — architect confer → plan → Composer implement, planning exter
 Runs one work item through three dispatched legs while the orchestrating seat stays lean:
 
 1. **Confer** — a CDP architect (default `cdp/fable-5.2`) reads a packet and returns a verdict.
-2. **Plan** — a planner (this tab, or a glass tab on `:8`) reads the confer by section and writes a plan file: wire/design, `files_expected`, numbered AC, pytest matrix.
-3. **Implement** — Composer on `seat=cursor-sdk` lane B executes the plan file and quotes pytest in its closeout.
+2. **Plan** — a planner (this tab, or a glass tab on `:8`) reads the confer by section and writes a plan file: wire/design, `files_expected`, numbered AC, pytest matrix, falsification table, and confer-risk accounting (procedure in the template).
+3. **Implement** — Composer on `seat=cursor-sdk` lane B executes the plan file and quotes pytest in its closeout; it does not land.
+4. **Pre-land review** — after Leg 3, `cursor/composer-2.5` (fresh context) and a one-job Grok Bot on display `:9` review the lane commit; both must pass before merge. Optional third reader: `cursor/grok-4.7` (procedure in the template).
 
 The seat holds only ids and URIs. Packets, confer output and plan live in `cortex://` files; closeouts are read by section with `md_list` / `md_read`. Each packet the seat authors goes through `/retrieval-before-authoring` first.
 
@@ -34,7 +35,8 @@ Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retriev
 | `lane` | no | `B` | Leg 3 checkout lane. Lane A is refused at admit |
 | `density_triage` | no | `mechanical` | Todo attribute and Leg 3 flag. Use `judgment_required` for open forks |
 | `planner` | no | `here` | `here` = this tab runs legs 1–3. `glass:8` = spawn a planning tab on `:8` |
-| `planner_model` | no | `claude-sonnet-5-5` | Only with `planner=glass:<n>`. Model picked in the spawned tab |
+| `planner_model` | no | `claude-sonnet-5-5` | Only with `planner=glass:<n>`. Must not be `cursor/grok-4.7` (it does not plan; it may review in Leg 4 only) |
+| `review_display` | no | `9` | Leg 4 Grok Bot display (`:9`, operator ruling) |
 | `planner_effort` | no | `high` | Only with `planner=glass:<n>` |
 | `wake` | no | `subscribe` | `subscribe` registers the planner tab (this tab for `planner=here`, the spawned tab for `planner=glass:<n>`) for `BRIDGE_WAKE` on the arc thread under the per-arc mailbox `cursor-<slug>`, before any dispatch (template § Wake registration). `none` skips it; the tab then never wakes and must not be used to wait on a closeout |
 | `skip_confer` | no | `false` | `true` = start at Leg 2 |
@@ -57,8 +59,9 @@ Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retriev
    - Mailbox for both modes: `<mailbox>` = `cursor-<slug>`, one per arc, never the shared name `cursor` (`unsubscribe` takes only `agent` + `thread_scope`, so a shared name lets cleanup remove another tab's row). Only turns addressed `to` `<mailbox>` wake the tab, so every leg carries `caller_agent="<mailbox>"`. `thread_scope` is one string.
    - `planner=here` → subscribe this tab first (nothing subscribes it automatically): `agent_id` is this tab's own id (the `tab=` of its last `BRIDGE_WAKE`, or the uuid in its agent-store path), `display=<this tab's display>`; verify with `subscriptions`. Then read the template, substitute the slots, run the legs in order. End each turn idle after an admit.
    - `planner=glass:<n>` → follow template § Wake registration in order: mint `agent_id` (UUID) → retrieval gate for the spawn prompt → `agent_bus(tool=subscribe, agent=<mailbox>, thread_scope=<arc>, surface=cursor, display=<n>, agent_id=<agent_id>, title="<arc> <slug>")` → `cursor_bridge(op="spawn_tab", gui_host=":<n>", agent_id=<agent_id>, model=<planner_model>, effort=<planner_effort>, work_key="todo:<slug>", thread=<arc>, prompt=<filled template>)` (`agent_id` becomes the new tab's composer id, so the row matches the tab) → verify with `agent_bus(tool=subscriptions, agent=<mailbox>, thread_scope=<arc>)`. **The seat fires no leg:** the spawned tab re-checks its row, then fires Leg 1 and Leg 3 itself with `caller_agent="<mailbox>"`, so replies are addressed to the mailbox that wakes it. Spawn failure ⇒ `unsubscribe(agent=<mailbox>, thread_scope=<arc>)` and stop; no row ⇒ stop. The spawned tab runs the same retrieval gate. Do not hand the operator a manual handoff.
-5. **Harvest** closeouts by section only (template § Selective reading): `md_list`, then `md_read` of `executive_envelope`.
-6. **Close** with the template's Completion block: quote ids, URIs, hashes, pytest lines, liveness class.
+5. **Harvest** Leg 3 closeout by section only (template § Selective reading): `md_list`, then `md_read` of `executive_envelope`.
+6. **Leg 4 gate** (template § Leg 4): parallel Composer + Grok Bot reviews at the lane commit; split or blocking verdict ⇒ do not land.
+7. **Close** with the template's Completion block: quote ids, URIs, hashes, pytest lines, Leg 4 verdicts, git land state, liveness class.
 
 ## Typical dispatch flow
 
@@ -84,11 +87,12 @@ glass tab  retrieval gate (plan; new job, own report) → write …-plan.md
 glass tab  Leg 3 team_dispatch(seat=cursor-sdk, lane=B, model=cursor/composer-2.5,
            sidecar_ref=…-plan.md, caller_agent=cursor-<slug>) → dispatch_id; ends turn idle
 
-composer   implements plan → closeout
+composer   implements plan → closeout (lane commit; no land)
 
 bus        closeout pointer on <arc> to=cursor-<slug> → BRIDGE_WAKE → tab resumes
 glass tab  md_read(closeouts/<dispatch_id>.md, [executive_envelope, executive_envelope/effects_manifest])
-glass tab  bus turn on arc: verdict section id · plan URI+sha · dispatch_id · pytest lines · liveness class
+glass tab  Leg 4 parallel: Composer fresh-context review + Grok Bot on :9 at lane commit → both APPROVE or stop
+glass tab  bus turn on arc: verdict · plan URI+sha · dispatch_id · pytest · Leg 4 verdicts · git land state · liveness
 seat       not subscribed (only the planner mailbox is): the Completion turn on <arc> is the record
 ```
 
@@ -98,7 +102,7 @@ seat       not subscribed (only the planner mailbox is): the Completion turn on 
 /lean-ladder "bind a Cowork project per team_dispatch hop"
 /lean-ladder "bind a Cowork project per team_dispatch hop" planner=glass:8
 /lean-ladder "fix X" slug=fix-x density_triage=judgment_required architect_effort=max
-/lean-ladder "fix Y" skip_confer=true implement_model=cursor/grok-4.7
+/lean-ladder "fix Y" skip_confer=true review_display=9
 ```
 
 ## Guards
@@ -109,3 +113,5 @@ seat       not subscribed (only the planner mailbox is): the Completion turn on 
 - A live registry row on `todo:<slug>` ⇒ stop and coordinate; ¬ duplicate.
 - Same input failed twice ⇒ no third retry; change the input once, then report.
 - `¬dispatch_primitive(surface)` ⇒ do the leg and say so in one line.
+- Leg 2 plan must not carry `land: silent` or merge-without-review AC; Leg 4 is mandatory before land.
+- `cursor/grok-4.7` does not plan (`planner_model` must stay Claude). On cursor-sdk, `model_knobs={"fast":"true"}` on `cursor/grok-4.7` is honoured when set (Leg 4 optional reader only).
