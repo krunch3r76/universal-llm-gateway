@@ -88,6 +88,7 @@ class DispatchRow:
     context_limit: int | None
     transcript_tail: str
     fast: bool | None
+    effort: str | None
     started_at: str | None
     last_activity_at: str | None
     terminal_at: str | None
@@ -197,17 +198,26 @@ def _record(raw: str | None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _merged_knobs(rec: dict[str, Any]) -> dict[str, str]:
+    """``model_knobs`` with ``model_knobs_requested`` fallback (aligned admit)."""
+    out: dict[str, str] = {}
+    requested = rec.get("model_knobs_requested")
+    if isinstance(requested, dict):
+        for key, val in requested.items():
+            if val is not None and str(val).strip():
+                out[str(key)] = str(val).strip()
+    knobs = rec.get("model_knobs")
+    if isinstance(knobs, dict):
+        for key, val in knobs.items():
+            if val is not None and str(val).strip():
+                out[str(key)] = str(val).strip()
+    return out
+
+
 def _fast_from_rec(rec: dict[str, Any]) -> bool | None:
     """Tri-state ``fast`` from ledger record_json (dispatch-monitor parity)."""
-    raw: dict[str, Any] | None = None
-    knobs = rec.get("model_knobs")
-    if isinstance(knobs, dict) and knobs:
-        raw = knobs
-    else:
-        requested = rec.get("model_knobs_requested")
-        if isinstance(requested, dict) and requested:
-            raw = requested
-    if raw is None:
+    raw = _merged_knobs(rec)
+    if not raw:
         return None
     fast_raw = raw.get("fast")
     if fast_raw == "true":
@@ -225,11 +235,20 @@ def _fast_token(fast: bool | None) -> str:
     return ""
 
 
+def _effort_from_rec(rec: dict[str, Any]) -> str | None:
+    effort = _merged_knobs(rec).get("effort")
+    return effort if effort else None
+
+
+def _effort_token(effort: str | None) -> str:
+    if not effort:
+        return ""
+    return f" effort={effort}"
+
+
 def _model_knobs_dict(rec: dict[str, Any]) -> dict[str, str] | None:
-    raw = rec.get("model_knobs")
-    if isinstance(raw, dict) and raw:
-        return {str(k): str(v) for k, v in raw.items()}
-    return None
+    merged = _merged_knobs(rec)
+    return merged or None
 
 
 def _slug(
@@ -576,6 +595,7 @@ def _row_from_sqlite(
     rec = _record(row["record_json"])
     model = str(row["resolved_model"] or rec.get("model") or "")
     fast = _fast_from_rec(rec)
+    effort = _effort_from_rec(rec)
     started_dt = _parse_iso(row["started_at"]) or _parse_iso(row["queued_at"])
     terminal_dt = _parse_iso(row["terminal_at"])
     last = _last_activity(
@@ -631,6 +651,7 @@ def _row_from_sqlite(
         context_limit=limit,
         transcript_tail=_transcript_tail_path(str(row["dispatch_id"])),
         fast=fast,
+        effort=effort,
         started_at=_fmt_local(started_dt, tz=tz),
         last_activity_at=_fmt_local(last, tz=tz),
         terminal_at=_fmt_local(terminal_dt, tz=tz),
@@ -778,7 +799,7 @@ def _print_row(row: DispatchRow, *, use_color: bool) -> None:
     status_c = _STATUS_COLOR.get(row.status, _BLUE)
     phase_tag = "" if row.phase == "live" else _c(_DIM, " [done]", use_color=use_color)
     model_short = row.model.removeprefix("cursor/") if row.model else "?"
-    model_short = f"{model_short}{_fast_token(row.fast)}"
+    model_short = f"{model_short}{_fast_token(row.fast)}{_effort_token(row.effort)}"
     exec_hint = ""
     if row.execution_id:
         exec_hint = f" exec {_c(_DIM, row.execution_id[:8], use_color=use_color)}"

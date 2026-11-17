@@ -15,6 +15,8 @@ _spec.loader.exec_module(_mod)
 
 _fast_from_rec = _mod._fast_from_rec
 _fast_token = _mod._fast_token
+_effort_from_rec = _mod._effort_from_rec
+_effort_token = _mod._effort_token
 
 
 def test_fast_from_model_knobs_true() -> None:
@@ -54,3 +56,17 @@ def test_fast_falls_back_to_model_knobs_requested() -> None:
 def test_fast_ignores_non_bool_strings() -> None:
     assert _fast_from_rec({"model_knobs": {"fast": "1"}}) is None
     assert _fast_from_rec({"model_knobs": {"fast": True}}) is None
+
+
+def test_effort_from_model_knobs() -> None:
+    assert _effort_from_rec({"model_knobs": {"effort": "high"}}) == "high"
+    assert _effort_token("high") == " effort=high"
+
+
+def test_effort_absent_no_suffix() -> None:
+    assert _effort_from_rec({}) is None
+    assert _effort_token(None) == ""
+
+
+def test_effort_falls_back_to_model_knobs_requested() -> None:
+    assert _effort_from_rec({"model_knobs_requested": {"effort": "low"}}) == "low"
