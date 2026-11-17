@@ -7,6 +7,7 @@ import copy
 import pytest
 
 from implement_admission.impresario_policy import (
+    critic_for_role,
     load_impresario_policy,
     parse_impresario_policy,
     policy_snapshot_sha256,
@@ -63,6 +64,34 @@ def test_policy_snapshot_sha256_stable() -> None:
 
 def test_cdp_reroute_for_critic_default_false() -> None:
     assert load_impresario_policy().cdp_reroute_for_critic is False
+
+
+def test_grok_allowed_critic_in_policy() -> None:
+    assert "cursor/grok-4.7" in load_impresario_policy().allowed_critics
+
+
+def test_resolve_roles_grok_critic_model() -> None:
+    roles = resolve_roles(critic_model="cursor/grok-4.7")
+    assert roles.critic.model == "cursor/grok-4.7"
+    assert roles.critic.effort_rung == "high"
+
+
+def test_critic_for_role_review_grok_override() -> None:
+    policy = load_route_policy()
+    mutated = copy.deepcopy(policy)
+    mutated["impresario"] = copy.deepcopy(mutated["impresario"])
+    mutated["impresario"]["critic_roles"] = copy.deepcopy(
+        mutated["impresario"]["critic_roles"]
+    )
+    mutated["impresario"]["critic_roles"]["review"] = {"model": "cursor/grok-4.7"}
+    parsed = parse_impresario_policy(mutated)
+    assert critic_for_role(parsed, "review").model == "cursor/grok-4.7"
+
+
+def test_registry_errors_clean_after_grok_allowed_critic() -> None:
+    errors = registry_errors(load_route_policy())
+    assert not any("allowed critic" in e.lower() for e in errors)
+    assert not any("impresario" in e.lower() for e in errors)
 
 
 def test_default_critic_is_cdp_not_anthropic_credit_bucket() -> None:
