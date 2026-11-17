@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from claude_bundles.cse_idle_probe import in_flight_from_state
-from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
+from claude_bundles.cse_url import claude_seat_identity_key
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
 PageProbe = Callable[[int, str], tuple[dict[str, Any] | None, bool]]

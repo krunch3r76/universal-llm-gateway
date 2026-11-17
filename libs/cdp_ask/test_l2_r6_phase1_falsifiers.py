@@ -6,8 +6,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cdp_ask.test_cse_session_bind_address import (
-    client,
-    isolated_registry,
     _write_row,
 )
 

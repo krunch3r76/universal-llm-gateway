@@ -11,7 +11,7 @@ from typing import Any
 
 from claude_bundles import cdp_lane
 from claude_bundles import cdp_registry_events as _events
-from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
+from claude_bundles.cse_url import claude_seat_identity_key
 
 _DEFAULT_ORPHANED_ALIVE_TTL_S = 1800.0  # 30 min — exceeds warm-reattach window
 

@@ -11,7 +11,7 @@ import contextlib
 import uuid
 
 from claude_bundles import cdp_registry
-from claude_bundles.cse_url import claude_seat_identity_key, normalize_cse_url
+from claude_bundles.cse_url import claude_seat_identity_key
 from claude_bundles.nested_cdp_prompt_gate import NestedCdpPromptGateError
 from claude_bundles.project_ask_conversation import send_followup_paste_half
 

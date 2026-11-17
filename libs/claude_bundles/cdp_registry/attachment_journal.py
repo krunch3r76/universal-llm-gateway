@@ -26,7 +26,7 @@ from universal_protocol.errors import ProtocolError
 from claude_bundles import cdp_registry_store as _store
 from claude_bundles.cdp_registry.journal_projection import read_fold_rows
 from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES
-from claude_bundles.cse_url import claude_seat_identity_key, normalize_cse_url
+from claude_bundles.cse_url import claude_seat_identity_key
 
 
 def _attachment_norm_key(url: str) -> str:

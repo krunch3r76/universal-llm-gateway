@@ -8,7 +8,7 @@ from typing import Any
 from claude_bundles import cdp_registry_store as store
 from claude_bundles.cse_provenance import ProvenanceEpisode
 from claude_bundles.cse_provenance_retire import append_binding_retired_episode
-from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
+from claude_bundles.cse_url import claude_seat_identity_key
 
 from .binding_retire_models import (
     RETIRE_LOG_EVENT,

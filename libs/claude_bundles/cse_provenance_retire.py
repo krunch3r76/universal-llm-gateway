@@ -8,7 +8,7 @@ from claude_bundles.cse_provenance import (
     episodes_for_chat_url,
     latest_episode,
 )
-from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
+from claude_bundles.cse_url import claude_seat_identity_key
 
 BINDING_RETIRED_STATES = frozenset({"retired", "unbound"})
 

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from claude_bundles.cdp_reclaim_refuse import cse_id_from_url
-from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
+from claude_bundles.cse_url import claude_seat_identity_key
 from universal_logging import get_logger
 
 from ..db.cse_associations import HOP_SEATED_BOUND_BY

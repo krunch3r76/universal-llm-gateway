@@ -6,7 +6,7 @@ from typing import Any
 
 from claude_bundles import cdp_registry_store as store
 from claude_bundles.cse_provenance_retire import open_binding_holder_registration
-from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
+from claude_bundles.cse_url import claude_seat_identity_key
 
 from .binding_retire_models import refuse_retire
 from .binding_retire_resolve import fleet_row, local_row

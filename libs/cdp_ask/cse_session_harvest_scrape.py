@@ -30,10 +30,8 @@ from claude_bundles.cowork_output_download import (
 )
 from claude_bundles.cse_turns_harvest import harvest_turns
 from claude_bundles.cse_url import (
-    canonical_claude_seat_url,
     claude_seat_identity_key,
     is_bindable_claude_seat_url,
-    normalize_cse_url,
 )
 from claude_bundles.overload_only_harvest import is_error_banner_only_harvest
 from continuity_tape.extract_jsonl import extract_turns_from_jsonl_bytes

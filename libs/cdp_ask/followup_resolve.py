@@ -21,7 +21,6 @@ from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_url import (
     canonical_claude_seat_url,
     claude_seat_identity_key,
-    normalize_cse_url,
 )
 from playwright.async_api import async_playwright
 

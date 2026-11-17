@@ -17,10 +17,8 @@ from typing import Any
 
 from claude_bundles import cdp_registry
 from claude_bundles.cse_url import (
-    canonical_claude_seat_url,
     claude_seat_identity_key,
     is_bindable_claude_seat_url,
-    normalize_cse_url,
 )
 from claude_bundles.skills_ui_panel import connect_cdp
 

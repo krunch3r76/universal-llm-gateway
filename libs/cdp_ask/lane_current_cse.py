@@ -14,7 +14,7 @@ from typing import Any
 from claude_bundles import cdp_orphans, cdp_registry
 from claude_bundles.cdp_orphan_cse_classify import cse_pages_from_list
 from claude_bundles.cse_idle_probe import probe_page_liveness_sync
-from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
+from claude_bundles.cse_url import claude_seat_identity_key
 
 from cdp_ask.lane_current_cse_cap import (
     PageProbe,

@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from claude_bundles import cdp_registry_events
-from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
+from claude_bundles.cse_url import claude_seat_identity_key
 from universal_logging import get_logger
 
 logger = get_logger("cdp-ask.occupancy-projection")

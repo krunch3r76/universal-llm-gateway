@@ -6,7 +6,7 @@ from typing import Any
 
 from claude_bundles import cdp_registry_store as store
 from claude_bundles.cse_provenance import latest_episode
-from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
+from claude_bundles.cse_url import claude_seat_identity_key
 from claude_bundles.hop_cadence_seat_snap import _active_map_from_registry_document
 
 

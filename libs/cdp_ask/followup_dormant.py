@@ -12,7 +12,7 @@ from __future__ import annotations
 import contextlib
 
 from claude_bundles import cdp_registry
-from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
+from claude_bundles.cse_url import claude_seat_identity_key
 
 from cdp_ask.followup_reattach import (
     ReattachOutcome,
