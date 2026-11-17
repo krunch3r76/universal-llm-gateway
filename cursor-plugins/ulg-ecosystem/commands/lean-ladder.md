@@ -36,7 +36,7 @@ Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retriev
 | `planner` | no | `here` | `here` = this tab runs legs 1–3. `glass:8` = spawn a planning tab on `:8` |
 | `planner_model` | no | `claude-sonnet-5-5` | Only with `planner=glass:<n>`. Model picked in the spawned tab |
 | `planner_effort` | no | `high` | Only with `planner=glass:<n>` |
-| `wake` | no | `subscribe` | Only with `planner=glass:<n>`. `subscribe` registers the spawned tab for `BRIDGE_WAKE` on the arc thread before Leg 1 (template § Wake registration). `none` skips it; the tab then never wakes and must not be used to wait on a closeout |
+| `wake` | no | `subscribe` | `subscribe` registers the planner tab (this tab for `planner=here`, the spawned tab for `planner=glass:<n>`) for `BRIDGE_WAKE` on the arc thread under the per-arc mailbox `cursor-<slug>`, before any dispatch (template § Wake registration). `none` skips it; the tab then never wakes and must not be used to wait on a closeout |
 | `skip_confer` | no | `false` | `true` = start at Leg 2 |
 
 ## Slug inference
@@ -54,8 +54,9 @@ Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retriev
 2. **Preflight** (template § Preflight): registry read on `todo:<slug>`; ensure the todo with `density_triage`; fresh non-`role:root` arc thread.
 3. **Retrieval gate (seat duty, per artifact).** Retrieval comes first and the draft comes after it, for every artifact a model will read. Each artifact is its own authoring job with its own `rag` calls, report and `search_id`s (a new job inherits none): (a) the seed `packet` (reader `architect_model`, Claude), (b) the planner-tab prompt when `planner=glass:<n>` (reader `planner_model`, Claude; report `<slug>-spawn-retrieval-report.md`), (c) the plan, authored by the planner (reader `implement_model`; report `<slug>-plan-retrieval-report.md`), and (d) any redispatch after a red closeout, plus any `prompt=` on any leg. Use the `retrieval-before-authoring` skill: one `rag(op=search)` per required scope (`llm_prompting`, `claude_api`, `prompt_injection`, `agent_skills_research`; add `constitutional_ai` when the reader is Claude, `skill_compilation` on skill/rule bodies), `top_k=10`, compact then `projection=full` for scopes cited, one reformulation on `weak_match: true`. Write each report with `target: todo:<slug>` at column 0 and put `retrieval_report:` on its own line in the authored body. An artifact re-fired unchanged is not re-retrieved. Do not fire a leg whose artifact has no report.
 4. **Fill and run**
-   - `planner=here` → read the template, substitute the slots, run the legs in order.
-   - `planner=glass:<n>` → follow template § Wake registration in order: mint `agent_id` (UUID) → `agent_bus(op=subscribe, agent=cursor, thread_scope=<arc>, surface=cursor, display=<n>, agent_id=<agent_id>, title="<arc> <slug>")` → Leg 1 → `cursor_bridge(op="spawn_tab", gui_host=":<n>", agent_id=<agent_id>, model=<planner_model>, effort=<planner_effort>, work_key="todo:<slug>", thread=<arc>, prompt=<filled template>)` → verify with `agent_bus(op=subscriptions, agent=cursor, thread_scope=<arc>)`. Legs 1 and 3 carry `caller_agent="cursor"`. Spawn failure ⇒ unsubscribe and stop. `spawn_tab` alone registers nothing, so an unsubscribed tab never wakes on the Fable reply. The spawned tab runs the same retrieval gate. Do not hand the operator a manual handoff.
+   - Mailbox for both modes: `<mailbox>` = `cursor-<slug>`, one per arc, never the shared name `cursor` (`unsubscribe` takes only `agent` + `thread_scope`, so a shared name lets cleanup remove another tab's row). Only turns addressed `to` `<mailbox>` wake the tab, so every leg carries `caller_agent="<mailbox>"`. `thread_scope` is one string.
+   - `planner=here` → subscribe this tab first (nothing subscribes it automatically): `agent_id` is this tab's own id (the `tab=` of its last `BRIDGE_WAKE`, or the uuid in its agent-store path), `display=<this tab's display>`; verify with `subscriptions`. Then read the template, substitute the slots, run the legs in order. End each turn idle after an admit.
+   - `planner=glass:<n>` → follow template § Wake registration in order: mint `agent_id` (UUID) → retrieval gate for the spawn prompt → `agent_bus(tool=subscribe, agent=<mailbox>, thread_scope=<arc>, surface=cursor, display=<n>, agent_id=<agent_id>, title="<arc> <slug>")` → `cursor_bridge(op="spawn_tab", gui_host=":<n>", agent_id=<agent_id>, model=<planner_model>, effort=<planner_effort>, work_key="todo:<slug>", thread=<arc>, prompt=<filled template>)` (`agent_id` becomes the new tab's composer id, so the row matches the tab) → verify with `agent_bus(tool=subscriptions, agent=<mailbox>, thread_scope=<arc>)`. **The seat fires no leg:** the spawned tab re-checks its row, then fires Leg 1 and Leg 3 itself with `caller_agent="<mailbox>"`, so replies are addressed to the mailbox that wakes it. Spawn failure ⇒ `unsubscribe(agent=<mailbox>, thread_scope=<arc>)` and stop; no row ⇒ stop. The spawned tab runs the same retrieval gate. Do not hand the operator a manual handoff.
 5. **Harvest** closeouts by section only (template § Selective reading): `md_list`, then `md_read` of `executive_envelope`.
 6. **Close** with the template's Completion block: quote ids, URIs, hashes, pytest lines, liveness class.
 
@@ -68,26 +69,27 @@ seat       echo: slug (recommended)=cowork-project-team-dispatch-hop · architec
            · implement=cursor/composer-2.5 lane B · planner=glass:8 sonnet-5-5 high
 seat       registry(todo:…) → empty · todo ensured (density_triage=mechanical) · arc thread 24xxx
 seat       retrieval gate (packet) → rag × scopes → retrieval-report → author packet (target: todo:…)
-seat       Leg 1  team_dispatch(model=cdp/fable-5.2, contract=confer, sidecar_ref=packet) → execution_id, poll_hint
 seat       retrieval gate (spawn prompt) → report → author filled prompt
-seat       agent_bus.subscribe(cursor, thread_scope=<arc>, display=8, agent_id=<uuid>) → row id
+seat       agent_bus.subscribe(agent=cursor-<slug>, thread_scope=<arc>, display=8, agent_id=<uuid>) → row id
 seat       cursor_bridge.spawn_tab(:8, claude-sonnet-5-5, agent_id=<uuid>, prompt=filled template)
-seat       agent_bus.subscriptions(thread_scope=<arc>) → row carries <uuid>   (seat ends its turn)
+seat       agent_bus.subscriptions(agent=cursor-<slug>, thread_scope=<arc>) → row carries <uuid>   (seat ends its turn; fires no leg)
 
-glass tab  rename_chat "<arc> <slug>" → ends turn idle (no agent_bus wait, no watcher)
-bus        Fable reply on <arc> → endpoint wake → BRIDGE_WAKE thread=<arc> turn=<n> pasted into the tab
+glass tab  rename_chat "<arc> <slug>" → subscriptions(agent=cursor-<slug>) → row present (else BLOCKED on <arc>, stop)
+glass tab  Leg 1  team_dispatch(model=cdp/fable-5.2, contract=confer, sidecar_ref=packet,
+           caller_agent=cursor-<slug>) → execution_id, poll_hint; ends turn idle (no agent_bus wait, no watcher)
+bus        Fable reply on <arc> to=cursor-<slug> → endpoint wake → BRIDGE_WAKE thread=<arc> turn=<n> pasted into the tab
 glass tab  wakes: Fable reply landed
 glass tab  md_list(confer) → md_read(Verdict, Risks)           ← sections only
 glass tab  retrieval gate (plan; new job, own report) → write …-plan.md
 glass tab  Leg 3 team_dispatch(seat=cursor-sdk, lane=B, model=cursor/composer-2.5,
-           sidecar_ref=…-plan.md, caller_agent=cursor) → dispatch_id; ends turn idle
+           sidecar_ref=…-plan.md, caller_agent=cursor-<slug>) → dispatch_id; ends turn idle
 
 composer   implements plan → closeout
 
-bus        closeout on <arc> → BRIDGE_WAKE → tab resumes
+bus        closeout pointer on <arc> to=cursor-<slug> → BRIDGE_WAKE → tab resumes
 glass tab  md_read(closeouts/<dispatch_id>.md, [executive_envelope, executive_envelope/effects_manifest])
 glass tab  bus turn on arc: verdict section id · plan URI+sha · dispatch_id · pytest lines · liveness class
-seat       wakes → follow-up to operator: what returned, what it changes, next move
+seat       not subscribed (only the planner mailbox is): the Completion turn on <arc> is the record
 ```
 
 ## Examples
