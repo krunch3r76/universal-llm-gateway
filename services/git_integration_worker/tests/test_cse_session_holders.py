@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
 
 from services.git_integration_worker.cse_session_holders import (
     boot_reconcile,
@@ -510,6 +510,47 @@ def test_boot_reconcile_skips_houseless_registry_adopt(
 
 
 _CHAT = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
+_CHAT_WWW = f"https://www.claude.ai/chat/{_CHAT.split('/')[-1].upper()}"
+
+
+def test_resolve_nest_parent_refuses_chat_holder_id(
+    ledger: CursorDispatchLedger,
+) -> None:
+    """Unified-chat holder ids are not CSE nest parents."""
+    hid = "chat_2762063d-2966-4859-a3ce-23831c6e0c86"
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        upsert_holder(conn, chat_url=_CHAT, registration_id="reg-chat", lane_thread_id="55")
+        assert resolve_nest_parent(conn, hid) is None
+        assert resolve_nest_parent(conn, "cse_testholder1") is None
+
+
+def test_upsert_stores_canonical_chat_url_column(
+    ledger: CursorDispatchLedger,
+) -> None:
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        row = upsert_holder(conn, chat_url=_CHAT_WWW, registration_id="reg-v")
+        fetched = get_holder(conn, str(row["holder_id"]))
+    assert fetched is not None
+    assert fetched["chat_url"] == canonical_claude_seat_url(_CHAT_WWW)
+
+
+def test_reap_registry_www_spelling_matches_canonical_column(
+    ledger: CursorDispatchLedger,
+) -> None:
+    live_url = "https://claude.ai/cowork/cse_livecanon"
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        live = upsert_holder(conn, chat_url=live_url, lane_thread_id="77")
+        _backdate(conn, str(live["holder_id"]))
+        released = reap_stale_driving_holders(
+            conn,
+            registry_urls={f"https://www.claude.ai/cowork/{live_url.rsplit('/', 1)[-1]}"},
+        )
+        live_row = get_holder(conn, str(live["holder_id"]))
+    assert released == 0
+    assert live_row is not None and live_row["seat_state"] == "driving"
 
 
 def test_upsert_unified_chat_one_row_per_uuid(ledger: CursorDispatchLedger) -> None:
