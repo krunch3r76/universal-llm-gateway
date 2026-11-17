@@ -196,6 +196,27 @@ def test_friction_file_rewrite_rejects_from_from_agent_conflict() -> None:
     assert err["reason"] == "friction_file_agent_alias_conflict"
 
 
+def test_friction_file_dispatch_accepts_from_alias_via_agent_bus(agent_bus_fn) -> None:
+    with patch(
+        "tools.agent_bus.friction_file.file_friction",
+        return_value={"item": {"id": 43}},
+    ) as filed:
+        result = asyncio.run(
+            agent_bus_fn(
+                tool="substrate_friction_file",
+                arguments=json.dumps(
+                    {
+                        "owner": "service:mcp-server",
+                        "note": "ingress from alias",
+                        "from": "web-anthropic",
+                    }
+                ),
+            )
+        )
+    assert "error" not in result
+    assert filed.call_args.kwargs["agent"] == "web-anthropic"
+
+
 def test_friction_file_dispatch_accepts_from_agent_via_agent_bus(agent_bus_fn) -> None:
     with patch(
         "tools.agent_bus.friction_file.file_friction",
