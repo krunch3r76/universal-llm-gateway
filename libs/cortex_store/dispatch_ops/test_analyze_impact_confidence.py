@@ -169,9 +169,15 @@ def test_execute_op_analyze_impact_invalid_confidence_returns_error(
 
 @pytest.mark.offline
 @patch("cortex_store.dispatch_ops.ops_assertions.analyze_impact_semantic")
+@pytest.mark.parametrize(
+    "payload_extra",
+    [{}, {"confidence": None}],
+    ids=["omitted", "explicit_null"],
+)
 def test_execute_op_analyze_impact_isolated_db_omitted_confidence_defaults_believed(
     mock_semantic,
     analyze_impact_db: Path,
+    payload_extra: dict[str, object],
 ) -> None:
     mock_semantic.return_value.model_dump.return_value = {"impact_score": 0.0}
 
@@ -180,6 +186,7 @@ def test_execute_op_analyze_impact_isolated_db_omitted_confidence_defaults_belie
         {
             "entity_id": "service:mcp-server",
             "claim": "isolated DB public path default confidence",
+            **payload_extra,
         },
     )
     assert "error" not in result, result
