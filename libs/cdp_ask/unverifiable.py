@@ -114,7 +114,7 @@ def is_unverifiable_stall(
 ) -> bool:
     """True when a failed snapshot is observer-unverifiable, not CSE death.
 
-    Requires compose witness (``cse_`` in *url*) after death-stage/token gates.
+    Requires a bindable Claude seat URL (``is_bindable_claude_seat_url``) after death-stage/token gates.
     Explicit ``satellite_execution_id=None`` means pre-submit death (``cdp FAILED``).
     """
     stage = (stall_stage or "").strip()

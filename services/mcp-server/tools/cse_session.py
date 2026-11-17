@@ -1,7 +1,7 @@
 """MCP cse_session tool — thin httpx relay to the Jupiter CDP-ask satellite.
 
-Ops: provenance, harvest, paste, followup, resolve_attended (read), detach,
-retire_binding (write on satellite). paste ≠ followup — different routes.
+Ops: provenance, harvest, paste, followup, bind_address, resolve_attended (read),
+detach, retire_binding (write on satellite). paste ≠ followup — different routes.
 No claude_bundles or cdp_ask imports — relay only per [universal:mcp].
 """
 
