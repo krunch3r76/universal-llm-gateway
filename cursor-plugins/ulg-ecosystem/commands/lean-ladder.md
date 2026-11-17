@@ -10,7 +10,7 @@ Runs one work item through three dispatched legs while the orchestrating seat st
 
 The seat holds only ids and URIs. Packets, confer output and plan live in `cortex://` files; closeouts are read by section with `md_list` / `md_read`. Each packet the seat authors goes through `/retrieval-before-authoring` first.
 
-**Template SOT:** `cortex://notes/system/templates/lean-dispatch-ladder.md` (read it with `fs(op="read", path=…)`; fill the `{{slots}}` from the parameters). This command is the wrapper — ¬ re-derive the legs, closeout-reading rules, or completion block here.
+**Template SOT:** `cortex://notes/system/templates/lean-dispatch-ladder.md` (read it by section: `fs md_list`, then `md_read` the sections you need; plain `fs(op="read")` returns only a manifest; fill the `{{slots}}` from the parameters). This command is the wrapper — ¬ re-derive the legs, closeout-reading rules, or completion block here.
 
 Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retrieval-before-authoring` skill.
 
