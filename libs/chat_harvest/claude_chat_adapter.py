@@ -31,6 +31,7 @@ from chat_harvest.models import (
     ChatHarvestResponse,
     ChatPasteResponse,
     ChatTurn,
+    ClassifyOk,
     ClassifyRefuse,
     build_harvest_response,
     classify_chat_url,
@@ -174,15 +175,21 @@ async def _resolve_page(
             raise
         return page, None, True
     if conversation_id:
+        requested_path = (open_url or "").split("#", 1)[0].split("?", 1)[0]
+        requested_code = "/code/session" in requested_path
         for page in non_cse:
             page_url = page.url or ""
+            classified = classify_chat_url(page_url)
             if (
-                f"/chat/{conversation_id}" in page_url
-                or f"/code/session_{conversation_id}" in page_url
-                or f"/code/session/{conversation_id}" in page_url
+                not isinstance(classified, ClassifyOk)
+                or classified.conversation_id != conversation_id
             ):
-                await page.bring_to_front()
-                return page, None, False
+                continue
+            page_path = page_url.split("#", 1)[0].split("?", 1)[0]
+            if "/code/session" in page_path and not requested_code:
+                continue
+            await page.bring_to_front()
+            return page, None, False
         if not open_url:
             return None, "no_tab", False
         page = await context.new_page()
@@ -407,6 +414,7 @@ async def execute_claude_paste(
     pw = None
     page = None
     minted = False
+    close_minted = True
     try:
         pw, _browser, context, _page = await connect_cdp(cdp_url)
         page, err, minted = await _resolve_page(
@@ -424,8 +432,11 @@ async def execute_claude_paste(
             return ChatPasteResponse(ok=False, code="unreachable", reason=f"composer not found url={page.url!r}")
         await composer.click(force=True)
         await page.keyboard.insert_text(stripped_prompt)
+        pre_turns, _pre_raw = await harvest_full_transcript(page)
+        pre_user_count = sum(1 for turn in pre_turns if turn.author == "user")
         from claude_bundles.composer_submit import submit_composer_content
 
+        close_minted = False
         await submit_composer_content(page, stripped_prompt, composer=composer)
         live_url = page.url or url
         live_id = _live_id(live_url)
@@ -451,14 +462,15 @@ async def execute_claude_paste(
                 send_verified=False,
             )
         last_user = _last_user_turn_text(turns)
-        if last_user != stripped_prompt:
+        post_user_count = sum(1 for turn in turns if turn.author == "user")
+        if post_user_count <= pre_user_count or last_user != stripped_prompt:
             return ChatPasteResponse(
                 ok=False,
                 site="claude",
                 conversation_id=live_id,
                 url=live_url,
                 code="submit_unverified",
-                reason="prompt not observed as last user turn",
+                reason="prompt not observed as a new user turn",
                 send_verified=False,
             )
         pasted_at = datetime.now(UTC).isoformat()
@@ -472,6 +484,7 @@ async def execute_claude_paste(
                 pasted_at=pasted_at,
             )
         await wait_assistant_reply(page, before=pre_send)
+        close_minted = True
         turns, raw = await harvest_full_transcript(page)
         if raw.get("login_wall"):
             return ChatPasteResponse(
@@ -501,7 +514,7 @@ async def execute_claude_paste(
     except (RuntimeError, TimeoutError) as exc:
         return ChatPasteResponse(ok=False, code="unreachable", reason=str(exc))
     finally:
-        if minted and page is not None:
+        if close_minted and minted and page is not None:
             with suppress(Exception):
                 await page.close()
         if pw is not None:

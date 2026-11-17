@@ -707,8 +707,11 @@ class _FakeClaudePage:
 
 
 class _FakeKeyboard:
-    async def insert_text(self, _text: str) -> None:
-        return None
+    def __init__(self) -> None:
+        self.inserted: list[str] = []
+
+    async def insert_text(self, text: str) -> None:
+        self.inserted.append(text)
 
 
 class _FakeLocator:
@@ -1162,15 +1165,10 @@ async def test_claude_paste_happy_path(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    evaluate_result = {
-        "login_wall": False,
-        "streaming": False,
-        "turns": [
-            {"author": "user", "ordinal": 1, "text": "hello"},
-            {"author": "assistant", "ordinal": 2, "text": "reply"},
-        ],
-    }
-    page = _FakeClaudePage(url=CLAUDE_URL, evaluate_result=evaluate_result)
+    page = _FakeClaudePage(
+        url=CLAUDE_URL,
+        evaluate_sequence=_paste_growth_sequence("hello", rereads=1, reply="reply"),
+    )
     context = _FakeContext([page])
     pw = _FakePlaywright()
 
@@ -1247,6 +1245,36 @@ def _paste_evaluate_with_prompt(prompt: str) -> dict:
     }
 
 
+def _paste_turns(*pairs: tuple[str, str]) -> dict:
+    return {
+        "login_wall": False,
+        "streaming": False,
+        "turns": [
+            {"author": author, "ordinal": index, "text": text}
+            for index, (author, text) in enumerate(pairs, start=1)
+        ],
+    }
+
+
+def _paste_growth_sequence(
+    prompt: str,
+    *,
+    rereads: int = 0,
+    reply: str | None = None,
+) -> list[dict]:
+    """Pre-submit snapshot has no user turn; later snapshots end with ``prompt``."""
+    pre = _paste_turns(("assistant", "prior"))
+    submitted = _paste_turns(("assistant", "prior"), ("user", prompt))
+    done = submitted
+    if reply is not None:
+        done = _paste_turns(
+            ("assistant", "prior"),
+            ("user", prompt),
+            ("assistant", reply),
+        )
+    return [pre, submitted, *([done] * rereads)]
+
+
 def _paste_connect_fixture(
     monkeypatch: pytest.MonkeyPatch,
     context: _FakeContext,
@@ -1300,7 +1328,7 @@ async def test_paste_reuses_open_tab_for_requested_id_when_other_chat_tabs_open(
     )
     target = _FakeClaudePage(
         url=CLAUDE_URL,
-        evaluate_result=_paste_evaluate_with_prompt("hello"),
+        evaluate_sequence=_paste_growth_sequence("hello"),
     )
     context = _FakeContext([other, target])
     _paste_connect_fixture(monkeypatch, context)
@@ -1316,6 +1344,8 @@ async def test_paste_reuses_open_tab_for_requested_id_when_other_chat_tabs_open(
     assert result.conversation_id == CLAUDE_ID
     assert target.brought_to_front is True
     assert other.brought_to_front is False
+    assert target.keyboard.inserted == ["hello"]
+    assert other.keyboard.inserted == []
 
 
 @pytest.mark.asyncio
@@ -1330,7 +1360,7 @@ async def test_paste_opens_new_tab_when_target_not_open(
         [other],
         new_page_result={
             "url": CLAUDE_URL,
-            "evaluate_result": _paste_evaluate_with_prompt("hello"),
+            "evaluate_sequence": _paste_growth_sequence("hello"),
         },
     )
     _paste_connect_fixture(monkeypatch, context)
@@ -1342,12 +1372,15 @@ async def test_paste_opens_new_tab_when_target_not_open(
         cdp_url="http://127.0.0.1:9222",
         grant="operator",
     )
+    minted = context.pages[-1]
+    assert minted.closed is False
     assert result.ok is True
     assert result.conversation_id == CLAUDE_ID
     assert other.brought_to_front is False
+    assert other.keyboard.inserted == []
     assert len(context.pages) == 2
-    assert context.pages[-1].url == CLAUDE_URL
-    assert context.pages[-1].closed is True
+    assert minted.url == CLAUDE_URL
+    assert minted.keyboard.inserted == ["hello"]
 
 
 @pytest.mark.asyncio
@@ -1386,10 +1419,15 @@ async def test_paste_returns_target_mismatch_when_live_id_differs(
 @pytest.mark.asyncio
 async def test_paste_default_does_not_wait_for_reply(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     page = _FakeClaudePage(
         url=CLAUDE_URL,
-        evaluate_result=_paste_evaluate_with_prompt("hello"),
+        evaluate_sequence=(
+            _paste_growth_sequence("hello")
+            + _paste_growth_sequence("hello", rereads=1, reply="reply")
+        ),
     )
     context = _FakeContext([page])
     _paste_connect_fixture(monkeypatch, context)
@@ -1451,3 +1489,267 @@ async def test_paste_unobserved_submit_is_not_verified(
     assert result.ok is False
     assert result.code == "submit_unverified"
     assert result.send_verified is False
+
+
+@pytest.mark.asyncio
+async def test_paste_wait_reply_false_leaves_minted_page_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _FakeContext(
+        [],
+        new_page_result={
+            "url": CLAUDE_URL,
+            "evaluate_sequence": _paste_growth_sequence("hello"),
+        },
+    )
+    _paste_connect_fixture(monkeypatch, context)
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    minted = context.pages[-1]
+    assert minted.closed is False
+    assert (result.ok, result.send_verified) == (True, True)
+
+
+@pytest.mark.asyncio
+async def test_paste_leaves_minted_page_open_when_submit_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _FakeContext(
+        [],
+        new_page_result={
+            "url": CLAUDE_URL,
+            "evaluate_result": _paste_evaluate_with_prompt("hello"),
+        },
+    )
+    _paste_connect_fixture(monkeypatch, context)
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    minted = context.pages[-1]
+    assert (result.ok, result.code, minted.closed) == (
+        False,
+        "submit_unverified",
+        False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_paste_closes_minted_page_when_composer_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _FakeContext([], new_page_result={"url": CLAUDE_URL})
+    _paste_connect_fixture(monkeypatch, context)
+
+    async def _missing(_page):
+        return None
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.find_composer",
+        _missing,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    assert result.code == "unreachable"
+    assert context.pages[-1].closed is True
+
+
+@pytest.mark.asyncio
+async def test_paste_closes_minted_page_after_wait_reply(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    context = _FakeContext(
+        [],
+        new_page_result={
+            "url": CLAUDE_URL,
+            "evaluate_sequence": _paste_growth_sequence(
+                "hello", rereads=1, reply="reply"
+            ),
+        },
+    )
+    _paste_connect_fixture(monkeypatch, context)
+
+    async def _fake_wait(_page, **_kwargs) -> dict:
+        return {"n": 1, "body_len": 5}
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.wait_assistant_reply",
+        _fake_wait,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+        wait_reply=True,
+    )
+    assert result.ok is True
+    assert context.pages[-1].closed is True
+
+
+@pytest.mark.asyncio
+async def test_paste_unchanged_transcript_matching_prompt_is_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakeClaudePage(
+        url=CLAUDE_URL,
+        evaluate_result=_paste_evaluate_with_prompt("hello"),
+    )
+    context = _FakeContext([page])
+    _paste_connect_fixture(monkeypatch, context)
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    assert (result.ok, result.code) == (False, "submit_unverified")
+
+
+@pytest.mark.asyncio
+async def test_paste_skips_chat_id_prefix_decoy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decoy = _FakeClaudePage(
+        url=f"https://claude.ai/chat/{CLAUDE_ID}-extra",
+        evaluate_result=_paste_evaluate_with_prompt("hello"),
+    )
+    target = _FakeClaudePage(
+        url=CLAUDE_URL,
+        evaluate_sequence=_paste_growth_sequence("hello"),
+    )
+    context = _FakeContext([decoy, target])
+    _paste_connect_fixture(monkeypatch, context)
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    assert decoy.brought_to_front is False
+    assert decoy.keyboard.inserted == []
+    assert target.brought_to_front is True
+    assert target.keyboard.inserted == ["hello"]
+    assert result.ok is True
+    assert result.conversation_id == CLAUDE_ID
+
+
+@pytest.mark.asyncio
+async def test_paste_skips_query_string_chat_id_decoy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decoy = _FakeClaudePage(
+        url=f"https://claude.ai/chat/unrelated?next=/chat/{CLAUDE_ID}",
+        evaluate_result=_paste_evaluate_with_prompt("hello"),
+    )
+    target = _FakeClaudePage(
+        url=CLAUDE_URL,
+        evaluate_sequence=_paste_growth_sequence("hello"),
+    )
+    context = _FakeContext([decoy, target])
+    _paste_connect_fixture(monkeypatch, context)
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    assert decoy.brought_to_front is False
+    assert decoy.keyboard.inserted == []
+    assert target.brought_to_front is True
+    assert target.keyboard.inserted == ["hello"]
+    assert result.ok is True
+    assert result.conversation_id == CLAUDE_ID
+
+
+@pytest.mark.asyncio
+async def test_paste_does_not_reuse_code_session_tab_for_chat_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decoy = _FakeClaudePage(
+        url=f"https://claude.ai/code/session_{CLAUDE_ID}",
+        evaluate_result=_paste_evaluate_with_prompt("hello"),
+    )
+    context = _FakeContext(
+        [decoy],
+        new_page_result={
+            "url": CLAUDE_URL,
+            "evaluate_sequence": _paste_growth_sequence("hello"),
+        },
+    )
+    _paste_connect_fixture(monkeypatch, context)
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    minted = context.pages[-1]
+    assert decoy.brought_to_front is False
+    assert decoy.keyboard.inserted == []
+    assert minted is not decoy
+    assert minted.url == CLAUDE_URL
+    assert minted.keyboard.inserted == ["hello"]
+    assert result.ok is True
+    assert result.conversation_id == CLAUDE_ID
+
+
+@pytest.mark.asyncio
+async def test_paste_empty_conversation_id_opens_new_tab(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = _FakeClaudePage(
+        url=CLAUDE_URL,
+        evaluate_result=_paste_evaluate_with_prompt("hello"),
+    )
+    context = _FakeContext(
+        [existing],
+        new_page_result={
+            "url": "https://claude.ai/new",
+            "evaluate_sequence": _paste_growth_sequence("hello"),
+        },
+    )
+    _paste_connect_fixture(monkeypatch, context)
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url="https://claude.ai/new",
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    minted = context.pages[-1]
+    assert existing.brought_to_front is False
+    assert existing.keyboard.inserted == []
+    assert minted is not existing
+    assert minted.keyboard.inserted == ["hello"]
+    assert result.ok is True
+    assert result.conversation_id == ""
