@@ -151,6 +151,27 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # refuses any other live gate on the lane. Ignored unless mission_kind=hop.
     predecessor_registration_id: str | None = None
     claude_surface: Literal["cowork", "code"] | None = None
+    # Cowork Project selection (model=cdp/… only; ignored on claude_surface=code).
+    # First present wins: project_uuid > project_binding > claude_project_name >
+    # the default Project name. Resolved at admit by cdp_project_bindings.
+    project_uuid: str | None = Field(
+        default=None,
+        description="Explicit Cowork Project UUID. Highest precedence.",
+    )
+    project_binding: str | None = Field(
+        default=None,
+        description=(
+            "config/cdp/projects.yaml cdp_project_bindings key. Read when "
+            "project_uuid is omitted."
+        ),
+    )
+    claude_project_name: str | None = Field(
+        default=None,
+        description=(
+            "Cowork Project display name. Read when project_uuid and "
+            "project_binding are omitted."
+        ),
+    )
     # Caller-reserved worker dispatch_id (seat=cursor-sdk). GIW hop and bus-watch
     # play callers claim a stop's one admit slot under this id before POSTing, so
     # the admitted ledger row must carry the same id. Omit to let the server mint.

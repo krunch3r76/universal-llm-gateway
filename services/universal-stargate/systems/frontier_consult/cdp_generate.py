@@ -53,6 +53,7 @@ from .cdp_generate_mcp_stamp import (
 from .cdp_generate_reconcile import upsert_inflight_leg
 from .cdp_generate_worker import run_cdp_worker
 from .cdp_mission_provenance import observe_mission_binding
+from .cdp_project_bindings import resolve_cdp_dispatch_project
 from .handoff import (
     AdmitHandoffResult,
     admit_and_post_pointer_turn,
@@ -579,6 +580,16 @@ async def dispatch_cdp_generate(
             status_code=422,
             code="cdp_contract_unsupported",
         )
+    # Resolved before any ledger, staging, or bus write so a bad project field
+    # refuses without leaving admit residue.
+    dispatch_project = resolve_cdp_dispatch_project(
+        request_id=request_id,
+        claude_surface=getattr(body, "claude_surface", None),
+        server_project_uuid=project_uuid,
+        project_uuid=getattr(body, "project_uuid", None),
+        project_binding=getattr(body, "project_binding", None),
+        claude_project_name=getattr(body, "claude_project_name", None),
+    )
 
     from .cursor_sdk_generate_prepare_restart_busy import (
         enforce_restart_busy_scoped_by_work_key,
@@ -949,8 +960,10 @@ async def dispatch_cdp_generate(
                 worker_kwargs["expected_size"] = opts["expected_size"]
             if "download_output" in opts:
                 worker_kwargs["download_output"] = opts["download_output"]
-        if project_uuid:
-            worker_kwargs["project_uuid"] = project_uuid
+        if dispatch_project.project_uuid:
+            worker_kwargs["project_uuid"] = dispatch_project.project_uuid
+        elif dispatch_project.claude_project_name:
+            worker_kwargs["claude_project_name"] = dispatch_project.claude_project_name
         surface_raw = getattr(body, "claude_surface", None)
         if isinstance(surface_raw, str) and surface_raw.strip() in {"cowork", "code"}:
             worker_kwargs["claude_surface"] = surface_raw.strip()

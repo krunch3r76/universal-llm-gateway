@@ -497,6 +497,47 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        project_uuid: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Explicit Cowork Project UUID on model=cdp/… generate; skips "
+                    "the name resolve. Project precedence: project_uuid > "
+                    "project_binding > claude_project_name > default Project. "
+                    "Not a UUID → 422 cdp_project_uuid_invalid. Ignored on "
+                    "claude_surface=code and non-CDP."
+                ),
+            ),
+        ] = None,
+        project_binding: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Key into config/cdp/projects.yaml cdp_project_bindings on "
+                    "model=cdp/… generate. Stargate resolves it to the Project "
+                    "UUID at admit, so no raw UUID goes in the prompt. Read only "
+                    "when project_uuid is omitted; outranks claude_project_name. "
+                    "Unconfigured key → 422 cdp_project_binding_missing. Ignored "
+                    "on claude_surface=code and non-CDP."
+                ),
+            ),
+        ] = None,
+        claude_project_name: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Cowork Project display name on model=cdp/… generate, "
+                    "resolved before compose. Lowest precedence: read only when "
+                    "project_uuid and project_binding are omitted. A name the "
+                    "org does not have fails the dispatch after admit (failed "
+                    "reply turn), not with a 422. Omit all three fields to keep "
+                    "the default Project. Continuity hops (mission_kind=hop) do "
+                    "not inherit the predecessor's Project: set this or "
+                    "project_binding on each hop. Ignored on claude_surface=code "
+                    "and non-CDP."
+                ),
+            ),
+        ] = None,
         parent_thread: Annotated[
             str | None,
             Field(
@@ -1268,6 +1309,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["purpose"] = purpose
             if claude_surface is not None:
                 body["claude_surface"] = claude_surface
+            for project_key, project_val in (
+                ("project_uuid", project_uuid),
+                ("project_binding", project_binding),
+                ("claude_project_name", claude_project_name),
+            ):
+                if project_val is not None:
+                    body[project_key] = project_val
             if parent_thread is not None:
                 body["parent_thread"] = parent_thread
             if mailbox_thread is not None:

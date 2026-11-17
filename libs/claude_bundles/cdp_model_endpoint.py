@@ -1013,6 +1013,7 @@ def run_cdp_generate(
     converse: bool = True,
     no_project_uuid: bool = True,
     project_uuid: str | None = None,
+    claude_project_name: str | None = None,
     purpose: str | None = None,
     mission_kind: str | None = None,
     parent_thread: str | None = None,
@@ -1050,6 +1051,12 @@ def run_cdp_generate(
     written later by hub-side ``cse_provenance_enrich`` when a lane thread is
     known. Hop succession sets ``mission_kind=hop`` and
     ``parent_thread=<private lane>``.
+
+    ``project_uuid`` / ``claude_project_name``: Cowork Project selection. A
+    ``project_uuid`` pins the Project and the satellite skips its name resolve.
+    ``claude_project_name`` alone rides the submit, and the satellite resolves
+    that display name before compose (the run fails when the org has no such
+    Project). With neither, the submit carries the model's default name.
 
     ``skills`` (optional): catalog slugs sealed via
     ``stage_cdp_prompt_with_skills``. The marker plus ``send_prompt`` induction
@@ -1108,6 +1115,10 @@ def run_cdp_generate(
     mission_retain = staged.mission
 
     submit_purpose = purpose if purpose is not None else "ask"
+    # The submit field is a non-optional str; omit it to keep the model default.
+    project_name_kw = (
+        {"claude_project_name": claude_project_name} if claude_project_name else {}
+    )
     submit_req = SubmitProjectAskRequest(
         prompt_uri=staged.prompt_uri,
         holder=holder,
@@ -1126,6 +1137,7 @@ def run_cdp_generate(
         download_output=download_output,
         stargate_execution_id=execution_id,
         claude_surface=claude_surface or "cowork",
+        **project_name_kw,
     )
     try:
         submitted = submit_with_pre_paste_retry(

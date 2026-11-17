@@ -1,3 +1,8 @@
-# CDP Cowork project UUID bindings — sole source for life_dispatch navigation.
+# CDP Cowork project UUID bindings. ``life`` is the life_dispatch navigation
+# target. Any key here is selectable per dispatch with
+# team_dispatch(model=cdp/…, project_binding=<key>). Stargate caches this file
+# at first read, so a new key needs a Stargate restart.
 cdp_project_bindings:
   life: "01a05c28-733b-72ee-bba6-c72e81ed6d41"
+  # Example: uncomment and fill in the Grand Impresario Project UUID.
+  # impresario: "<cowork-project-uuid>"
