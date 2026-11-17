@@ -18,6 +18,7 @@ from typing import Any
 from claude_bundles import cdp_registry
 from claude_bundles.cse_url import (
     canonical_claude_seat_url,
+    claude_seat_identity_key,
     is_bindable_claude_seat_url,
     normalize_cse_url,
 )
@@ -67,12 +68,12 @@ def _lane_order(
     Navigating a host that already holds the session is a resume; navigating an
     unrelated host borrows someone else's glass, so it comes last.
     """
-    target = normalize_cse_url(chat_url)
+    target = claude_seat_identity_key(chat_url)
     bound: list[cdp_registry.Registration] = []
     rest: list[cdp_registry.Registration] = []
     for lane in lanes:
         current = cdp_registry.chat_url_for_registration(lane.registration_id)
-        if current and normalize_cse_url(current) == target:
+        if current and claude_seat_identity_key(current) == target:
             bound.append(lane)
         else:
             rest.append(lane)
@@ -88,9 +89,7 @@ async def _verify_page_url(page: Any, chat_url: str) -> bool:
     url = page.url or ""
     if not is_bindable_claude_seat_url(url):
         return False
-    return normalize_cse_url(canonical_claude_seat_url(url) or url) == normalize_cse_url(
-        chat_url
-    )
+    return claude_seat_identity_key(url) == claude_seat_identity_key(chat_url)
 
 
 async def find_page_on_lane(cdp_url: str, chat_url: str) -> tuple[Any, Any] | None:
@@ -100,7 +99,7 @@ async def find_page_on_lane(cdp_url: str, chat_url: str) -> tuple[Any, Any] | No
     except Exception:
         return None
     def _page_url_key(raw: str) -> str:
-        return normalize_cse_url(canonical_claude_seat_url(raw) or raw)
+        return claude_seat_identity_key(raw)
 
     target_norm = _page_url_key(chat_url)
     try:
@@ -266,7 +265,7 @@ def restore_borrowed_chat_url_on_refusal(outcome: ReattachOutcome) -> None:
     bound = (outcome.reattach_bound_chat_url or "").strip() or None
     if not reg_id or not bound:
         return
-    if prior and normalize_cse_url(prior) == normalize_cse_url(bound):
+    if prior and claude_seat_identity_key(prior) == claude_seat_identity_key(bound):
         return
     status = cdp_registry.restore_session_address(
         reg_id,
@@ -631,12 +630,12 @@ async def ensure_cse_attached(
     def attempted_ids() -> tuple[str, ...]:
         return tuple(rid for rid, _ in refusals)
 
-    target_norm = normalize_cse_url(chat_url)
+    target_norm = claude_seat_identity_key(chat_url)
     for lane in _lane_order(lanes, purpose, chat_url):
         current = (
             cdp_registry.chat_url_for_registration(lane.registration_id) or ""
         ).strip()
-        if current and normalize_cse_url(current) != target_norm:
+        if current and claude_seat_identity_key(current) != target_norm:
             logger.info(
                 "reattach skipping %s: lane holds another chat_url",
                 lane.registration_id,

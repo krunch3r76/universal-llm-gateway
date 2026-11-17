@@ -249,7 +249,9 @@ def bind_session_address(
             return False
         updated = dict(row)
         prior = str(updated.get("chat_url") or "").strip()
-        prior_key = canonical_claude_seat_url(prior) or normalize_cse_url(prior)
+        from claude_bundles.cse_url import claude_seat_identity_key
+
+        prior_key = claude_seat_identity_key(prior)
         if prior_key == url and (
             execution_id is None
             or str(updated.get("execution_id") or "") == str(execution_id)
@@ -387,7 +389,12 @@ def restore_session_address(
     Does not call ``apply_driving_seat_bind`` or ``upsert_holder_remote``.
     """
     rid = (registration_id or "").strip()
-    expected_norm = normalize_cse_url(expected_chat_url or "")
+    from claude_bundles.cse_url import (
+        canonical_claude_seat_url,
+        claude_seat_identity_key,
+    )
+
+    expected_norm = claude_seat_identity_key(expected_chat_url or "")
     if not rid or not expected_norm:
         return "missing"
     with _store.ports_lock():
@@ -396,7 +403,7 @@ def restore_session_address(
         if not isinstance(row, dict):
             return "missing_row"
         current = str(row.get("chat_url") or "").strip()
-        if normalize_cse_url(current) != expected_norm:
+        if claude_seat_identity_key(current) != expected_norm:
             return "rebound"
         if row_execution_in_flight(row):
             return "in_flight"
@@ -405,7 +412,7 @@ def restore_session_address(
         if not isinstance(row, dict):
             return "missing_row"
         current = str(row.get("chat_url") or "").strip()
-        if normalize_cse_url(current) != expected_norm:
+        if claude_seat_identity_key(current) != expected_norm:
             return "rebound"
         updated = dict(row)
         target_restore = (restore_to or "").strip() or None
@@ -415,7 +422,11 @@ def restore_session_address(
             except ProtocolError:
                 target_restore = None
         if target_restore:
-            updated["chat_url"] = target_restore
+            stored_restore = (
+                canonical_claude_seat_url(target_restore)
+                or normalize_cse_url(target_restore)
+            )
+            updated["chat_url"] = stored_restore
             updated["chat_url_bound_at"] = time.time()
         else:
             updated.pop("chat_url", None)

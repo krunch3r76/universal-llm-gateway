@@ -122,11 +122,23 @@ def canonical_claude_seat_url(raw: str | None) -> str | None:
     return parsed.canonical_url
 
 
+def claude_seat_identity_key(raw: str | None) -> str:
+    """Stable key for comparing seat URLs (page, stored row, request) on both sides."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    bound = canonical_claude_seat_url(text)
+    if bound:
+        return bound
+    return normalize_cse_url(text)
+
+
 __all__ = [
     "BINDABLE_SEAT_KINDS",
     "ClaudeSeatAddress",
     "ClaudeSeatKind",
     "canonical_claude_seat_url",
+    "claude_seat_identity_key",
     "is_bindable_claude_seat_url",
     "normalize_cse_url",
     "parse_claude_seat_address",

@@ -105,7 +105,11 @@ def execute_bind_address(req: BindAddressRequest) -> dict[str, object]:
         bind_session_address,
         holder_projection_applies,
     )
-    from claude_bundles.cse_url import BINDABLE_SEAT_KINDS, parse_claude_seat_address
+    from claude_bundles.cse_url import (
+        BINDABLE_SEAT_KINDS,
+        claude_seat_identity_key,
+        parse_claude_seat_address,
+    )
 
     parsed = parse_claude_seat_address(req.chat_url)
     if parsed is None or parsed.kind not in BINDABLE_SEAT_KINDS:
@@ -123,9 +127,10 @@ def execute_bind_address(req: BindAddressRequest) -> dict[str, object]:
         return {"ok": False, "code": "missing_row", "registration_id": reg_id}
 
     prior = str(row.get("chat_url") or "").strip()
+    prior_key = claude_seat_identity_key(prior)
     exec_id = str(row.get("execution_id") or "").strip() or None
 
-    if prior and prior != canonical:
+    if prior_key and prior_key != canonical:
         raise ProtocolError(
             code="already_bound",
             message="registration already bound to a different chat_url",
@@ -210,7 +215,7 @@ def execute_bind_address(req: BindAddressRequest) -> dict[str, object]:
     return {
         "ok": True,
         "bound": bound,
-        "idempotent": prior == canonical,
+        "idempotent": prior_key == canonical,
         "stamp": stamp,
         "stamp_error": stamp_error,
         **preview,

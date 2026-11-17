@@ -14,7 +14,7 @@ from typing import Any
 from claude_bundles import cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 
 __all__ = ["DormantCandidate", "candidate_dict", "dormant_candidates"]
@@ -38,7 +38,7 @@ def dormant_candidates() -> list[DormantCandidate]:
         purpose = (seat.purpose or "").strip()
         if purpose not in OPERATOR_PROXY_MISSION_PURPOSES:
             continue
-        url = normalize_cse_url(seat.chat_url)
+        url = claude_seat_identity_key(seat.chat_url)
         if not url or url in by_url:
             continue
         by_url[url] = DormantCandidate(

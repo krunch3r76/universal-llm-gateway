@@ -12,7 +12,7 @@ from __future__ import annotations
 import contextlib
 
 from claude_bundles import cdp_registry
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
 
 from cdp_ask.followup_reattach import (
     ReattachOutcome,
@@ -47,11 +47,11 @@ def reattach_chat_url(
 
 def unique_bound_registration(chat_url: str) -> str | None:
     """Return the one active registration whose durable ``chat_url`` uniquely matches, else None."""
-    target = normalize_cse_url(chat_url)
+    target = claude_seat_identity_key(chat_url)
     matches: list[str] = []
     for lane in cdp_registry.list_active():
         bound = cdp_registry.chat_url_for_registration(lane.registration_id)
-        if bound and normalize_cse_url(bound) == target:
+        if bound and claude_seat_identity_key(bound) == target:
             matches.append(lane.registration_id)
     if len(matches) == 1:
         return matches[0]

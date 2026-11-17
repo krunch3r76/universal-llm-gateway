@@ -6,7 +6,7 @@ from typing import Any
 
 from claude_bundles import cdp_registry_store as store
 from claude_bundles.cse_provenance import latest_episode
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
 from claude_bundles.hop_cadence_seat_snap import _active_map_from_registry_document
 
 
@@ -38,11 +38,11 @@ def resolve_retire_target(
 ) -> tuple[str | None, str | None, dict[str, Any] | None]:
     """Return ``(registration_id, normalized chat_url, registry row snapshot)``."""
     rid = (registration_id or "").strip() or None
-    url = normalize_cse_url(chat_url or "") or None
+    url = claude_seat_identity_key(chat_url or "") or None
 
     if rid:
         row = local_row(rid) or fleet_row(rid)
-        bound = normalize_cse_url(str((row or {}).get("chat_url") or "")) or url
+        bound = claude_seat_identity_key(str((row or {}).get("chat_url") or "")) or url
         if not url and bound:
             url = bound
         return rid, url, row
@@ -59,11 +59,11 @@ def resolve_retire_target(
         )
 
     for candidate_id, row in store.load_active().items():
-        if normalize_cse_url(str(row.get("chat_url") or "")) == url:
+        if claude_seat_identity_key(str(row.get("chat_url") or "")) == url:
             return candidate_id, url, dict(row)
 
     for candidate_id, row in fleet_active_map().items():
-        if normalize_cse_url(str(row.get("chat_url") or "")) == url:
+        if claude_seat_identity_key(str(row.get("chat_url") or "")) == url:
             return candidate_id, url, row
 
     latest = latest_episode(chat_url=url)

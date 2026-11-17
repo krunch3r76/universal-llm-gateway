@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from claude_bundles import cdp_registry_events
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
 from universal_logging import get_logger
 
 logger = get_logger("cdp-ask.occupancy-projection")
@@ -61,7 +61,7 @@ def _observed_counts(ports: list[Any]) -> tuple[int, int, int, int]:
         open_attachment_count += 1
         valid_url_seen = False
         for url in cse_urls:
-            normalized = normalize_cse_url(url)
+            normalized = claude_seat_identity_key(url)
             if normalized:
                 unique_urls.add(normalized)
                 valid_url_seen = True

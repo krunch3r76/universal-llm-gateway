@@ -293,9 +293,9 @@ def _maybe_invoke_url_bound(
     url = proof_carry.url
     if not url or not is_bindable_claude_seat_url(url):
         return
-    from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
+    from claude_bundles.cse_url import claude_seat_identity_key
 
-    canon = canonical_claude_seat_url(url) or normalize_cse_url(url)
+    canon = claude_seat_identity_key(url)
     key = (execution_id, canon)
     if key in url_bound_emitted:
         return

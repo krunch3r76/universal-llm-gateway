@@ -26,15 +26,12 @@ from universal_protocol.errors import ProtocolError
 from claude_bundles import cdp_registry_store as _store
 from claude_bundles.cdp_registry.journal_projection import read_fold_rows
 from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES
-from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
+from claude_bundles.cse_url import claude_seat_identity_key, normalize_cse_url
 
 
 def _attachment_norm_key(url: str) -> str:
     """Canonical seat key for uniqueness; non-Claude hosts fall back to normalize."""
-    bound = canonical_claude_seat_url(url)
-    if bound:
-        return bound
-    return normalize_cse_url(url)
+    return claude_seat_identity_key(url)
 
 
 def host_listable_ids_for_norm_url(
@@ -215,7 +212,7 @@ def has_attachment_observed(registration_id: str, chat_url: str) -> bool:
     Takes ``ports_lock`` itself (callers hold no lock) so the projection pass
     that precedes the read is single-writer.
     """
-    norm = normalize_cse_url(chat_url)
+    norm = claude_seat_identity_key(chat_url)
     with _store.ports_lock():
         log = read_fold_rows()
     for record in log:
@@ -224,7 +221,7 @@ def has_attachment_observed(registration_id: str, chat_url: str) -> bool:
         if str(record.get("registration_id") or "") != registration_id:
             continue
         url = str(record.get("chat_url") or "").strip()
-        if url and normalize_cse_url(url) == norm:
+        if url and claude_seat_identity_key(url) == norm:
             return True
     return False
 

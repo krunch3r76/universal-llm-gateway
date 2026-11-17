@@ -12,7 +12,7 @@ from claude_bundles import cdp_registry
 from claude_bundles.cse_provenance import latest_episode
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
-from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url, claude_seat_identity_key
 
 from cdp_ask.cse_session_models import HarvestRequest
 from cdp_ask.execution_store import ExecutionStore
@@ -31,10 +31,10 @@ def cse_url_from_token(raw: str) -> str | None:
     text = (raw or "").strip()
     canon = canonical_claude_seat_url(text)
     if canon:
-        return normalize_cse_url(canon)
+        return claude_seat_identity_key(canon)
     match = _CSE_TOKEN.match(text)
     if match:
-        return normalize_cse_url(f"https://claude.ai/cowork/{match.group(1)}")
+        return claude_seat_identity_key(f"https://claude.ai/cowork/{match.group(1)}")
     return None
 
 
@@ -136,7 +136,7 @@ async def resolve_execution_provenance(
         registration_id = rec.registration_id
         bound = cdp_registry.chat_url_for_registration(registration_id)
         if bound:
-            chat_url = normalize_cse_url(bound)
+            chat_url = claude_seat_identity_key(bound)
 
     episode = latest_episode(correlation_id=token)
     if episode is not None:
@@ -186,13 +186,13 @@ async def resolve_harvest_chat_url(
     if req.registration_id:
         bound = cdp_registry.chat_url_for_registration(req.registration_id)
         if bound:
-            return normalize_cse_url(bound)
+            return claude_seat_identity_key(bound)
     if req.execution_id:
         rec = await store.get(req.execution_id)
         if rec is not None and rec.registration_id:
             bound = cdp_registry.chat_url_for_registration(rec.registration_id)
             if bound:
-                return normalize_cse_url(bound)
+                return claude_seat_identity_key(bound)
         archived = chat_url_from_archives(req.execution_id)
         if archived:
             return archived
@@ -205,7 +205,7 @@ async def resolve_harvest_chat_url(
             if rec is not None and rec.registration_id:
                 bound = cdp_registry.chat_url_for_registration(rec.registration_id)
                 if bound:
-                    return normalize_cse_url(bound)
+                    return claude_seat_identity_key(bound)
             archived = chat_url_from_archives(satellite)
             if archived:
                 return archived

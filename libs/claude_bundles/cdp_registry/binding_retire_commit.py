@@ -8,7 +8,7 @@ from typing import Any
 from claude_bundles import cdp_registry_store as store
 from claude_bundles.cse_provenance import ProvenanceEpisode
 from claude_bundles.cse_provenance_retire import append_binding_retired_episode
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
 
 from .binding_retire_models import (
     RETIRE_LOG_EVENT,
@@ -98,7 +98,7 @@ def finish_active_unbind_only(
 ) -> bool:
     """Clear ``chat_url`` when journal already retired — no episode or audit row."""
     rid = registration_id.strip()
-    url = normalize_cse_url(chat_url)
+    url = claude_seat_identity_key(chat_url)
     if not rid or not url:
         return False
     with store.ports_lock():
@@ -121,7 +121,7 @@ def finish_active_unbind_only(
                 status=status or None,
             )
         prior = str(row.get("chat_url") or "").strip() or None
-        if normalize_cse_url(prior or "") != url:
+        if claude_seat_identity_key(prior or "") != url:
             return False
         if not prior:
             return False

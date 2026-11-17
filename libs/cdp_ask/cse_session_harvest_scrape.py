@@ -31,6 +31,7 @@ from claude_bundles.cowork_output_download import (
 from claude_bundles.cse_turns_harvest import harvest_turns
 from claude_bundles.cse_url import (
     canonical_claude_seat_url,
+    claude_seat_identity_key,
     is_bindable_claude_seat_url,
     normalize_cse_url,
 )
@@ -437,14 +438,14 @@ def enrich_dom(dom: dict[str, Any]) -> dict[str, Any]:
 
 async def pick_page_for_chat_url(ctx: Any, chat_url: str, *, fallback: Any) -> Any:
     """Prefer the open tab whose URL normalizes to *chat_url*; else *fallback*."""
-    target = canonical_claude_seat_url(chat_url) or normalize_cse_url(chat_url)
+    target = claude_seat_identity_key(chat_url)
     if not target:
         return fallback
     for page in ctx.pages:
         url = page.url or ""
         if not is_bindable_claude_seat_url(url):
             continue
-        page_key = canonical_claude_seat_url(url) or normalize_cse_url(url)
+        page_key = claude_seat_identity_key(url)
         if page_key == target:
             return page
     return fallback

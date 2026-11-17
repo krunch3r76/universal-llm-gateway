@@ -7,7 +7,7 @@ from typing import Any
 from claude_bundles import cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import normalize_cse_url, claude_seat_identity_key
 
 from cdp_ask.cse_session_events import (
     emit,
@@ -165,7 +165,7 @@ async def resolve_public_provenance(
         return ProvenanceResponse(
             state="conflict",
             reason="self_supersession",
-            chat_url=normalize_cse_url(query.chat_url or "") or query.chat_url,
+            chat_url=claude_seat_identity_key(query.chat_url or "") or query.chat_url,
             registration_id=query.successor_registration_id,
         )
 
