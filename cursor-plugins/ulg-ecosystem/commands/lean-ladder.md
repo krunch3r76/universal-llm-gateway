@@ -34,12 +34,11 @@ Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retriev
 | `implement_model` | no | `cursor/composer-2.5` | Leg 3 wire. Must be a `cursor/*` slug (seat constraint) |
 | `lane` | no | `B` | Leg 3 checkout lane. Lane A is refused at admit |
 | `density_triage` | no | `mechanical` | Todo attribute and Leg 3 flag. Use `judgment_required` for open forks |
-| `planner` | no | `here` | `here` = this tab runs legs 1–3. `glass:8` = spawn a planning tab on `:8` |
+| `planner` | no | `here` | `here` = this tab runs legs 1–4. `glass:8` = spawn a planning tab on `:8` |
 | `planner_model` | no | `claude-sonnet-5-5` | Only with `planner=glass:<n>`. Must not be `cursor/grok-4.7` (it does not plan; it may review in Leg 4 only) |
-| `review_display` | no | `9` | Leg 4 Grok Bot display (`:9`, operator ruling) |
 | `planner_effort` | no | `high` | Only with `planner=glass:<n>` |
 | `wake` | no | `subscribe` | `subscribe` registers the planner tab (this tab for `planner=here`, the spawned tab for `planner=glass:<n>`) for `BRIDGE_WAKE` on the arc thread under the per-arc mailbox `cursor-<slug>`, before any dispatch (template § Wake registration). `none` skips it; the tab then never wakes and must not be used to wait on a closeout |
-| `skip_confer` | no | `false` | `true` = start at Leg 2 |
+| `skip_confer` | no | `false` | `true` = omit Leg 1; Leg 2 still reads `cortex://notes/tmp/packets/<slug>-confer.md`, which must exist before planning (hand-seeded or from a prior confer) |
 
 ## Slug inference
 
@@ -53,7 +52,7 @@ Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retriev
 ## Procedure
 
 1. **Parse** the parameters, apply defaults, infer `slug`. Echo the resolved set in ≤8 lines.
-2. **Preflight** (template § Preflight): registry read on `todo:<slug>`; ensure the todo with `density_triage`; fresh non-`role:root` arc thread.
+2. **Preflight** (template § Preflight): registry read on `todo:<slug>`; ensure the todo with `density_triage`; fresh non-`role:root` arc thread; when `skip_confer=true`, confirm the confer sidecar exists before Leg 2.
 3. **Retrieval gate (seat duty, per artifact).** Retrieval comes first and the draft comes after it, for every artifact a model will read. Each artifact is its own authoring job with its own `rag` calls, report and `search_id`s (a new job inherits none): (a) the seed `packet` (reader `architect_model`, Claude), (b) the planner-tab prompt when `planner=glass:<n>` (reader `planner_model`, Claude; report `<slug>-spawn-retrieval-report.md`), (c) the plan, authored by the planner (reader `implement_model`; report `<slug>-plan-retrieval-report.md`), and (d) any redispatch after a red closeout, plus any `prompt=` on any leg. Use the `retrieval-before-authoring` skill: one `rag(op=search)` per required scope (`llm_prompting`, `claude_api`, `prompt_injection`, `agent_skills_research`; add `constitutional_ai` when the reader is Claude, `skill_compilation` on skill/rule bodies), `top_k=10`, compact then `projection=full` for scopes cited, one reformulation on `weak_match: true`. Write each report with `target: todo:<slug>` at column 0 and put `retrieval_report:` on its own line in the authored body. An artifact re-fired unchanged is not re-retrieved. Do not fire a leg whose artifact has no report.
 4. **Fill and run**
    - Mailbox for both modes: `<mailbox>` = `cursor-<slug>`, one per arc, never the shared name `cursor` (`unsubscribe` takes only `agent` + `thread_scope`, so a shared name lets cleanup remove another tab's row). Only turns addressed `to` `<mailbox>` wake the tab, so every leg carries `caller_agent="<mailbox>"`. `thread_scope` is one string.
@@ -78,8 +77,9 @@ seat       cursor_bridge.spawn_tab(:8, claude-sonnet-5-5, agent_id=<uuid>, promp
 seat       agent_bus.subscriptions(agent=cursor-<slug>, thread_scope=<arc>) → row carries <uuid>   (seat ends its turn; fires no leg)
 
 glass tab  rename_chat "<arc> <slug>" → subscriptions(agent=cursor-<slug>) → row present (else BLOCKED on <arc>, stop)
-glass tab  Leg 1  team_dispatch(model=cdp/fable-5.2, contract=confer, sidecar_ref=packet,
-           caller_agent=cursor-<slug>) → execution_id, poll_hint; ends turn idle (no agent_bus wait, no watcher)
+glass tab  Leg 1  team_dispatch(op=generate, model=cdp/fable-5.2, contract=confer,
+           reasoning_effort=high, dispatch_thread_id=<arc>, sidecar_ref=packet,
+           work_key=todo:<slug>, caller_agent=cursor-<slug>) → execution_id, poll_hint; idle (¬ wait)
 bus        Fable reply on <arc> to=cursor-<slug> → endpoint wake → BRIDGE_WAKE thread=<arc> turn=<n> pasted into the tab
 glass tab  wakes: Fable reply landed
 glass tab  md_list(confer) → md_read(Verdict, Risks)           ← sections only
@@ -102,7 +102,7 @@ seat       not subscribed (only the planner mailbox is): the Completion turn on 
 /lean-ladder "bind a Cowork project per team_dispatch hop"
 /lean-ladder "bind a Cowork project per team_dispatch hop" planner=glass:8
 /lean-ladder "fix X" slug=fix-x density_triage=judgment_required architect_effort=max
-/lean-ladder "fix Y" skip_confer=true review_display=9
+/lean-ladder "fix Y" skip_confer=true
 ```
 
 ## Guards
@@ -111,7 +111,7 @@ seat       not subscribed (only the planner mailbox is): the Completion turn on 
 - On cursor-sdk pass `model_knobs={"effort":…}`, never `reasoning_effort`.
 - `planner=glass:<n>` without a verified subscription row ⇒ stop before Leg 1. A wake aimed at a mid-turn tab is held, not queued or steered: the gate returns `agent_running` (classified `pending`, retriable) and pastes nothing. There is no steer override for wakes, because the submit path's `submitChatMaybeAbortCurrent` could abort the running turn. A tab that polls `agent_bus(wait)` stays mid-turn and keeps its wake deferred, so end the turn idle.
 - A live registry row on `todo:<slug>` ⇒ stop and coordinate; ¬ duplicate.
-- Same input failed twice ⇒ no third retry; change the input once, then report.
+- Same Leg 1–3 dispatch input failed twice ⇒ no third retry; change the input once, then report. Leg 4 review generates that error are not retried (template § Leg 4).
 - `¬dispatch_primitive(surface)` ⇒ do the leg and say so in one line.
 - Leg 2 plan must not carry `land: silent` or merge-without-review AC; Leg 4 is mandatory before land.
 - `cursor/grok-4.7` does not plan (`planner_model` must stay Claude). On cursor-sdk, `model_knobs={"fast":"true"}` on `cursor/grok-4.7` is honoured when set (Leg 4 optional reader only).
