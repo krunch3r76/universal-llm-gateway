@@ -7,9 +7,8 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi.testclient import TestClient
-
 from chat_harvest.archive import archive_rel_path
+from fastapi.testclient import TestClient
 
 from cdp_ask.app import create_app
 from cdp_ask.chat_session_models import ChatHarvestResponse, ChatPasteResponse
@@ -296,6 +295,41 @@ def test_claude_new_harvest_no_conversation_no_event(
     assert body["outcome"] == "no_conversation"
     assert body["conversation_id"] == ""
     assert not any(e["signal"] == "mcp.chat.session.harvested" for e in emitted_events)
+
+
+def test_claude_paste_wait_reply_forwarded(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def _fake_paste(**kwargs: object):
+        captured.update(kwargs)
+        return ChatPasteResponse(
+            ok=True,
+            site="claude",
+            conversation_id="thread-uuid",
+            url=CLAUDE_CHAT_URL,
+            send_verified=True,
+            pasted_at="2026-08-25T12:00:00+00:00",
+        )
+
+    monkeypatch.setattr(
+        "cdp_ask.chat_session_paste.execute_claude_paste",
+        _fake_paste,
+    )
+
+    resp = client.post(
+        "/v1/chat-session/paste",
+        json={
+            "url": CLAUDE_CHAT_URL,
+            "prompt_text": "hello",
+            "grant": "operator",
+            "wait_reply": True,
+        },
+    )
+    assert resp.status_code == 200
+    assert captured.get("wait_reply") is True
 
 
 def test_claude_paste_ok_emits_event(

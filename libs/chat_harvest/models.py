@@ -87,6 +87,7 @@ class ChatPasteRequest(BaseModel):
     prompt_path: str | None = None
     grant: PasteGrant
     cdp_url: str | None = None
+    wait_reply: bool = False
 
 
 class ChatPasteResponse(BaseModel):

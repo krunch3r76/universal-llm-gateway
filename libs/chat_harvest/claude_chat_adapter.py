@@ -173,29 +173,35 @@ async def _resolve_page(
                 await page.close()
             raise
         return page, None, True
-    scored = []
-    for p in non_cse:
-        u = p.url or ""
-        s = (
-            100
+    if conversation_id:
+        for page in non_cse:
+            page_url = page.url or ""
             if (
-                "/chat/" in u
-                or u.rstrip("/").endswith("/new")
-                or "/new?" in u
-                or "/code" in u.lower()
-            )
-            else 0
-        ) + (50 if conversation_id and conversation_id in u else 0)
-        if s >= 100:
-            scored.append((s, p))
-    if scored:
-        page = max(scored, key=lambda x: x[0])[1]
-        if "/cowork/cse_" in (page.url or "").lower():
-            return None, "use_cse_session", False
-        await page.bring_to_front()
-        return page, None, False
+                f"/chat/{conversation_id}" in page_url
+                or f"/code/session_{conversation_id}" in page_url
+                or f"/code/session/{conversation_id}" in page_url
+            ):
+                await page.bring_to_front()
+                return page, None, False
+        if not open_url:
+            return None, "no_tab", False
+        page = await context.new_page()
+        try:
+            await page.goto(open_url, wait_until="domcontentloaded")
+        except Exception:
+            with suppress(Exception):
+                await page.close()
+            raise
+        return page, None, True
+    if not open_url:
+        return None, "no_tab", False
     page = await context.new_page()
-    await page.goto("https://claude.ai/new")
+    try:
+        await page.goto(open_url, wait_until="domcontentloaded")
+    except Exception:
+        with suppress(Exception):
+            await page.close()
+        raise
     return page, None, True
 
 
@@ -377,49 +383,127 @@ async def execute_claude_harvest(
 
 
 # fmt: off
+def _last_user_turn_text(turns: list[ChatTurn]) -> str:
+    for turn in reversed(turns):
+        if turn.author == "user":
+            return turn.text.strip()
+    return ""
+
+
 async def execute_claude_paste(
     *,
     url: str,
     prompt_text: str,
     cdp_url: str,
     grant: str = "operator",
+    wait_reply: bool = False,
 ) -> ChatPasteResponse:
     if grant not in ("explicit", "operator"):
         return ChatPasteResponse(ok=False, code="grant_required", reason="grant must be explicit or operator")
     if (refuse := _cse_refuse(url)) is not None:
         return ChatPasteResponse(ok=False, code=refuse.code, reason=refuse.reason)
+    requested_id = _live_id(url)
+    stripped_prompt = prompt_text.strip()
     pw = None
+    page = None
+    minted = False
     try:
         pw, _browser, context, _page = await connect_cdp(cdp_url)
-        page, err, _minted = await _resolve_page(context, _live_id(url), paste=True)
+        page, err, minted = await _resolve_page(
+            context, requested_id, paste=True, open_url=url
+        )
         if err == "use_cse_session":
             return ChatPasteResponse(ok=False, code="use_cse_session", reason="only CSE tabs")
-        if page is None or "/cowork/cse_" in (page.url or "").lower():
-            return ChatPasteResponse(ok=False, code=("use_cse_session" if page is not None else "no_tab"), reason="CSE or missing chat tab")
+        if err == "no_tab" or page is None:
+            return ChatPasteResponse(ok=False, code="no_tab", reason="no matching chat tab")
+        if "/cowork/cse_" in (page.url or "").lower():
+            return ChatPasteResponse(ok=False, code="use_cse_session", reason="only CSE tabs")
         pre_send = await harvest_assistant(page)
         composer = await find_composer(page)
         if composer is None:
             return ChatPasteResponse(ok=False, code="unreachable", reason=f"composer not found url={page.url!r}")
         await composer.click(force=True)
-        await page.keyboard.insert_text(prompt_text.strip())
+        await page.keyboard.insert_text(stripped_prompt)
         from claude_bundles.composer_submit import submit_composer_content
 
-        await submit_composer_content(page, prompt_text.strip(), composer=composer)
-        await wait_assistant_reply(page, before=pre_send)
-        live_url, live_id = page.url or url, _live_id(page.url or url)
+        await submit_composer_content(page, stripped_prompt, composer=composer)
+        live_url = page.url or url
+        live_id = _live_id(live_url)
+        if requested_id and live_id != requested_id:
+            return ChatPasteResponse(
+                ok=False,
+                site="claude",
+                conversation_id=live_id,
+                url=live_url,
+                code="target_mismatch",
+                reason=f"requested conversation_id={requested_id!r} live={live_id!r}",
+                send_verified=False,
+            )
         turns, raw = await harvest_full_transcript(page)
         if raw.get("login_wall"):
-            return ChatPasteResponse(ok=False, site="claude", conversation_id=live_id, url=live_url, code="unauthenticated", reason="login wall")
+            return ChatPasteResponse(
+                ok=False,
+                site="claude",
+                conversation_id=live_id,
+                url=live_url,
+                code="unauthenticated",
+                reason="login wall",
+                send_verified=False,
+            )
+        last_user = _last_user_turn_text(turns)
+        if last_user != stripped_prompt:
+            return ChatPasteResponse(
+                ok=False,
+                site="claude",
+                conversation_id=live_id,
+                url=live_url,
+                code="submit_unverified",
+                reason="prompt not observed as last user turn",
+                send_verified=False,
+            )
         pasted_at = datetime.now(UTC).isoformat()
+        if not wait_reply:
+            return ChatPasteResponse(
+                ok=True,
+                site="claude",
+                conversation_id=live_id,
+                url=live_url,
+                send_verified=True,
+                pasted_at=pasted_at,
+            )
+        await wait_assistant_reply(page, before=pre_send)
+        turns, raw = await harvest_full_transcript(page)
+        if raw.get("login_wall"):
+            return ChatPasteResponse(
+                ok=False,
+                site="claude",
+                conversation_id=live_id,
+                url=live_url,
+                code="unauthenticated",
+                reason="login wall",
+                send_verified=False,
+            )
         archive_uri = archive_sha256 = None
         if live_id:
             archive_uri, archive_sha256, _alignment = archive_chat_transcript(
                 "claude", live_id, live_url, turns, harvested_at=pasted_at, streaming=False
             )
-        return ChatPasteResponse(ok=True, site="claude", conversation_id=live_id, url=live_url, archive_uri=archive_uri, archive_sha256=archive_sha256, send_verified=True, pasted_at=pasted_at)
+        return ChatPasteResponse(
+            ok=True,
+            site="claude",
+            conversation_id=live_id,
+            url=live_url,
+            archive_uri=archive_uri,
+            archive_sha256=archive_sha256,
+            send_verified=True,
+            pasted_at=pasted_at,
+        )
     except (RuntimeError, TimeoutError) as exc:
         return ChatPasteResponse(ok=False, code="unreachable", reason=str(exc))
     finally:
+        if minted and page is not None:
+            with suppress(Exception):
+                await page.close()
         if pw is not None:
             await pw.stop()
 # fmt: on

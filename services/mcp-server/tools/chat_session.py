@@ -35,6 +35,7 @@ def register_chat_session_tool(mcp: FastMCP) -> None:
         prompt_uri: str | None = None,
         prompt_path: str | None = None,
         grant: Literal["explicit", "operator"] | None = None,
+        wait_reply: bool = False,
     ) -> dict[str, Any]:
         """Product-chat harvest, metadata probe, and grant-gated paste.
 
@@ -91,8 +92,9 @@ def register_chat_session_tool(mcp: FastMCP) -> None:
                 "prompt_path": prompt_path,
                 "grant": grant,
                 "cdp_url": cdp_url,
+                "wait_reply": wait_reply,
             }.items()
-            if v is not None and v != ""
+            if v is not None and v != "" and v is not False
         }
         result = _relay("POST", "/v1/chat-session/paste", json_body=body)
         record(

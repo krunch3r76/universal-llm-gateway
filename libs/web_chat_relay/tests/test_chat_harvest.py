@@ -1211,6 +1211,101 @@ async def test_claude_paste_happy_path(
     )
     from chat_harvest.claude_chat_adapter import execute_claude_paste
 
+    async def _noop_submit(_page, _prompt, *, composer=None) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "claude_bundles.composer_submit.submit_composer_content",
+        _noop_submit,
+    )
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+        wait_reply=True,
+    )
+    assert result.ok is True
+    assert result.site == "claude"
+    assert result.conversation_id == CLAUDE_ID
+    assert result.archive_uri
+    assert result.send_verified is True
+
+
+OTHER_CLAUDE_ID = "other-chat-id"
+OTHER_CLAUDE_URL = f"https://claude.ai/chat/{OTHER_CLAUDE_ID}"
+
+
+def _paste_evaluate_with_prompt(prompt: str) -> dict:
+    return {
+        "login_wall": False,
+        "streaming": False,
+        "turns": [
+            {"author": "user", "ordinal": 1, "text": prompt},
+        ],
+    }
+
+
+def _paste_connect_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    context: _FakeContext,
+) -> None:
+    pw = _FakePlaywright()
+
+    async def _fake_connect(_cdp_url: str):
+        return pw, object(), context, None
+
+    async def _fake_harvest_assistant(_page, **_kwargs) -> dict:
+        return {"n": 0, "body_len": 0}
+
+    async def _fake_find_composer(_page):
+        return _FakeComposer()
+
+    async def _noop_scroll(_page, **_kwargs) -> None:
+        return None
+
+    async def _noop_submit(_page, _prompt, *, composer=None) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.connect_cdp",
+        _fake_connect,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.harvest_assistant",
+        _fake_harvest_assistant,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.find_composer",
+        _fake_find_composer,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.scroll_stabilize",
+        _noop_scroll,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.composer_submit.submit_composer_content",
+        _noop_submit,
+    )
+
+
+@pytest.mark.asyncio
+async def test_paste_reuses_open_tab_for_requested_id_when_other_chat_tabs_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    other = _FakeClaudePage(
+        url=OTHER_CLAUDE_URL,
+        evaluate_result=_paste_evaluate_with_prompt("wrong"),
+    )
+    target = _FakeClaudePage(
+        url=CLAUDE_URL,
+        evaluate_result=_paste_evaluate_with_prompt("hello"),
+    )
+    context = _FakeContext([other, target])
+    _paste_connect_fixture(monkeypatch, context)
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
     result = await execute_claude_paste(
         url=CLAUDE_URL,
         prompt_text="hello",
@@ -1218,7 +1313,141 @@ async def test_claude_paste_happy_path(
         grant="operator",
     )
     assert result.ok is True
-    assert result.site == "claude"
     assert result.conversation_id == CLAUDE_ID
-    assert result.archive_uri
-    assert result.send_verified is True
+    assert target.brought_to_front is True
+    assert other.brought_to_front is False
+
+
+@pytest.mark.asyncio
+async def test_paste_opens_new_tab_when_target_not_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    other = _FakeClaudePage(
+        url=OTHER_CLAUDE_URL,
+        evaluate_result=_paste_evaluate_with_prompt("stale"),
+    )
+    context = _FakeContext(
+        [other],
+        new_page_result={
+            "url": CLAUDE_URL,
+            "evaluate_result": _paste_evaluate_with_prompt("hello"),
+        },
+    )
+    _paste_connect_fixture(monkeypatch, context)
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    assert result.ok is True
+    assert result.conversation_id == CLAUDE_ID
+    assert other.brought_to_front is False
+    assert len(context.pages) == 2
+    assert context.pages[-1].url == CLAUDE_URL
+    assert context.pages[-1].closed is True
+
+
+@pytest.mark.asyncio
+async def test_paste_returns_target_mismatch_when_live_id_differs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakeClaudePage(
+        url=CLAUDE_URL,
+        evaluate_result=_paste_evaluate_with_prompt("hello"),
+    )
+    context = _FakeContext([page])
+    _paste_connect_fixture(monkeypatch, context)
+
+    async def _submit_navigate(p, _prompt, *, composer=None) -> None:
+        p.url = OTHER_CLAUDE_URL
+
+    monkeypatch.setattr(
+        "claude_bundles.composer_submit.submit_composer_content",
+        _submit_navigate,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    assert result.ok is False
+    assert result.code == "target_mismatch"
+    assert result.send_verified is False
+    assert CLAUDE_ID in (result.reason or "")
+    assert OTHER_CLAUDE_ID in (result.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_paste_default_does_not_wait_for_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakeClaudePage(
+        url=CLAUDE_URL,
+        evaluate_result=_paste_evaluate_with_prompt("hello"),
+    )
+    context = _FakeContext([page])
+    _paste_connect_fixture(monkeypatch, context)
+    wait_calls: list[bool] = []
+
+    async def _track_wait(_page, **_kwargs) -> dict:
+        wait_calls.append(True)
+        return {"n": 1, "body_len": 10}
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.wait_assistant_reply",
+        _track_wait,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    assert result.ok is True
+    assert result.pasted_at
+    assert result.archive_uri is None
+    assert wait_calls == []
+
+    await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+        wait_reply=True,
+    )
+    assert wait_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_paste_unobserved_submit_is_not_verified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakeClaudePage(
+        url=CLAUDE_URL,
+        evaluate_result={
+            "login_wall": False,
+            "streaming": False,
+            "turns": [{"author": "user", "ordinal": 1, "text": "not the prompt"}],
+        },
+    )
+    context = _FakeContext([page])
+    _paste_connect_fixture(monkeypatch, context)
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    assert result.ok is False
+    assert result.code == "submit_unverified"
+    assert result.send_verified is False

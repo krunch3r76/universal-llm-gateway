@@ -81,6 +81,7 @@ async def execute_paste(req: ChatPasteRequest) -> ChatPasteResponse:
             prompt_text=prompt_text,
             cdp_url=cdp_url,
             grant=grant,
+            wait_reply=req.wait_reply,
         )
         _emit_pasted(result)
         return result
