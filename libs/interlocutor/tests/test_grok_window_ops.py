@@ -6,7 +6,11 @@ from unittest.mock import patch
 
 import pytest
 from interlocutor.facade import execute_list, execute_retire, execute_spawn
-from interlocutor.targets import CoworkUrlTarget, resolve_grok_window_target, resolve_target
+from interlocutor.targets import (
+    CoworkUrlTarget,
+    resolve_grok_window_target,
+    resolve_target,
+)
 
 pytestmark = pytest.mark.offline
 
