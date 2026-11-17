@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import urlparse
 
 from chat_harvest.models import ClassifyRefuse, classify_chat_url
 from cursor_bridge.grok_window_bindings import configured_grok_window_displays
