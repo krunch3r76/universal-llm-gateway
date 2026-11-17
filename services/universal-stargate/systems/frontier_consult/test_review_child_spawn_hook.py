@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from implement_admission.check_review_substrate import consultant_identity
+from fastapi.responses import JSONResponse
+from implement_admission.check_review_substrate import (
+    consultant_identity,
+    is_claude_identity,
+    model_identity,
+)
+from implement_admission.review_defaults import ReviewDefault
 
 from systems.frontier_consult.densify_candidate_ready import build_reviewer_prompt
 from systems.frontier_consult.generate_admission_context_store import (
     AdmissionContext,
+    abandon_spawn_state,
     read_admission_context,
     read_spawn_state,
     reset_generate_admission_stores_for_tests,
@@ -21,11 +28,14 @@ from systems.frontier_consult.packet_review_surface import (
     NEGATIVE_SPACE_BY_SURFACE,
 )
 from systems.frontier_consult.review_child_spawn_hook import (
+    _REVIEWER_EMPTY_SCOPE_PREFIX,
     _SPAWN_PROVENANCE,
+    ReviewerSelection,
     _build_generate_lane_review_prompt,
     _ReviewPromptBuild,
     handle_worker_completed_event,
     is_review_child_execution,
+    reconcile_pending_spawns,
     reset_review_child_spawn_hook_for_tests,
     select_independent_reviewer,
     should_spawn_review_child,
@@ -43,6 +53,22 @@ def _terminal_stub(**kwargs: object) -> DurableTerminalEvent:
     )
 
 
+_IMPLEMENTATION_DEFAULT = ReviewDefault(
+    model="cdp/opus-5", contract="code-review", effort="high"
+)
+_CLAUDE_AUTHOR_DEFAULT = ReviewDefault(
+    model="cursor/composer-2.5", contract="check-review", effort=None
+)
+
+
+def _review_default_loader(kind: str, *, policy=None) -> ReviewDefault:
+    if kind == "implementation":
+        return _IMPLEMENTATION_DEFAULT
+    if kind == "implementation_claude_author":
+        return _CLAUDE_AUTHOR_DEFAULT
+    raise ValueError(f"unknown kind {kind!r}")
+
+
 @pytest.fixture(autouse=True)
 def _clean_stores() -> None:
     reset_generate_admission_stores_for_tests()
@@ -50,6 +76,15 @@ def _clean_stores() -> None:
     yield
     reset_generate_admission_stores_for_tests()
     reset_review_child_spawn_hook_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _patch_review_defaults_loader() -> None:
+    with patch(
+        "systems.frontier_consult.review_child_spawn_hook._load_review_default",
+        side_effect=_review_default_loader,
+    ):
+        yield
 
 
 def _write_generate_ctx(
@@ -84,28 +119,26 @@ def test_d7_admission_context_round_trip() -> None:
     assert ctx.role == "cursor-sdk"
 
 
-def test_d3_cross_family_openai_executor_gets_cursor_grok() -> None:
+def test_ac_b1_openai_executor_selects_cdp_implementation_default() -> None:
     sel = select_independent_reviewer("openai/gpt-5.5")
     assert sel is not None
-    assert sel.model == "cursor/grok-4.7"
-    assert sel.identity.model_identity == "grok-4.7"
-    assert sel.model != "cursor/claude-opus-5"
+    assert sel.model == "cdp/opus-5"
+    assert sel.contract == "code-review"
+    assert sel.identity.model_identity == "claude-opus-5"
 
 
-def test_d3_cursor_executor_gets_check_review_default() -> None:
-    """Non-OpenAI executors take workflows.check_review.model.
-
-    Retired name ``test_d3_cross_family_cursor_executor_gets_openai`` asserted
-    an implicit ``cursor/gpt-5.6-terra`` route. Terra is Other-Models and is
-    not the standing check/review default (``cursor/grok-4.7``). The spawn
-    caller ``_attempt_spawn_for_completion`` still selects through this
-    function; what is unreachable is the implicit terra alternate.
-    """
+def test_ac_b2_claude_executor_selects_composer_check_review() -> None:
     sel = select_independent_reviewer("cursor/claude-sonnet-5")
     assert sel is not None
-    assert sel.model == "cursor/grok-4.7"
-    assert sel.identity.model_identity == "grok-4.7"
-    assert sel.model != "cursor/gpt-5.6-terra"
+    assert sel.model == "cursor/composer-2.5"
+    assert sel.contract == "check-review"
+    assert sel.identity.model_identity == "composer-2.5"
+
+
+def test_ac_b2_second_claude_model_uses_claude_author_kind() -> None:
+    sel = select_independent_reviewer("cdp/opus-5")
+    assert sel is not None
+    assert sel.model == "cursor/composer-2.5"
 
 
 def test_cdp_fable_executor_gets_independent_reviewer() -> None:
@@ -120,9 +153,12 @@ def test_cdp_fable_executor_gets_independent_reviewer() -> None:
 
 
 def test_d3_same_model_same_rung_fail_closed() -> None:
+    same = ReviewDefault(
+        model="cursor/claude-sonnet-5", contract="check-review", effort=None
+    )
     with patch(
-        "systems.frontier_consult.review_child_spawn_hook._default_independent_reviewer_model",
-        return_value="cursor/claude-sonnet-5",
+        "systems.frontier_consult.review_child_spawn_hook._load_review_default",
+        return_value=same,
     ):
         assert select_independent_reviewer("cursor/claude-sonnet-5") is None
 
@@ -377,7 +413,6 @@ def test_ac10_spawn_body_read_only_residual() -> None:
 @pytest.mark.asyncio
 async def test_a24105_spawn_body_thread_is_coord() -> None:
     from systems.frontier_consult.review_child_spawn_hook import (
-        ReviewerSelection,
         spawn_generate_lane_review_child,
     )
     captured: list[object] = []
@@ -430,10 +465,9 @@ async def test_a24105_spawn_body_thread_is_coord() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_executor_review_child_uses_cursor_sdk_generate() -> None:
-    """OpenAI executor → cursor/opus alternate admits via seat=cursor-sdk generate."""
+async def test_openai_executor_review_child_dispatches_cdp_generate() -> None:
+    """OpenAI executor → CDP implementation reviewer (AC-B3)."""
     from systems.frontier_consult.review_child_spawn_hook import (
-        ReviewerSelection,
         spawn_generate_lane_review_child,
     )
     from systems.frontier_consult.route import TeamDispatchGenerateBody
@@ -454,6 +488,8 @@ async def test_openai_executor_review_child_uses_cursor_sdk_generate() -> None:
         dispatch_thread_id="thread:coord",
         prompt_turn_number=12,
         prompt_bind_mode="frozen_turn",
+        caller_agent="cursor-sdk-lane",
+        work_key="todo:review-defaults",
     )
     ctx = read_admission_context("exec-openai-parent")
     assert ctx is not None
@@ -481,8 +517,10 @@ async def test_openai_executor_review_child_uses_cursor_sdk_generate() -> None:
             ctx=ctx,
             parent_thread_id="thread:worker-closed",
             reviewer=ReviewerSelection(
-                model="cursor/claude-opus-5",
-                identity=consultant_identity("cursor/claude-opus-5", None),
+                model="cdp/opus-5",
+                identity=consultant_identity("cdp/opus-5", None),
+                contract="code-review",
+                effort="high",
             ),
         )
     assert result["execution_id"] == "child-cursor-opus"
@@ -490,24 +528,19 @@ async def test_openai_executor_review_child_uses_cursor_sdk_generate() -> None:
     body = captured[0]
     assert isinstance(body, TeamDispatchGenerateBody)
     assert body.op == "generate"
-    assert body.seat == "cursor-sdk"
-    assert body.lane == "A"
-    assert body.model == "cursor/claude-opus-5"
+    assert body.seat is None
+    assert body.lane is None
+    assert body.model == "cdp/opus-5"
+    assert body.job == "code-review"
+    assert body.caller_agent == "cursor-sdk-lane"
+    assert body.work_key == "todo:review-defaults"
     assert body.prompt == "review prompt"
     assert body.auto_review_child is False
-    assert body.prompt_turn_number == 12
-    assert body.prompt_bind_mode == "frozen_turn"
-    child_ctx = read_admission_context("child-cursor-opus")
-    assert child_ctx is not None
-    assert child_ctx.spawn_template_provenance == _SPAWN_PROVENANCE
-    assert child_ctx.suppress_review_spawn is True
-    assert should_spawn_review_child(child_ctx) is False
 
 
 @pytest.mark.asyncio
 async def test_a24105_fail_closed_without_coord_thread() -> None:
     from systems.frontier_consult.review_child_spawn_hook import (
-        ReviewerSelection,
         spawn_generate_lane_review_child,
     )
 
@@ -731,7 +764,6 @@ def test_source_surface_lb_still_spawns_when_not_suppressed() -> None:
 async def test_a6655_spawn_fail_closed_on_frozen_read_failure() -> None:
     from systems.frontier_consult.admission import FrontierEndpointError
     from systems.frontier_consult.review_child_spawn_hook import (
-        ReviewerSelection,
         spawn_generate_lane_review_child,
     )
 
@@ -783,7 +815,6 @@ async def test_a6655_spawn_fail_closed_on_frozen_read_failure() -> None:
 @pytest.mark.asyncio
 async def test_a6655_spawn_uses_frozen_turn_not_latest() -> None:
     from systems.frontier_consult.review_child_spawn_hook import (
-        ReviewerSelection,
         spawn_generate_lane_review_child,
     )
 
@@ -834,7 +865,6 @@ async def test_a6655_spawn_uses_frozen_turn_not_latest() -> None:
 @pytest.mark.asyncio
 async def test_a6655_prompt_bind_instrumentation_emitted() -> None:
     from systems.frontier_consult.review_child_spawn_hook import (
-        ReviewerSelection,
         spawn_generate_lane_review_child,
     )
 
@@ -876,3 +906,312 @@ async def test_a6655_prompt_bind_instrumentation_emitted() -> None:
             ),
         )
     assert "frontier.review_child.prompt_bind" in published
+
+
+def test_check1_is_claude_identity_predicate() -> None:
+    assert is_claude_identity(model_identity("cursor/claude-sonnet-5")) is True
+    assert is_claude_identity(model_identity("cursor/claude-opus-5")) is True
+    assert is_claude_identity(model_identity("cursor/composer-2.5")) is False
+    assert is_claude_identity(model_identity("openai/gpt-5.5")) is False
+    assert is_claude_identity(model_identity("unknown/foo")) is False
+
+
+def test_check1_unknown_executor_fail_closed() -> None:
+    assert select_independent_reviewer("unknown/foo") is None
+
+
+def test_check7_route_policy_review_defaults_three_kinds() -> None:
+    from implement_admission.review_defaults import load_review_default
+    from implement_admission.routing import load_route_policy
+
+    policy = load_route_policy()
+    assert load_review_default("implementation", policy=policy).model == "cdp/opus-5"
+    assert (
+        load_review_default("implementation_claude_author", policy=policy).model
+        == "cursor/composer-2.5"
+    )
+    assert load_review_default("spec", policy=policy).model == "cursor/composer-2.5"
+
+
+@pytest.mark.asyncio
+async def test_ac_b4_cdp_422_logs_and_single_dispatch() -> None:
+    from systems.frontier_consult.review_child_spawn_hook import (
+        _attempt_spawn_for_completion,
+    )
+
+    _write_generate_ctx(
+        "exec-cdp-422",
+        resolved_model="openai/gpt-5.5",
+    )
+    write_admission_context(
+        execution_id="exec-cdp-422",
+        auto_review_child=True,
+        op="generate",
+        role="cursor-sdk",
+        resolved_model="openai/gpt-5.5",
+        parent_dispatch_thread_id="thread:parent",
+        dispatch_thread_id="thread:parent",
+        caller_agent="cursor-sdk-lane",
+        work_key="todo:wk",
+        prompt_turn_number=3,
+        prompt_bind_mode="frozen_turn",
+    )
+    ctx = read_admission_context("exec-cdp-422")
+    assert ctx is not None
+    dispatch_mock = AsyncMock(
+        return_value=JSONResponse(
+            status_code=422,
+            content={"code": "cdp_caller_agent_required"},
+        )
+    )
+    with (
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook._build_generate_lane_review_prompt",
+            AsyncMock(
+                return_value=_ReviewPromptBuild(
+                    prompt="review",
+                    prompt_bind_mode="frozen_turn",
+                    prompt_turn_number=3,
+                    latest_read_outcome="ok",
+                    bound_prompt_class="caller_prompt",
+                    bound_prompt_digest="x",
+                )
+            ),
+        ),
+        patch(
+            "systems.frontier_consult.route.team_dispatch",
+            dispatch_mock,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.logger",
+            MagicMock(),
+        ) as log_mock,
+    ):
+        terminal = _terminal_stub(execution_id="exec-cdp-422")
+        assert await _attempt_spawn_for_completion(terminal=terminal, ctx=ctx) is False
+    assert dispatch_mock.await_count == 1
+    refused_logs = [
+        c for c in log_mock.warning.call_args_list if "dispatch refused" in str(c)
+    ]
+    assert refused_logs
+
+
+@pytest.mark.asyncio
+async def test_ac_b5_cursor_child_lane_b_admit_shape() -> None:
+    from implement_admission.admission_read import frontmatter_list_value
+
+    _write_generate_ctx("exec-lane-b", resolved_model="cursor/claude-sonnet-5")
+    write_admission_context(
+        execution_id="exec-lane-b",
+        auto_review_child=True,
+        op="generate",
+        role="cursor-sdk",
+        resolved_model="cursor/claude-sonnet-5",
+        parent_dispatch_thread_id="thread:parent",
+        dispatch_thread_id="thread:parent",
+        caller_agent="cursor-sdk",
+        work_key="agent-bus:thread:parent",
+        prompt_turn_number=5,
+        prompt_bind_mode="frozen_turn",
+    )
+    ctx = read_admission_context("exec-lane-b")
+    assert ctx is not None
+    sel = select_independent_reviewer(ctx.resolved_model)
+    assert sel is not None
+    prompt = _REVIEWER_EMPTY_SCOPE_PREFIX + (
+        "Review cites cortex://notes/system/specs/foo.md\n"
+    )
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        seat="cursor-sdk",
+        dispatch_thread_id="thread:parent",
+        model=sel.model,
+        job=sel.contract,
+        prompt=prompt,
+        auto_review_child=False,
+        spawn_review_provenance=_SPAWN_PROVENANCE,
+        prompt_turn_number=5,
+        prompt_bind_mode="frozen_turn",
+        lane="B",
+        read_only=True,
+        work_key="agent-bus:thread:parent",
+        caller_agent="cursor-sdk",
+    )
+    assert prompt.startswith(_REVIEWER_EMPTY_SCOPE_PREFIX)
+    assert body.lane == "B"
+    assert body.read_only is True
+    assert body.work_key == "agent-bus:thread:parent"
+    assert body.caller_agent == "cursor-sdk"
+    assert frontmatter_list_value(body.prompt or "", "files_expected") == []
+
+
+def test_ac_b6_cdp_body_passes_identity_validators() -> None:
+    from systems.frontier_consult.cdp_admit_identity import (
+        require_cdp_caller_agent,
+        require_cdp_review_work_key,
+        validate_work_key_if_supplied,
+    )
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        model="cdp/opus-5",
+        job="code-review",
+        reasoning_effort="high",
+        prompt="review packet",
+        dispatch_thread_id="24103",
+        caller_agent="cursor-sdk-lane",
+        work_key="agent-bus:24103",
+        auto_review_child=False,
+    )
+    assert require_cdp_caller_agent(body, request_id="req-b6") == "cursor-sdk-lane"
+    assert require_cdp_review_work_key(body, "code-review", request_id="req-b6") is None
+    assert (
+        validate_work_key_if_supplied(body, request_id="req-b6") == "agent-bus:24103"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ac_b8_abandon_when_caller_missing() -> None:
+    from systems.frontier_consult.review_child_spawn_hook import (
+        _attempt_spawn_for_completion,
+    )
+
+    write_admission_context(
+        execution_id="exec-no-caller",
+        auto_review_child=True,
+        op="generate",
+        role="cursor-sdk",
+        resolved_model="openai/gpt-5.5",
+        parent_dispatch_thread_id="thread:parent",
+        dispatch_thread_id="thread:parent",
+        caller_agent=None,
+        work_key="todo:wk",
+        prompt_turn_number=2,
+        prompt_bind_mode="frozen_turn",
+    )
+    try_claim_spawn_pending(
+        parent_execution_id="exec-no-caller",
+        parent_dispatch_thread_id="thread:parent",
+        parent_thread_id="thread:worker",
+        reviewer_model="cdp/opus-5",
+    )
+    ctx = read_admission_context("exec-no-caller")
+    assert ctx is not None
+    dispatch_mock = AsyncMock(return_value={"execution_id": "child-x"})
+    with (
+        patch(
+            "systems.frontier_consult.route.team_dispatch",
+            dispatch_mock,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook._build_generate_lane_review_prompt",
+            AsyncMock(
+                return_value=_ReviewPromptBuild(
+                    prompt="p",
+                    prompt_bind_mode="frozen_turn",
+                    prompt_turn_number=2,
+                    latest_read_outcome="ok",
+                    bound_prompt_class="caller_prompt",
+                    bound_prompt_digest="x",
+                )
+            ),
+        ),
+    ):
+        terminal = _terminal_stub(execution_id="exec-no-caller")
+        assert await _attempt_spawn_for_completion(terminal=terminal, ctx=ctx) is False
+    dispatch_mock.assert_not_awaited()
+    state = read_spawn_state("exec-no-caller")
+    assert state is not None
+    assert state.state == "final"
+    assert state.review_child_execution_id is None
+
+
+@pytest.mark.asyncio
+async def test_ac_b8_abandoned_parent_not_reconciled() -> None:
+    abandon_spawn_state(parent_execution_id="exec-abandon", reason="test")
+    dispatch_mock = AsyncMock()
+    with patch(
+        "systems.frontier_consult.route.team_dispatch",
+        dispatch_mock,
+    ):
+        await reconcile_pending_spawns()
+    dispatch_mock.assert_not_awaited()
+
+
+def test_ac_b9_parent_write_caller_agent_none_safe() -> None:
+    write_admission_context(
+        execution_id="exec-b9",
+        auto_review_child=True,
+        op="generate",
+        role="cursor-sdk",
+        resolved_model="cursor/claude-sonnet-5",
+        parent_dispatch_thread_id="thread:p",
+        dispatch_thread_id="thread:p",
+        caller_agent=None,
+    )
+    ctx = read_admission_context("exec-b9")
+    assert ctx is not None
+    assert ctx.caller_agent is None
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, ""),
+        ("", ""),
+        ("  ", ""),
+        ("  cursor-sdk-lane  ", "cursor-sdk-lane"),
+    ],
+)
+def test_check2_caller_agent_normalization(raw, expected) -> None:
+    from cdp_caller_identity import normalize_cdp_caller_agent
+
+    assert normalize_cdp_caller_agent(raw) == expected
+
+
+@pytest.mark.asyncio
+async def test_check4_loader_failure_abandons_pending_no_spin() -> None:
+    write_admission_context(
+        execution_id="exec-loader-fail",
+        auto_review_child=True,
+        op="generate",
+        role="cursor-sdk",
+        resolved_model="openai/gpt-5.5",
+        parent_dispatch_thread_id="thread:parent",
+        dispatch_thread_id="thread:parent",
+        caller_agent="cursor-sdk-lane",
+        prompt_turn_number=1,
+        prompt_bind_mode="frozen_turn",
+    )
+    try_claim_spawn_pending(
+        parent_execution_id="exec-loader-fail",
+        parent_dispatch_thread_id="thread:parent",
+        parent_thread_id="thread:worker",
+        reviewer_model="cdp/opus-5",
+    )
+    ctx = read_admission_context("exec-loader-fail")
+    assert ctx is not None
+    dispatch_mock = AsyncMock(return_value={"execution_id": "child-loader"})
+    with (
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook._load_review_default",
+            side_effect=ValueError("broken policy"),
+        ),
+        patch(
+            "systems.frontier_consult.route.team_dispatch",
+            dispatch_mock,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
+            side_effect=_terminal_stub,
+        ),
+    ):
+        await reconcile_pending_spawns()
+        await reconcile_pending_spawns()
+    dispatch_mock.assert_not_awaited()
+    state = read_spawn_state("exec-loader-fail")
+    assert state is not None
+    assert state.state == "final"

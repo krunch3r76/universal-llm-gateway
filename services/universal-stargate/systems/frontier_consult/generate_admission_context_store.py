@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -69,6 +70,7 @@ _MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
     ("resolved_effort", "TEXT"),
     ("caller_seat", "TEXT"),
     ("work_key", "TEXT"),
+    ("caller_agent", "TEXT"),
 )
 
 
@@ -111,6 +113,7 @@ class AdmissionContext:
     resolved_effort: str | None = None
     caller_seat: str | None = None
     work_key: str | None = None
+    caller_agent: str | None = None
     created_at: str = ""
 
 
@@ -145,6 +148,7 @@ def write_admission_context(
     resolved_effort: str | None = None,
     caller_seat: str | None = None,
     work_key: str | None = None,
+    caller_agent: str | None = None,
 ) -> None:
     conn = _connect()
     try:
@@ -154,8 +158,8 @@ def write_admission_context(
             "parent_dispatch_thread_id, dispatch_thread_id, spawn_template_provenance, "
             "review_surface, dispatch_lane, suppress_review_spawn, "
             "prompt_turn_number, prompt_bind_mode, resolved_effort, "
-            "caller_seat, work_key, "
-            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "caller_seat, work_key, caller_agent, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 execution_id,
                 int(auto_review_child),
@@ -173,6 +177,7 @@ def write_admission_context(
                 resolved_effort,
                 caller_seat,
                 work_key,
+                caller_agent,
                 _now(),
             ),
         )
@@ -189,7 +194,7 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
             "parent_dispatch_thread_id, dispatch_thread_id, spawn_template_provenance, "
             "review_surface, dispatch_lane, suppress_review_spawn, "
             "prompt_turn_number, prompt_bind_mode, resolved_effort, "
-            "caller_seat, work_key, "
+            "caller_seat, work_key, caller_agent, "
             "created_at FROM generate_admission_context WHERE execution_id=?",
             (execution_id,),
         ).fetchone()
@@ -224,6 +229,7 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
         resolved_effort=row["resolved_effort"],
         caller_seat=row["caller_seat"] if "caller_seat" in row.keys() else None,
         work_key=row["work_key"] if "work_key" in row.keys() else None,
+        caller_agent=row["caller_agent"] if "caller_agent" in row.keys() else None,
         created_at=row["created_at"],
     )
 
@@ -272,6 +278,25 @@ def try_claim_spawn_pending(
         )
         conn.commit()
         return True
+    finally:
+        conn.close()
+
+
+def abandon_spawn_state(*, parent_execution_id: str, reason: str) -> None:
+    """Mark a pending spawn row final without a child execution id.
+
+    Used when a review child cannot be admitted (missing ``caller_agent``, loader
+    failure after claim, etc.). Rows in ``final`` state are skipped by reconcile.
+    """
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE review_child_spawn_state SET state='final', "
+            "review_child_execution_id=NULL, final_at=?, attempt_metadata=? "
+            "WHERE parent_execution_id=? AND state='pending'",
+            (_now(), json.dumps({"abandon_reason": reason}), parent_execution_id),
+        )
+        conn.commit()
     finally:
         conn.close()
 

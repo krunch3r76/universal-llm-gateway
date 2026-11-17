@@ -341,6 +341,11 @@ async def finish_cursor_sdk_generate_prepare(
                 if admit_provenance is not None
                 else (work_key.strip() if work_key and work_key.strip() else None)
             ),
+            caller_agent=(
+                caller_agent.strip()
+                if caller_agent and caller_agent.strip()
+                else None
+            ),
         )
     except Exception:
         logger.warning(
