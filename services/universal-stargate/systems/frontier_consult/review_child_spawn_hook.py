@@ -344,6 +344,14 @@ async def _dispatch_review_child(
         )
         return {}
 
+    if prompt_turn_number is None:
+        logger.warning(
+            "review_child spawn fail-closed: missing frozen_turn pin "
+            "thread=%s",
+            delivery_thread,
+        )
+        return {}
+
     work_key = _resolve_review_work_key(parent_ctx, delivery_thread)
     caller_agent = _normalize_parent_caller_agent(parent_ctx)
     contract = reviewer.contract or (
@@ -376,13 +384,6 @@ async def _dispatch_review_child(
             prompt_bind_mode=prompt_bind_mode or "frozen_turn",
         )
     else:
-        if prompt_turn_number is None:
-            logger.warning(
-                "review_child spawn fail-closed: missing frozen_turn pin "
-                "thread=%s",
-                delivery_thread,
-            )
-            return {}
         scoped_prompt = _REVIEWER_EMPTY_SCOPE_PREFIX + prompt
         child_body = TeamDispatchGenerateBody(
             op=_GENERATE_OP,
