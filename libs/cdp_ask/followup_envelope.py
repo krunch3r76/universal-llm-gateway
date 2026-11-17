@@ -68,7 +68,10 @@ def identity_keys(
     req: FollowupProjectAskRequest,
 ) -> tuple[str | None, str | None, str | None, str | None]:
     """Return normalized identity keys used by the shared provenance resolver."""
-    chat = (req.chat_url or "").strip() or None
+    from claude_bundles.cse_url import claude_seat_identity_key
+
+    raw_chat = (req.chat_url or "").strip() or None
+    chat = claude_seat_identity_key(raw_chat) if raw_chat else None
     reg = (req.registration_id or "").strip() or None
     exe = (req.execution_id or "").strip() or None
     cdp = (req.cdp_url or "").strip() or None

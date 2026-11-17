@@ -6,14 +6,14 @@ from typing import Any
 
 from claude_bundles.cdp_reclaim_refuse import cse_id_from_url
 from claude_bundles.cdp_registry.session_address import chat_url_for_registration
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import claude_seat_identity_key
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
 
 def _normalize_chat_url(raw: str | None) -> str | None:
-    url = normalize_cse_url(raw or "")
+    url = claude_seat_identity_key(raw or "")
     return url or None
 
 
