@@ -31,7 +31,7 @@ def test_live_file_conformance() -> None:
 
 def test_load_auto_judgment_default_model_live() -> None:
     assert (
-        load_auto_judgment_default_model(load_route_policy()) == "cursor/composer-2.5"
+        load_auto_judgment_default_model(load_route_policy()) == "cursor/grok-4.7"
     )
 
 
@@ -67,8 +67,9 @@ def test_load_live_registry_slots_and_roaming() -> None:
         CHECK_REVIEW_WORKFLOW,
         "investigate",
         "auto_judgment",
+        "conductor_drive",
     }
-    assert reg.roaming_bare_models() == frozenset({"composer-2.5"})
+    assert reg.roaming_bare_models() == frozenset({"composer-2.5", "grok-4.7"})
 
 
 def test_parse_raises_on_errors() -> None:

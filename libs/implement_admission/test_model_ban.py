@@ -50,15 +50,16 @@ def test_normalize_matches_xai_and_cursor_grok_slug() -> None:
 @pytest.mark.parametrize(
     ("wire", "banned"),
     [
-        ("cursor/grok-4.7", True),
-        ("xai/grok-4.7", True),
-        ("grok-4.7", True),
-        ("CURSOR/Grok-4.7", True),
-        ("  cursor/grok-4.7  ", True),
-        ("cursor/grok-4.7-high", True),
-        ("cursor/grok-4.7-fast", True),
-        ("cursor/grok-4.7-max", True),
-        ("grok-4.7__effort_high", True),
+        ("cursor/grok-4.7", False),
+        ("xai/grok-4.7", False),
+        ("grok-4.7", False),
+        ("CURSOR/Grok-4.7", False),
+        ("  cursor/grok-4.7  ", False),
+        ("cursor/grok-4.7-high", False),
+        ("cursor/grok-4.7-fast", False),
+        ("cursor/grok-4.7-max", False),
+        ("grok-4.7__effort_high", False),
+        ("cursor/gemini-4-argon", True),
         ("grok-4.70", False),
         ("grok-4.7x", False),
         ("cursor/composer-2.5", False),
@@ -70,26 +71,27 @@ def test_normalize_ban_table(wire: str, banned: bool) -> None:
     slug = normalize_model_for_ban(wire)
     if banned:
         assert find_matching_ban(wire) is not None
-        if wire.strip().lower() in {
-            "cursor/grok-4.7",
-            "xai/grok-4.7",
-            "grok-4.7",
-        }:
-            assert slug == GROK_SLUG
+    elif wire.strip().lower() in {
+        "cursor/grok-4.7",
+        "xai/grok-4.7",
+        "grok-4.7",
+    }:
+        assert slug == GROK_SLUG
+        assert find_matching_ban(wire) is None
     elif wire in {"grok-4.70", "grok-4.7x"}:
         assert slug != GROK_SLUG
         assert find_matching_ban(wire) is None
 
 
-def test_load_model_bans_includes_grok_and_argon() -> None:
+def test_load_model_bans_includes_argon_only_among_cursor_sdk() -> None:
     clear_model_ban_cache()
     bans = load_model_bans()
     slugs = {b.match_slug for b in bans}
-    assert normalize_model_for_ban("cursor/grok-4.7") in slugs
+    assert normalize_model_for_ban("cursor/grok-4.7") not in slugs
     assert normalize_model_for_ban(_ARGON) in slugs
 
 
-def test_explicit_grok_refused_with_403() -> None:
+def test_explicit_grok_admits_when_not_banned() -> None:
     plan = run_full_admit(
         {
             "op": "generate",
@@ -99,15 +101,11 @@ def test_explicit_grok_refused_with_403() -> None:
             "request_id": "ban-explicit",
         }
     )
-    assert plan.get("admitted") is False
-    assert plan.get("status_code") == 403
-    assert plan.get("code") == "MODEL_BANNED"
-    details = plan.get("details") or {}
-    assert details.get("ref") == "agent-bus:9956"
-    assert "ban_override" in details
+    assert plan.get("admitted") is True, plan
+    assert plan.get("model") == "cursor/grok-4.7"
 
 
-def test_xai_grok_alias_refused() -> None:
+def test_xai_grok_alias_admits_when_cursor_grok_not_banned() -> None:
     plan = run_full_admit(
         {
             "op": "generate",
@@ -117,11 +115,10 @@ def test_xai_grok_alias_refused() -> None:
             "request_id": "ban-xai",
         }
     )
-    assert plan.get("admitted") is False
-    assert plan.get("code") == "MODEL_BANNED"
+    assert plan.get("admitted") is True, plan
 
 
-def test_omit_ask_admits_composer_not_grok() -> None:
+def test_omit_ask_admits_grok_via_auto_judgment() -> None:
     plan = run_full_admit(
         {
             "op": "generate",
@@ -132,7 +129,7 @@ def test_omit_ask_admits_composer_not_grok() -> None:
         }
     )
     assert plan.get("admitted") is True, plan
-    assert plan.get("model") == "cursor/composer-2.5"
+    assert plan.get("model") == "cursor/grok-4.7"
     assert plan.get("workflow") == "auto_judgment"
 
 
@@ -195,12 +192,12 @@ def test_pipeline_model_defaults_exclude_scope_all_bans() -> None:
     assert offenders == [], offenders
 
 
-def test_ban_override_admits_grok() -> None:
+def test_ban_override_admits_argon_with_audit_row() -> None:
     plan = run_full_admit(
         {
             "op": "generate",
             "seat": "cursor-sdk",
-            "model": "cursor/grok-4.7",
+            "model": _ARGON,
             "job": "freeform",
             "ban_override": True,
             "ban_override_reason": "test waiver agent-bus:22498",
@@ -211,7 +208,7 @@ def test_ban_override_admits_grok() -> None:
     )
     assert plan.get("admitted") is True, plan
     override = plan.get("model_ban_override") or {}
-    assert override.get("model") == "cursor/grok-4.7"
+    assert override.get("model") == _ARGON
     assert override.get("dispatch_id") == "dispatch-override-1"
 
 
@@ -230,28 +227,27 @@ def test_whitespace_only_override_reason_422() -> None:
     assert reject.get("code") == "ban_override_reason_required"
 
 
-def test_force_true_does_not_waive_ban() -> None:
+def test_explicit_argon_refused_with_403() -> None:
     plan = run_full_admit(
         {
             "op": "generate",
             "seat": "cursor-sdk",
-            "model": "cursor/grok-4.7",
+            "model": _ARGON,
             "job": "freeform",
-            "force": True,
-            "force_reason": "operator force",
-            "request_id": "ban-force",
+            "request_id": "ban-explicit-argon",
         }
     )
     assert plan.get("admitted") is False
+    assert plan.get("status_code") == 403
     assert plan.get("code") == "MODEL_BANNED"
 
 
-def test_generation_options_ban_override_ignored() -> None:
+def test_generation_options_ban_override_ignored_for_banned_argon() -> None:
     plan = run_full_admit(
         {
             "op": "generate",
             "seat": "cursor-sdk",
-            "model": "cursor/grok-4.7",
+            "model": _ARGON,
             "job": "freeform",
             "generation_options": {
                 "ban_override": True,
@@ -391,14 +387,13 @@ def test_loader_cache_hits_strict_once(monkeypatch: pytest.MonkeyPatch) -> None:
     clear_model_ban_cache()
 
 
-def test_check_model_ban_public_api() -> None:
+def test_check_model_ban_public_api_allows_grok() -> None:
     verdict = check_model_ban(resolved_model="cursor/grok-4.7", explicit_pin=True)
-    assert verdict.allowed is False
-    assert verdict.reject_envelope is not None
-    assert verdict.matched is not None
+    assert verdict.allowed is True
+    assert verdict.matched is None
 
 
-def test_to_thread_generate_ban_path() -> None:
+def test_to_thread_grok_admits_when_not_banned() -> None:
     plan = run_full_admit(
         {
             "op": "to_thread",
@@ -406,8 +401,7 @@ def test_to_thread_generate_ban_path() -> None:
             "request_id": "ban-to-thread",
         }
     )
-    assert plan.get("admitted") is False
-    assert plan.get("code") == "MODEL_BANNED"
+    assert plan.get("admitted") is True, plan
 
 
 def test_conductor_hop_successor_default_passes_assemble_gate() -> None:
@@ -425,7 +419,7 @@ def test_conductor_hop_successor_default_passes_assemble_gate() -> None:
     assert hop == "cursor/composer-2.5"
 
 
-def test_hop_successor_model_banned_after_cdp_prefix() -> None:
+def test_hop_successor_argon_still_banned_after_cdp_prefix() -> None:
     import sys
     from pathlib import Path
 
@@ -434,7 +428,7 @@ def test_hop_successor_model_banned_after_cdp_prefix() -> None:
         sys.path.insert(0, str(mcp_root))
     from tools.agent_bus.hop import resolve_hop_successor_model
 
-    resolved = resolve_hop_successor_model("cursor/grok-4.7")
+    resolved = resolve_hop_successor_model(_ARGON)
     verdict = check_model_ban(
         resolved_model=resolved,
         explicit_pin=True,
@@ -444,36 +438,35 @@ def test_hop_successor_model_banned_after_cdp_prefix() -> None:
     bare = resolve_hop_successor_model("grok-4.7")
     assert bare == "cdp/grok-4.7"
     verdict_cdp = check_model_ban(resolved_model=bare, explicit_pin=True)
-    assert verdict_cdp.allowed is False
+    assert verdict_cdp.allowed is True
 
 
-def test_handoff_resolved_model_banned() -> None:
+def test_handoff_resolved_model_argon_banned() -> None:
     verdict = check_model_ban(
-        resolved_model="cursor/grok-4.7",
+        resolved_model=_ARGON,
         explicit_pin=False,
         workflow_key="team.handoff",
     )
     assert verdict.allowed is False
 
 
-def test_executor_override_model_banned() -> None:
+def test_executor_override_model_argon_banned() -> None:
     verdict = check_model_ban(
-        resolved_model="cursor/grok-4.7",
+        resolved_model=_ARGON,
         explicit_pin=True,
         workflow_key="team.handoff.executor_override",
     )
     assert verdict.allowed is False
 
 
-def test_giw_resume_path_bans_explicit_grok() -> None:
+def test_giw_resume_path_allows_grok() -> None:
     verdict = check_model_ban(
         resolved_model="cursor/grok-4.7",
         explicit_pin=True,
         workflow_key="git_integration_worker.resume_of",
         dispatch_id="child-resume",
     )
-    assert verdict.allowed is False
-    assert verdict.reject_envelope is not None
+    assert verdict.allowed is True
 
 
 def test_unicode_lookalike_does_not_match_grok_ban() -> None:
@@ -499,30 +492,29 @@ def test_validate_fail_closed_when_model_bans_missing(
 
 def test_override_event_payload_fields() -> None:
     _, override = evaluate_dispatch_model_ban(
-        resolved_model="cursor/grok-4.7",
+        resolved_model=_ARGON,
         explicit_pin=True,
         workflow_key=None,
         role=None,
         ban_override=True,
-        ban_override_reason="audit agent-bus:22498",
+        ban_override_reason="audit operator:argon-waiver",
         caller_agent="cursor-sdk",
-        dispatch_id="d-22498",
+        dispatch_id="d-argon-waiver",
     )
     assert override is not None
-    assert override.get("model") == "cursor/grok-4.7"
-    assert override.get("reason") == "audit agent-bus:22498"
+    assert override.get("model") == _ARGON
+    assert override.get("reason") == "audit operator:argon-waiver"
     assert override.get("caller") == "cursor-sdk"
-    assert override.get("dispatch_id") == "d-22498"
-    assert override.get("ref") == "agent-bus:9956"
+    assert override.get("dispatch_id") == "d-argon-waiver"
+    assert override.get("ref") == "operator:2026-11-09"
 
 
-def test_model_knobs_fast_does_not_waive_banned_model() -> None:
-    """fast knob does not change ban slug for cursor/grok-4.7."""
+def test_model_knobs_fast_does_not_waive_banned_argon() -> None:
     plan = run_full_admit(
         {
             "op": "generate",
             "seat": "cursor-sdk",
-            "model": "cursor/grok-4.7",
+            "model": _ARGON,
             "job": "freeform",
             "generation_options": {"model_knobs": {"fast": "true"}},
             "request_id": "ban-knobs-fast",

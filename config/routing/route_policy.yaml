@@ -24,13 +24,6 @@ cursor_sdk_other_models_pool: explicit_pin_only
 claude_code_dispatch: prohibit
 
 model_bans:
-  - model: cursor/grok-4.7
-    scope: all
-    reason: >-
-      Operator ratified codework bar — grok-4.7 must not run dispatch admit
-      without an explicit ban_override audit pair.
-    ref: agent-bus:9956
-    since: "2026-11-07"
   - model: cursor/gemini-4-argon
     scope: all
     reason: Other Models pool retired (operator 2026-11-09)
@@ -176,17 +169,22 @@ workflows:
   investigate:
     # investigate omit-effort is high; seed is low; recon stays medium.
     seat: cursor-sdk
-    model: cursor/composer-2.5
+    model: cursor/grok-4.7
     jobs: [investigate, recon, seed]
-  auto_judgment:
-    # Judgment omit-model: composer-2.5 (agent-bus:9956 grok-4.7 dispatch ban;
-    # same mechanical slot as workflows.mechanical_implement). Explicit
-    # model=cursor/grok-4.7 still refuses at admit unless ban_override.
-    # Effort for these jobs is contract_effort (conductor low;
-    # answer/ask/confer/verify/execute/propagate high).
+  conductor_drive:
+    # Conductor birth + hop successors — composer floor (impresario driver);
+    # not grok. job=conductor admit uses conductor_defaults + this row for
+    # contract=conductor omit outside that path.
     seat: cursor-sdk
     model: cursor/composer-2.5
-    jobs: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
+    jobs: [conductor]
+  auto_judgment:
+    # Judgment omit-model defaults to grok-4.7 for cursor-sdk judgment-class
+    # jobs. Effort is contract_effort (answer/ask/confer/verify/execute/propagate
+    # high; conductor is conductor_drive).
+    seat: cursor-sdk
+    model: cursor/grok-4.7
+    jobs: [answer, confer, ask, verify, execute, propagate, sketch, none]
   check_review:
     # Reviewer omit-model follows workflows.check_review (anthropic sonnet).
     # Cursor-sdk generate admits composer-2.5 explicitly; other cursor ids
@@ -202,6 +200,7 @@ workflows:
 # workflows.*.model reference to it. Re-enable = drop the flag or add the slot.
 models:
   composer-2.5:      {roaming: true}
+  grok-4.7:          {roaming: true}
 
 # Per-contract omit-effort defaults (todo:model-workflow-config-first, P3).
 # Authority for resolve_desired_effort auto/omit — contract-keyed, not workflow-keyed

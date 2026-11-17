@@ -347,17 +347,16 @@ profiles:
 #   Cursor consult: team_dispatch(op="handoff", seat="cursor") → cursor IDE mailbox.
 #   Omit-model (Stargate generate): contract=implement or mechanical →
 #     workflows.mechanical_implement (cursor/composer-2.5). Every other
-#     omit-model contract → workflows.auto_judgment (cursor/composer-2.5;
-#     agent-bus:9956 — grok-4.7 barred at dispatch admit unless ban_override).
+#     omit-model contract → workflows.auto_judgment (cursor/grok-4.7).
 #     Judgment contracts (answer, confer, ask, verify, execute, propagate,
-#     conductor, freeform, sketch, …) omit to composer; explicit grok pins
-#     refuse MODEL_BANNED. omit-effort follows contract_effort (high for those
-#     judgment jobs except conductor/seed/freeform).
+#     freeform, sketch, …) omit to grok; contract=conductor → conductor_drive
+#     (composer). omit-effort follows contract_effort (high for judgment except
+#     conductor/seed/freeform low).
 #   Bound implement (Auto lane): same Composer slot as mechanical_implement;
 #     packet must be dense. cursor-sdk is platform=sdk on the Cursor
 #     subscription, NOT an Anthropic-API generate lane.
 #   Recon+investigate: contract=investigate|seed|recon → workflows.investigate
-#     (cursor/composer-2.5). investigate omit-effort is high; seed omit-effort is
+#     (cursor/grok-4.7). investigate omit-effort is high; seed omit-effort is
 #     low; recon omit-effort is medium. conductor and freeform omit-effort
 #     are low. Returns facts + OPEN FORK
 #     lines, never a bind. Ranking/bind → CDP (cdp/fable, cdp/opus-5).

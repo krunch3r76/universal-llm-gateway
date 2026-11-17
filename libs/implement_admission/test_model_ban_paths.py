@@ -35,11 +35,14 @@ def test_structural_guard_model_bearing_admit_paths() -> None:
     )
 
 
-def test_evaluate_cursor_dispatch_model_ban_refuses_grok() -> None:
+_ARGON = "cursor/gemini-4-argon"
+
+
+def test_evaluate_cursor_dispatch_model_ban_refuses_argon() -> None:
     clear_model_ban_cache()
     req = CursorDispatchRequest(
         thread_id="22499",
-        model="cursor/grok-4.7",
+        model=_ARGON,
         dispatch_id="d-ban-1",
         execution_id="e-ban-1",
         message="ban probe",
@@ -53,7 +56,7 @@ def test_evaluate_cursor_dispatch_model_ban_accepts_waiver() -> None:
     clear_model_ban_cache()
     req = CursorDispatchRequest(
         thread_id="22499",
-        model="cursor/grok-4.7",
+        model=_ARGON,
         dispatch_id="d-ban-2",
         execution_id="e-ban-2",
         message="ban probe",
@@ -69,7 +72,7 @@ def test_hop_refusal_does_not_advertise_ban_override() -> None:
     from implement_admission.model_ban import check_model_ban_safe
 
     verdict = check_model_ban_safe(
-        resolved_model="cursor/grok-4.7",
+        resolved_model=_ARGON,
         explicit_pin=True,
         workflow_key="agent_bus.hop",
         advertise_ban_override=False,
@@ -84,7 +87,7 @@ def test_handoff_refusal_does_not_advertise_ban_override() -> None:
     from implement_admission.model_ban import check_model_ban_safe
 
     verdict = check_model_ban_safe(
-        resolved_model="cursor/grok-4.7",
+        resolved_model=_ARGON,
         explicit_pin=True,
         workflow_key="team.handoff",
         advertise_ban_override=False,
@@ -108,12 +111,12 @@ async def test_hop_dispatch_entry_rejects_banned_model(
 
     monkeypatch.setattr(
         "tools.agent_bus.hop.resolve_hop_successor_model",
-        lambda _m: "cursor/grok-4.7",
+        lambda _m: _ARGON,
     )
     result = await _hop_dispatch(
         thread="22499",
         from_agent="web-anthropic",
-        desired_model="cursor/grok-4.7",
+        desired_model=_ARGON,
         reason="model-ban-path-test",
     )
     assert result.get("reason") in (
@@ -186,10 +189,10 @@ def test_resume_checks_child_model_when_parent_missing(
     )
     assert models_for_ban_check(req) == ("cursor/grok-4.7",)
     verdict, _ = evaluate_cursor_dispatch_model_ban(req)
-    assert verdict.allowed is False
+    assert verdict.allowed is True
 
 
-def test_resume_refuses_when_child_grok_parent_composer(
+def test_resume_refuses_when_child_argon_parent_composer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -198,19 +201,19 @@ def test_resume_refuses_when_child_grok_parent_composer(
     )
     req = CursorDispatchRequest(
         thread_id="22499",
-        model="cursor/grok-4.7",
+        model=_ARGON,
         dispatch_id="d-ban-resume-dual",
         execution_id="e-ban-resume-dual",
         message="x",
         resume_of="parent-composer",
     )
     assert models_for_ban_check(req) == (
-        "cursor/grok-4.7",
+        _ARGON,
         "cursor/composer-2.5",
     )
     verdict, model = evaluate_cursor_dispatch_model_ban(req)
     assert verdict.allowed is False
-    assert model == "cursor/grok-4.7"
+    assert model == _ARGON
 
 
 def test_admit_cursor_dispatch_signature_uses_helper_not_inline_ban() -> None:

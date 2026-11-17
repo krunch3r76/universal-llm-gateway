@@ -17,7 +17,7 @@ apply_tier: required_gate
 ## Ladder + binder order
 
 Mechanical implement: `lane="B"` `contract=implement` `model=cursor/composer-2.5` (omit `model=` resolves `workflows.mechanical_implement`, `cursor/composer-2.5`); throwaway worktree per top-level generate; `lane="A"` only on scope refusal or explicit shared-master request. Autonomous.
-Investigate and conductor omit-model is `cursor/composer-2.5` (`workflows.investigate` / `workflows.auto_judgment`). Conductor effort is `contract_effort.conductor` (low). `OPEN FORK:` only. Autonomous.
+Investigate omit-model is `cursor/grok-4.7` (`workflows.investigate`); judgment contracts use `workflows.auto_judgment` (grok). Conductor omit-model is `cursor/composer-2.5` (`workflows.conductor_drive`). Conductor effort is `contract_effort.conductor` (low). `OPEN FORK:` only. Autonomous.
 Independent check: width-seat critic **`cdp/opus-5.5`** (`impresario.critic`). CDP vs `anthropic/*` preference: consult-routing § CDP transport. No CDP host ⇒ `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`.
 Live checkout: `cursor/grok-4.7` `contract=freeform` on cursor-sdk (explicit file:line pin, not the omit-model default).
 Binder: `cdp/opus-5.5` → `cdp/fable` (consult only) → **`anthropic/*` fallback** (`allowed_critics`; `anthropic/claude-fable-5-1` only when Kaywan asks). `seat_unsure ⇒ consult(independent_binder)`; `binder_unsure ⇒ human`. `cdp/` admit fails ⇒ no wait/retry; `cdp_fail_route`: `anthropic`, `nested-grok`, or `operator` (worker + `parent_thread` → web-anthropic). ¬ Cowork Ask.

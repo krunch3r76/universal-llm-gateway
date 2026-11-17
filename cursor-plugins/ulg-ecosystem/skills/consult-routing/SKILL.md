@@ -221,12 +221,13 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 
 | workflow | seat | model | contracts |
 |---|---|---|---|
-| auto_judgment | cursor-sdk | cursor/composer-2.5 | answer, confer, ask, verify, execute, propagate, sketch, none, conductor |
+| auto_judgment | cursor-sdk | cursor/grok-4.7 | answer, confer, ask, verify, execute, propagate, sketch, none |
 | check_review | reviewer | anthropic/claude-sonnet-5-5 | — |
-| investigate | cursor-sdk | cursor/composer-2.5 | investigate, recon, seed |
+| conductor_drive | cursor-sdk | cursor/composer-2.5 | conductor |
+| investigate | cursor-sdk | cursor/grok-4.7 | investigate, recon, seed |
 | mechanical_implement | cursor-sdk | cursor/composer-2.5 | implement |
 
-**Roaming bare ids:** `composer-2.5`
+**Roaming bare ids:** `composer-2.5`, `grok-4.7`
 
 **contract_effort** (omit/auto defaults; contract-keyed, not per-workflow):
 
@@ -291,7 +292,7 @@ Moved from `dispatch-kernel_ulg.mdc` — read with the rule. This section holds 
 | Need | Path | Autonomy |
 |---|---|---|
 | Mechanical implement | `team_dispatch(..., lane="B", contract=implement, model=cursor/composer-2.5)`. Omit `model=` resolves `cursor/grok-4.7`. Throwaway worktree for every top-level generate, including read-only and plan. `lane="A"` only on scope refusal or an explicit shared-master request | autonomous |
-| Investigate residual · conductor drive | investigate → `cursor/grok-4.7` xhigh; conductor → `cursor/grok-4.7` high. Omitted knobs follow the card. `OPEN FORK:` only | autonomous |
+| Investigate residual · conductor drive | investigate → `cursor/grok-4.7` xhigh; conductor → `cursor/composer-2.5` (`workflows.conductor_drive`). Omitted knobs follow the card. `OPEN FORK:` only | autonomous |
 | Greater reasoning / independent check | **ACTIVE** width (not top rung) · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, proceed | autonomous on trigger |
 | Live checkout | `cursor/grok-4.7` `contract=freeform` on cursor-sdk | autonomous |
 
@@ -343,11 +344,11 @@ Rule: `anthropic-dispatch-authorization_ulg.mdc`. Standing critic is `impresario
 
 | Path | Default |
 |---|---|
-| Path-sim **A** (L1+L2) / closed-detent light consult | `cursor/composer-2.5` investigate (`workflows.investigate`) → **`cdp/opus-5.5` bind** (`impresario.critic`; `cdp/fable-5.1` (consult only), then `anthropic/*` fallback; `anthropic/claude-fable-5-1` only when Kaywan asks) |
+| Path-sim **A** (L1+L2) / closed-detent light consult | `cursor/grok-4.7` investigate (`workflows.investigate`) → **`cdp/opus-5.5` bind** (`impresario.critic`; `cdp/fable-5.1` (consult only), then `anthropic/*` fallback; `anthropic/claude-fable-5-1` only when Kaywan asks) |
 | Path-sim bundled **Q** (L0) | ACTIVE — `team_dispatch(model=<ACTIVE.model>, reasoning_effort=<ACTIVE.reasoning_effort>)` |
 | Recon+investigate judgment residual | **`seat=cursor-sdk` + `contract=investigate`** (facts + `OPEN FORK:` — never binds) |
 | API `xai/grok-4.7` on coding work | **PROHIBITED** |
-| Engineering skeptic on **codework** | **DORMANT** — `grok-4.7` barred on codework (operator ratified agent-bus:9956). Re-evaluate when a successor model (e.g. grok-5) earns admission. Use CDP judgment slots (M1–M4, `runbook:score-play`) instead. |
+| Engineering skeptic on **codework** | `seat=cursor-sdk` + `model=cursor/grok-4.7` or omit-model via `workflows.auto_judgment`; CDP judgment slots (M1–M4, `runbook:score-play`) when breadth-seat critic is required |
 | Non-code adversarial (life/analysis) | `contract=freeform` + `xai/grok-4.7` — life/analysis lane only |
 | Writing / correspondence | Grok **PROHIBITED** — L3 annex |
 

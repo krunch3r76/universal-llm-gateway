@@ -168,21 +168,22 @@ def is_cursor_sdk_generate_admission(
 
 # contract | expected_model | workflow_slot (route_policy.yaml workflows block)
 _COMPOSER = "cursor/composer-2.5"
+_GROK = "cursor/grok-4.7"
 _GOLDEN_OMIT_TABLE: tuple[tuple[str, str, str], ...] = (
-    ("answer", _COMPOSER, "auto_judgment"),
-    ("ask", _COMPOSER, "auto_judgment"),
-    ("confer", _COMPOSER, "auto_judgment"),
-    ("verify", _COMPOSER, "auto_judgment"),
-    ("execute", _COMPOSER, "auto_judgment"),
-    ("propagate", _COMPOSER, "auto_judgment"),
-    ("sketch", _COMPOSER, "auto_judgment"),
-    ("none", _COMPOSER, "auto_judgment"),
-    ("conductor", _COMPOSER, "auto_judgment"),
-    ("implement", "cursor/composer-2.5", "mechanical_implement"),
-    ("mechanical", "cursor/composer-2.5", "mechanical_implement"),
-    ("investigate", _COMPOSER, "investigate"),
-    ("recon", _COMPOSER, "investigate"),
-    ("seed", _COMPOSER, "investigate"),
+    ("answer", _GROK, "auto_judgment"),
+    ("ask", _GROK, "auto_judgment"),
+    ("confer", _GROK, "auto_judgment"),
+    ("verify", _GROK, "auto_judgment"),
+    ("execute", _GROK, "auto_judgment"),
+    ("propagate", _GROK, "auto_judgment"),
+    ("sketch", _GROK, "auto_judgment"),
+    ("none", _GROK, "auto_judgment"),
+    ("conductor", _COMPOSER, "conductor_drive"),
+    ("implement", _COMPOSER, "mechanical_implement"),
+    ("mechanical", _COMPOSER, "mechanical_implement"),
+    ("investigate", _GROK, "investigate"),
+    ("recon", _GROK, "investigate"),
+    ("seed", _GROK, "investigate"),
 )
 
 
