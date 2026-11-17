@@ -27,7 +27,7 @@ Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retriev
 | `question` | yes | — | One line, operator's words. Fills `{{question}}` |
 | `slug` | no | **inferred** (see Slug inference) | `work_key=todo:<slug>`; the todo is created if missing |
 | `packet` | no | `cortex://notes/tmp/packets/<slug>-packet.md` | Problem/seed sidecar. Authored (after retrieval) if absent |
-| `retrieval_report` | no | `cortex://notes/tmp/packets/<slug>-retrieval-report.md` | Must carry `target: todo:<slug>` at column 0 |
+| `retrieval_report` | no | `cortex://notes/tmp/packets/<slug>-retrieval-report.md` | Seed-packet report only. Must carry `target: todo:<slug>` at column 0. The spawn and plan artifacts get `<slug>-spawn-retrieval-report.md` and `<slug>-plan-retrieval-report.md` |
 | `architect_model` | no | `cdp/fable-5.2` | Leg 1 wire. `cdp/fable-5.5` is not in `route_policy` |
 | `architect_effort` | no | `high` | Leg 1 `reasoning_effort` |
 | `implement_model` | no | `cursor/composer-2.5` | Leg 3 wire. Must be a `cursor/*` slug (seat constraint) |
@@ -52,7 +52,7 @@ Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retriev
 
 1. **Parse** the parameters, apply defaults, infer `slug`. Echo the resolved set in ≤8 lines.
 2. **Preflight** (template § Preflight): registry read on `todo:<slug>`; ensure the todo with `density_triage`; fresh non-`role:root` arc thread.
-3. **Retrieval gate (seat duty).** Before authoring any packet or prompt that another agent will act on — the seed `packet` if absent, the Leg 3 commission, and any `prompt=` — Use the `retrieval-before-authoring` skill: one `rag(op=search)` per required scope for the reader (Claude reader ⇒ include `claude_api` and `constitutional_ai`), compact then `projection=full` for scopes cited, one reformulation on `weak_match: true`. Reuse the same `search_id`s for the rest of this arc; a new arc retrieves again. Write the report with `target: todo:<slug>` and `retrieval_report:` on its own line in the authored body. A packet already authored with a report is not re-retrieved.
+3. **Retrieval gate (seat duty, per artifact).** Retrieval comes first and the draft comes after it, for every artifact a model will read. Each artifact is its own authoring job with its own `rag` calls, report and `search_id`s (a new job inherits none): (a) the seed `packet` (reader `architect_model`, Claude), (b) the planner-tab prompt when `planner=glass:<n>` (reader `planner_model`, Claude; report `<slug>-spawn-retrieval-report.md`), (c) the plan, authored by the planner (reader `implement_model`; report `<slug>-plan-retrieval-report.md`), and (d) any redispatch after a red closeout, plus any `prompt=` on any leg. Use the `retrieval-before-authoring` skill: one `rag(op=search)` per required scope (`llm_prompting`, `claude_api`, `prompt_injection`, `agent_skills_research`; add `constitutional_ai` when the reader is Claude, `skill_compilation` on skill/rule bodies), `top_k=10`, compact then `projection=full` for scopes cited, one reformulation on `weak_match: true`. Write each report with `target: todo:<slug>` at column 0 and put `retrieval_report:` on its own line in the authored body. An artifact re-fired unchanged is not re-retrieved. Do not fire a leg whose artifact has no report.
 4. **Fill and run**
    - `planner=here` → read the template, substitute the slots, run the legs in order.
    - `planner=glass:<n>` → follow template § Wake registration in order: mint `agent_id` (UUID) → `agent_bus(op=subscribe, agent=cursor, thread_scope=<arc>, surface=cursor, display=<n>, agent_id=<agent_id>, title="<arc> <slug>")` → Leg 1 → `cursor_bridge(op="spawn_tab", gui_host=":<n>", agent_id=<agent_id>, model=<planner_model>, effort=<planner_effort>, work_key="todo:<slug>", thread=<arc>, prompt=<filled template>)` → verify with `agent_bus(op=subscriptions, agent=cursor, thread_scope=<arc>)`. Legs 1 and 3 carry `caller_agent="cursor"`. Spawn failure ⇒ unsubscribe and stop. `spawn_tab` alone registers nothing, so an unsubscribed tab never wakes on the Fable reply. The spawned tab runs the same retrieval gate. Do not hand the operator a manual handoff.
@@ -67,8 +67,9 @@ operator:  /lean-ladder "bind a Cowork project per team_dispatch hop" planner=gl
 seat       echo: slug (recommended)=cowork-project-team-dispatch-hop · architect=cdp/fable-5.2 high
            · implement=cursor/composer-2.5 lane B · planner=glass:8 sonnet-5-5 high
 seat       registry(todo:…) → empty · todo ensured (density_triage=mechanical) · arc thread 24xxx
-seat       retrieval gate → rag × scopes → packet + retrieval-report (target: todo:…)
+seat       retrieval gate (packet) → rag × scopes → retrieval-report → author packet (target: todo:…)
 seat       Leg 1  team_dispatch(model=cdp/fable-5.2, contract=confer, sidecar_ref=packet) → execution_id, poll_hint
+seat       retrieval gate (spawn prompt) → report → author filled prompt
 seat       agent_bus.subscribe(cursor, thread_scope=<arc>, display=8, agent_id=<uuid>) → row id
 seat       cursor_bridge.spawn_tab(:8, claude-sonnet-5-5, agent_id=<uuid>, prompt=filled template)
 seat       agent_bus.subscriptions(thread_scope=<arc>) → row carries <uuid>   (seat ends its turn)
@@ -77,7 +78,7 @@ glass tab  rename_chat "<arc> <slug>" → ends turn idle (no agent_bus wait, no 
 bus        Fable reply on <arc> → endpoint wake → BRIDGE_WAKE thread=<arc> turn=<n> pasted into the tab
 glass tab  wakes: Fable reply landed
 glass tab  md_list(confer) → md_read(Verdict, Risks)           ← sections only
-glass tab  retrieval gate (reuse search_ids) → write …-plan.md
+glass tab  retrieval gate (plan; new job, own report) → write …-plan.md
 glass tab  Leg 3 team_dispatch(seat=cursor-sdk, lane=B, model=cursor/composer-2.5,
            sidecar_ref=…-plan.md, caller_agent=cursor) → dispatch_id; ends turn idle
 
@@ -102,7 +103,7 @@ seat       wakes → follow-up to operator: what returned, what it changes, next
 
 - `seat=cursor-sdk` pairs only with a `cursor/*` model. Pairing it with `anthropic/*` raises `TypeError … FrontierGenerateRequest … 'seat'` instead of a 422 (already filed: `a:43058`, `a:42950`, narrowed in `a:43066` on `service:stargate`). For an `anthropic/*` consult use `role=` (for example `role=synthesizer`), not `seat=`.
 - On cursor-sdk pass `model_knobs={"effort":…}`, never `reasoning_effort`.
-- `planner=glass:<n>` without a verified subscription row ⇒ stop before Leg 1. A tab that polls `agent_bus(wait)` is mid-turn, and the wake layer refuses a paste into a running tab, so a polling tab is as unreachable as an unsubscribed one.
+- `planner=glass:<n>` without a verified subscription row ⇒ stop before Leg 1. A wake aimed at a mid-turn tab is held, not queued or steered: the gate returns `agent_running` (classified `pending`, retriable) and pastes nothing. There is no steer override for wakes, because the submit path's `submitChatMaybeAbortCurrent` could abort the running turn. A tab that polls `agent_bus(wait)` stays mid-turn and keeps its wake deferred, so end the turn idle.
 - A live registry row on `todo:<slug>` ⇒ stop and coordinate; ¬ duplicate.
 - Same input failed twice ⇒ no third retry; change the input once, then report.
 - `¬dispatch_primitive(surface)` ⇒ do the leg and say so in one line.
