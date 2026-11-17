@@ -17,6 +17,8 @@ _fast_from_rec = _mod._fast_from_rec
 _fast_token = _mod._fast_token
 _effort_from_rec = _mod._effort_from_rec
 _effort_token = _mod._effort_token
+_transcript_tail_path = _mod._transcript_tail_path
+_resolve_cdp_chat_url = _mod._resolve_cdp_chat_url
 
 
 def test_fast_from_model_knobs_true() -> None:
@@ -70,3 +72,45 @@ def test_effort_absent_no_suffix() -> None:
 
 def test_effort_falls_back_to_model_knobs_requested() -> None:
     assert _effort_from_rec({"model_knobs_requested": {"effort": "low"}}) == "low"
+
+
+def test_cdp_tail_prefers_address_chat_url() -> None:
+    rec = {
+        "address": {
+            "kind": "cdp",
+            "thread_id": "24021",
+            "chat_url": "https://claude.ai/chat/abc",
+        }
+    }
+    assert (
+        _transcript_tail_path("disp-1", thread_id="24021", rec=rec)
+        == "https://claude.ai/chat/abc"
+    )
+
+
+def test_cdp_tail_without_url_not_giw_conversation() -> None:
+    rec = {"address": {"kind": "cdp", "thread_id": "24021"}}
+    assert _transcript_tail_path("disp-1", thread_id="24021", rec=rec) == "—"
+
+
+def test_api_role_tail_not_giw_conversation() -> None:
+    rec = {"address": {"kind": "api_role", "thread_id": "23798"}}
+    assert _transcript_tail_path("disp-1", thread_id="23798", rec=rec) == "—"
+
+
+def test_cdp_chat_url_bus_lookup(monkeypatch) -> None:
+    rec = {"address": {"kind": "cdp", "thread_id": "1"}}
+
+    def _fake(**kwargs):
+        assert kwargs["thread_id"] == "1"
+        assert kwargs["execution_id"] == "exec-9"
+        return "https://claude.ai/chat/bus"
+
+    monkeypatch.setattr(
+        "agent_bus_store.db.threads_atomic.read_dispatch_link_chat_url",
+        _fake,
+    )
+    assert (
+        _resolve_cdp_chat_url(dispatch_id="exec-9", thread_id="1", rec=rec)
+        == "https://claude.ai/chat/bus"
+    )

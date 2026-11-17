@@ -344,7 +344,65 @@ def _context(rec: dict[str, Any]) -> tuple[int | None, int | None]:
     return None, None
 
 
-def _transcript_tail_path(dispatch_id: str) -> str:
+def _address_kind(rec: dict[str, Any]) -> str | None:
+    addr = rec.get("address")
+    if isinstance(addr, dict):
+        kind = addr.get("kind")
+        if kind:
+            return str(kind)
+    return None
+
+
+def _cdp_chat_url_from_rec(rec: dict[str, Any]) -> str | None:
+    addr = rec.get("address")
+    if not isinstance(addr, dict):
+        return None
+    url = addr.get("chat_url")
+    if url and str(url).strip():
+        return str(url).strip()
+    return None
+
+
+def _resolve_cdp_chat_url(
+    *,
+    dispatch_id: str,
+    thread_id: str | None,
+    rec: dict[str, Any],
+) -> str | None:
+    """Cowork tab URL for one CDP frontier row (ledger address or bus dispatch link)."""
+    url = _cdp_chat_url_from_rec(rec)
+    if url:
+        return url
+    exec_id = (
+        str(rec.get("execution_id") or dispatch_id).strip() if dispatch_id else ""
+    )
+    tid = (thread_id or "").strip()
+    if not tid or not exec_id:
+        return None
+    try:
+        from agent_bus_store.db.threads_atomic import read_dispatch_link_chat_url
+
+        return read_dispatch_link_chat_url(thread_id=tid, execution_id=exec_id)
+    except Exception:
+        return None
+
+
+def _transcript_tail_path(
+    dispatch_id: str,
+    *,
+    thread_id: str | None = None,
+    rec: dict[str, Any] | None = None,
+) -> str:
+    rec = rec if isinstance(rec, dict) else {}
+    kind = _address_kind(rec)
+    if kind in ("cdp", "api_role"):
+        if kind == "cdp":
+            url = _resolve_cdp_chat_url(
+                dispatch_id=dispatch_id, thread_id=thread_id, rec=rec
+            )
+            if url:
+                return url
+        return "—"
     stderr = _STDERR_DIR / f"{dispatch_id}.log"
     if stderr.is_file():
         return str(stderr)
@@ -558,6 +616,21 @@ def _build_debug(
     }
     if model_knobs is not None:
         out["model_knobs"] = model_knobs
+    kind = _address_kind(rec)
+    if kind:
+        out["frontier_kind"] = kind
+    if kind == "cdp":
+        cdp_url = _resolve_cdp_chat_url(
+            dispatch_id=dispatch_id,
+            thread_id=(
+                str(row["thread_id"] or "")
+                if "thread_id" in row.keys()
+                else None
+            ),
+            rec=rec,
+        )
+        if cdp_url:
+            out["cdp_chat_url"] = cdp_url
     return {k: v for k, v in out.items() if v is not None}
 
 
@@ -649,7 +722,11 @@ def _row_from_sqlite(
         tool_call_count=_tool_calls(rec, model=model),
         context_used=used,
         context_limit=limit,
-        transcript_tail=_transcript_tail_path(str(row["dispatch_id"])),
+        transcript_tail=_transcript_tail_path(
+            str(row["dispatch_id"]),
+            thread_id=str(row["thread_id"] or ""),
+            rec=rec,
+        ),
         fast=fast,
         effort=effort,
         started_at=_fmt_local(started_dt, tz=tz),
@@ -843,7 +920,15 @@ def _print_row(row: DispatchRow, *, use_color: bool) -> None:
             f"  last active  {last}  "
             f"({_c(idle_col, f'idle {row.idle}', use_color=use_color)})"
         )
-    print(f"  tail         {row.transcript_tail}")
+    tail_label = (
+        "cdp_url"
+        if (
+            row.transcript_tail != "—"
+            and row.transcript_tail.startswith(("http://", "https://"))
+        )
+        else "tail"
+    )
+    print(f"  {tail_label:<12} {row.transcript_tail}")
     if row.debug:
         _print_debug(row.debug, use_color=use_color)
 
@@ -871,6 +956,8 @@ _DEBUG_KEY_ORDER = (
     "commit_sha",
     "giw_live_task",
     "likely_orphan_admitted",
+    "frontier_kind",
+    "cdp_chat_url",
 )
 
 

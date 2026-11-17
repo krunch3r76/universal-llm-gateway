@@ -1316,6 +1316,50 @@ async def test_api_role_result_none_failed_posts_failed_terminal(
 
 
 @pytest.mark.asyncio
+async def test_api_role_without_work_key_still_closes_registry_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.pipeline.core.execution.async_tracker_delivery import sidecar
+
+    terminals: list[dict[str, Any]] = []
+
+    async def _capture_terminal(**kwargs: Any) -> dict[str, Any]:
+        terminals.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.work_registry_admit_relay.relay_registry_terminal",
+        _capture_terminal,
+    )
+    giw_posts: list[Any] = []
+
+    class _NoPostClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json):
+            giw_posts.append(json)
+            return httpx.Response(200, json={"ok": True})
+
+    import httpx as httpx_mod
+
+    monkeypatch.setattr(httpx_mod, "AsyncClient", _NoPostClient)
+    record = _make_api_role_to_thread_record(work_key=None)
+    await sidecar.persist_api_role_ledger(record, terminal_status="completed")
+    assert len(terminals) == 1
+    assert terminals[0]["dispatch_id"] == record.execution_id
+    assert terminals[0]["terminal_status"] == "completed"
+    assert terminals[0]["reason"] == "api_role_to_thread_delivery"
+    assert giw_posts == []
+
+
+@pytest.mark.asyncio
 async def test_persist_retries_once_on_transport_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

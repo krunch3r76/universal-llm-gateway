@@ -48,17 +48,45 @@ def _effective_resolved_model(record: PipelineExecutionRecord) -> str:
     return result_model
 
 
-def _is_api_role_team_dispatch(record: PipelineExecutionRecord) -> bool:
-    """True when API-role to_thread delivery should record economics."""
-    if not record.work_key or not record.endpoint_request_id:
-        return False
+def _is_api_role_to_thread(record: PipelineExecutionRecord) -> bool:
+    """Frontier API team_dispatch delivered onto a bus thread (not cursor-sdk)."""
     if record.op != "to_thread":
+        return False
+    if not str(record.execution_id or "").strip():
         return False
     from ...handlers.frontier_dispatch.cursor_sdk_dispatch import (
         is_cursor_sdk_dispatch_model,
     )
 
     return not is_cursor_sdk_dispatch_model(_effective_resolved_model(record))
+
+
+def _is_api_role_team_dispatch(record: PipelineExecutionRecord) -> bool:
+    """True when API-role to_thread delivery should record economics."""
+    if not record.work_key or not record.endpoint_request_id:
+        return False
+    return _is_api_role_to_thread(record)
+
+
+async def _relay_api_role_registry_terminal(
+    record: PipelineExecutionRecord,
+    *,
+    terminal_status: Literal["completed", "failed"],
+) -> None:
+    """Close the GIW frontier registry row admitted at api_role generate."""
+    from systems.frontier_consult.work_registry_admit_relay import relay_registry_terminal
+
+    body_chars: int | None = None
+    if record.result is not None and record.result.content is not None:
+        body_chars = len(str(record.result.content))
+    request_id = str(record.endpoint_request_id or record.execution_id).strip()
+    await relay_registry_terminal(
+        request_id=request_id,
+        dispatch_id=str(record.execution_id).strip(),
+        terminal_status=terminal_status,
+        reason="api_role_to_thread_delivery",
+        harvest_chars=body_chars,
+    )
 
 
 def enrich_on_behalf_sidecar_content(
@@ -91,6 +119,10 @@ async def persist_api_role_ledger(
     terminal_status: Literal["completed", "failed"] = "completed",
 ) -> None:
     """POST economics to git_integration_worker after on-behalf delivery."""
+    if _is_api_role_to_thread(record):
+        await _relay_api_role_registry_terminal(
+            record, terminal_status=terminal_status
+        )
     if not _is_api_role_team_dispatch(record):
         return
     import httpx

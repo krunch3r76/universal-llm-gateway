@@ -42,6 +42,10 @@ skills:
   agent-bus-multitask:
     surface_class: cursor_only
     mcp_surface_required: code
+  as-grand-impresario:
+    # Attended grand impresario on a commissioned work item; Cursor plugin only.
+    surface_class: cursor_only
+    mcp_surface_required: code
   agent-guidance-writing:
     surface_class: cursor_only
     mcp_surface_required: none
