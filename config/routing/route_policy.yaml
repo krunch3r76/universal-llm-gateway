@@ -193,6 +193,19 @@ workflows:
     model: anthropic/claude-sonnet-5-5
     contracts: []
 
+# Artifact-kind reviewer defaults (todo:review-defaults-by-artifact-kind).
+# Leg B admission imports load_review_default from implement_admission.
+review_defaults:
+  spec:
+    model: cursor/composer-2.5
+  implementation:
+    model: cdp/opus-5
+    contract: code-review
+    effort: high
+  implementation_claude_author:
+    model: cursor/composer-2.5
+    contract: check-review
+
 # Per-model policy keyed by bare cursor id (CURSOR_MODEL_CAPABILITIES key).
 # roaming: cheap enough per agent step that a contract: override may waive the
 # empty-scope refusal (dispatch_bounds.scope_waiver_allowed).
