@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
 from claude_bundles.holder_strings import holder_id_from_chat_url
 from universal_logging import get_logger
 
@@ -26,6 +26,11 @@ _OCCUPANCY_STATES = frozenset({"driving", "dormant"})
 # and still drops a holder the live registry no longer names.
 _STALE_DRIVING_ABSENT_S = 6 * 3600
 _SEAT_STATES = frozenset({"driving", "dormant", "superseded", "released"})
+
+
+def _holder_column_chat_url(raw: str) -> str:
+    """D1 canonical bindable URL for the holder ``chat_url`` column."""
+    return canonical_claude_seat_url(raw) or normalize_cse_url(raw)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS cse_session_holders (
@@ -98,7 +103,10 @@ def resolve_nest_parent(
     conn: sqlite3.Connection, holder_id: str
 ) -> dict[str, Any] | None:
     """Return holder row when valid CSE nest parent; else None."""
-    row = get_holder(conn, holder_id)
+    hid = (holder_id or "").strip()
+    if not hid.startswith("cse_"):
+        return None
+    row = get_holder(conn, hid)
     if row is None:
         return None
     if str(row.get("seat_state") or "") not in _VALID_NEST_PARENT:
@@ -181,7 +189,7 @@ def upsert_holder(
     holder id) and emits ``cse.holder.lane_conflict`` or the helper's
     ``cse.holder.superseded``.
     """
-    url = normalize_cse_url(chat_url)
+    url = _holder_column_chat_url(chat_url)
     hid = holder_id_from_chat_url(url)
     reg = (registration_id or "").strip() or None
     if not hid:
@@ -497,7 +505,7 @@ def seat_successor_on_lane(
             "holder": None,
             "superseded_holder_ids": [],
         }
-    url = normalize_cse_url(chat_url)
+    url = _holder_column_chat_url(chat_url)
     hid = holder_id_from_chat_url(url)
     existing = get_holder(conn, hid) if hid else None
     if existing is not None:
@@ -571,7 +579,7 @@ def occupy_holder_on_hop(
     - absent row → mint fresh + ``occupy_missed`` (not silent peer eviction)
     - different live peer on another lane → refuse (not upsert-and-evict)
     """
-    url = normalize_cse_url(occupy_target)
+    url = _holder_column_chat_url(occupy_target)
     hid = holder_id_from_chat_url(url)
     if not hid:
         return {
@@ -710,9 +718,10 @@ def reap_stale_driving_holders(
         registry_urls = live_registry_urls()
     if not registry_urls:
         return 0
+    registry_keys = {_holder_column_chat_url(url) for url in registry_urls}
     released = 0
     for holder_id, chat_url in stale:
-        if normalize_cse_url(chat_url) in registry_urls:
+        if _holder_column_chat_url(chat_url) in registry_keys:
             continue
         transition_seat_state(
             conn,
@@ -782,7 +791,7 @@ def release_holder_for_registration(
     reason: str | None = None,
 ) -> dict[str, Any] | None:
     """Transition holder row to ``released`` for a detached registration."""
-    url = normalize_cse_url(chat_url)
+    url = _holder_column_chat_url(chat_url)
     hid = holder_id_from_chat_url(url)
     if not hid:
         return None
