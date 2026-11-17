@@ -8,10 +8,39 @@ from types import SimpleNamespace
 
 import pytest
 
-from cdp_ask.execution_resume import resume_execution
+from cdp_ask.execution_resume import (
+    _seat_identities_match,
+    _seat_identity,
+    resume_execution,
+)
 from cdp_ask.execution_store import ExecutionStore
 
 pytestmark = pytest.mark.offline
+
+_UUID = "2762063d-2966-4859-a3ce-23831c6e0c86"
+
+
+def test_seat_identity_refuses_unparseable_urls() -> None:
+    """Unparseable URLs yield None; they must never compare equal."""
+    assert _seat_identity("https://claude.ai/chat/not-a-uuid") is None
+    assert _seat_identity("https://example.com/chat/x") is None
+    assert not _seat_identities_match(
+        "https://claude.ai/chat/not-a-uuid",
+        "https://claude.ai/chat/not-a-uuid",
+    )
+    assert not _seat_identities_match(
+        f"https://claude.ai/chat/{_UUID}",
+        "https://claude.ai/chat/not-a-uuid",
+    )
+
+
+def test_seat_identity_refuses_kind_mismatch() -> None:
+    """Different seat kinds never match even when both URLs parse."""
+    chat = f"https://claude.ai/chat/{_UUID}"
+    cowork = "https://claude.ai/cowork/cse_kind_mismatch_probe"
+    assert _seat_identity(chat) == ("unified_chat", _UUID.lower())
+    assert _seat_identity(cowork) == ("cowork_cse", "cse_kind_mismatch_probe")
+    assert not _seat_identities_match(chat, cowork)
 
 
 class _EmptyLocator:
