@@ -170,13 +170,10 @@ def test_conductor_omit_effort_fills_policy_low(
         model_knobs={"fast": "true"},
     )
     assert result.aligned_knobs["effort"] == "low"
-    assert result.aligned_knobs["fast"] == "false"
+    assert result.aligned_knobs["fast"] == "true"
     assert result.knob_resolution["effort"].status == "policy_default"
-    assert result.knob_resolution["fast"].status == "policy_override"
-    override_warnings = [
-        w for w in result.warnings if w.code == "knob_policy_override"
-    ]
-    assert len(override_warnings) == 1
+    assert result.knob_resolution["fast"].status == "accepted"
+    assert not any(w.code == "knob_policy_override" for w in result.warnings)
 
 
 def test_explicit_effort_wins_over_policy(
@@ -188,9 +185,9 @@ def test_explicit_effort_wins_over_policy(
         model_knobs={"effort": "xhigh", "fast": "true"},
     )
     assert result.aligned_knobs["effort"] == "xhigh"
-    assert result.aligned_knobs["fast"] == "false"
+    assert result.aligned_knobs["fast"] == "true"
     assert result.knob_resolution["effort"].status == "accepted"
-    assert result.knob_resolution["fast"].status == "policy_override"
+    assert result.knob_resolution["fast"].status == "accepted"
 
 
 def test_composer_omit_fast_fills_policy_true(
@@ -218,3 +215,15 @@ def test_conductor_grok_omit_fast_fills_policy_false(
     assert result.knob_resolution["fast"].status == "policy_default"
     assert result.aligned_knobs["effort"] == "low"
     assert not any(w.code == "knob_policy_override" for w in result.warnings)
+
+
+def test_grok_fast_invalid_value_dropped(
+    captured_events: dict[str, list[Any]],
+) -> None:
+    result = align_cursor_knobs(
+        resolved_model="cursor/grok-4.7",
+        contract="conductor",
+        model_knobs={"fast": "yes"},
+    )
+    assert "fast" not in result.aligned_knobs
+    assert result.knob_resolution["fast"].status == "invalid_value"
