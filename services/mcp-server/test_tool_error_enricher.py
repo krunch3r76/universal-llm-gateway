@@ -4,15 +4,18 @@ Covers unexpected_keyword_argument (accepted/required/hint), type-mismatch (expe
 dispatch-shape hints, and happy-path pass-through.
 """
 
+import json
 import re
 import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pytest
 from fastmcp import Client, FastMCP
+from tools._agent_bus_read import register_agent_bus_read_tool
 from tools._agent_tools import JsonArgStr
 from tool_error_enricher import register_tool_error_enricher
 
@@ -502,3 +505,90 @@ async def test_validation_error_event_records_dispatch_shape_hint(monkeypatch):
         )
     assert captured
     assert captured[-1].get("dispatch_shape_hint") is True
+
+
+@pytest.mark.asyncio
+async def test_agent_bus_read_flat_dispatch_hint_replay_string_last_reaches_fetch():
+    relay_calls: list[int] = []
+
+    def relay(service: str, method: str, path: str, **kwargs: object) -> dict[str, list]:
+        del service, method, path, kwargs
+        relay_calls.append(1)
+        return {"turns": []}
+
+    mcp = FastMCP("dispatch-replay-fetch-last")
+    register_agent_bus_read_tool(mcp)
+    register_tool_error_enricher(mcp)
+    client = Client(mcp)
+    payload = {
+        "op": "fetch",
+        "thread": "24132",
+        "projection": "header",
+        "last": "1",
+    }
+    with patch("tools.agent_bus.fetch.relay", side_effect=relay):
+        async with client:
+            res = await client.call_tool("agent_bus_read", payload, raise_on_error=False)
+        env = res.structured_content
+        assert "example" in env
+        replay_args = _example_call_args(env["example"])
+        async with client:
+            replay = await client.call_tool("agent_bus_read", replay_args)
+    assert relay_calls, "relay should run on successful replay"
+    assert "error" not in str(replay.structured_content)
+
+
+@pytest.mark.asyncio
+async def test_agent_bus_read_dispatch_hint_example_numeric_inner_types():
+    mcp = FastMCP("dispatch-example-numeric-last")
+    register_agent_bus_read_tool(mcp)
+    register_tool_error_enricher(mcp)
+    client = Client(mcp)
+    payload = {
+        "op": "fetch",
+        "thread": "24132",
+        "projection": "header",
+        "last": "1",
+    }
+    async with client:
+        res = await client.call_tool("agent_bus_read", payload, raise_on_error=False)
+    env = res.structured_content
+    inner = json.loads(_example_call_args(env["example"])["arguments"])
+    assert inner["last"] == 1
+    assert isinstance(inner["last"], int)
+
+
+@pytest.mark.asyncio
+async def test_agent_bus_read_get_dispatch_hint_replay_string_turn_numbers_reaches_get():
+    relay_calls: list[int] = []
+
+    def relay(service: str, method: str, path: str, **kwargs: object) -> dict[str, Any]:
+        del service, method, path, kwargs
+        relay_calls.append(1)
+        return {
+            "id": 1,
+            "thread": "t",
+            "turn_number": 1,
+            "body": "x",
+            "to_agent": "all",
+        }
+
+    mcp = FastMCP("dispatch-replay-get-turn-numbers")
+    register_agent_bus_read_tool(mcp)
+    register_tool_error_enricher(mcp)
+    client = Client(mcp)
+    payload = {"op": "get", "thread": "t", "turn_numbers": ["1"]}
+    with patch("tools.agent_bus.fetch.relay", side_effect=relay):
+        async with client:
+            res = await client.call_tool("agent_bus_read", payload, raise_on_error=False)
+        env = res.structured_content
+        assert "example" in env
+        replay_args = _example_call_args(env["example"])
+        async with client:
+            replay = await client.call_tool("agent_bus_read", replay_args)
+    assert relay_calls, "relay should run on successful get replay"
+    body = replay.structured_content
+    assert not (
+        isinstance(body, dict)
+        and body.get("reason") == "get_turn_numbers_invalid"
+    )

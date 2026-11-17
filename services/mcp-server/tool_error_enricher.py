@@ -31,6 +31,11 @@ from pydantic import ValidationError as PydanticValidationError
 from request_profile import current_request_metadata
 from universal_logging import get_logger
 
+from _dispatch_example_normalize import (
+    normalize_dispatch_example_values,
+    resolve_dispatch_inner_handler,
+)
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -342,6 +347,10 @@ def _build_dispatch_shape_hint(
             stray, op_key_consumed=op_key_consumed, call_args=call_args
         )
         inner_obj = {k: call_args[k] for k in inner_keys}
+        if op_name is not None:
+            handler = resolve_dispatch_inner_handler(tool_name, op_name)
+            if handler is not None:
+                inner_obj = normalize_dispatch_example_values(handler, inner_obj)
         inner_json = _json_argument_blob(inner_obj)
         example = f'{tool_name}({selector}="{op_name}", arguments=\'{inner_json}\')'
         if len(example) > _DISPATCH_EXAMPLE_MAX_CHARS:
