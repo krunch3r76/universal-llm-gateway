@@ -12,8 +12,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-import logging
-
+from universal_logging import get_logger
 from universal_protocol.errors import ProtocolError
 
 from claude_bundles import cdp_registry_events as _events
@@ -42,7 +41,7 @@ from .models import (
     seat_open,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def holder_projection_applies(row: dict[str, Any]) -> bool:
