@@ -11,6 +11,8 @@ from cdp_ask.test_cse_session_bind_address import (
 
 pytestmark = pytest.mark.offline
 
+pytest_plugins = ("cdp_ask.test_cse_session_bind_address",)
+
 _CSE_TOKEN = "cse_l2r6f1"
 _LEGACY_WWW = f"https://www.claude.ai/cowork/{_CSE_TOKEN}"
 _CANON_COWORK = f"https://claude.ai/cowork/{_CSE_TOKEN}"
