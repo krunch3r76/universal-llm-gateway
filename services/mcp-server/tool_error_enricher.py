@@ -11,12 +11,14 @@ Signal 5: mcp.tool.validation.error events include first_invocation_this_session
 
 from __future__ import annotations
 
+import json
 import threading
 from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import mcp.types as mt
+from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.base import ToolResult
 from fs_roots import (
@@ -25,7 +27,7 @@ from fs_roots import (
     permitted_ops,
 )
 from mcp_events import record
-from pydantic import ValidationError
+from pydantic import ValidationError as PydanticValidationError
 from request_profile import current_request_metadata
 from universal_logging import get_logger
 
@@ -43,6 +45,10 @@ _FS_SANDBOX_HINT = (
     "Use workspaces://{repo}/{rel} or cortex://{rel}, "
     "or pass sandbox=cortex|workspaces explicitly."
 )
+
+_DISPATCH_SELECTOR_ALIAS = {"tool": "op", "op": "tool"}
+_DISPATCH_EXAMPLE_MAX_CHARS = 400
+_DISPATCH_PLACEHOLDER_INNER = '{"<param>": "<value>"}'
 
 _FS_LIFE_SANDBOX_HINT_READONLY = (
     "On /mcp/life, omit sandbox (defaults to cortex) or use a cortex:// Share URI. "
@@ -202,6 +208,153 @@ _SESSION_TOOL_SEEN: OrderedDict[tuple[str, str], bool] = OrderedDict()
 _SESSION_TOOL_MAX = 4096  # max distinct (session, tool) pairs tracked
 
 
+def _is_dispatch_shaped_schema(schema: dict[str, Any]) -> bool:
+    """True when schema matches dispatch wire shape: string ``arguments`` + tool|op."""
+    props_raw = schema.get("properties", {})
+    if not isinstance(props_raw, dict):
+        return False
+    args_schema = props_raw.get("arguments")
+    if not isinstance(args_schema, dict) or args_schema.get("type") != "string":
+        return False
+    has_tool = "tool" in props_raw
+    has_op = "op" in props_raw
+    return has_tool ^ has_op
+
+
+def _dispatch_selector_key(schema: dict[str, Any]) -> str | None:
+    props_raw = schema.get("properties", {})
+    if not isinstance(props_raw, dict):
+        return None
+    if "tool" in props_raw:
+        return "tool"
+    if "op" in props_raw:
+        return "op"
+    return None
+
+
+def _dispatch_stray_params(
+    exc: PydanticValidationError,
+    *,
+    tool_param_names: set[str],
+    call_args: dict[str, Any],
+) -> set[str] | None:
+    """Return stray top-level param names when dispatch-shape hint is eligible."""
+    allowed_with_hint = {
+        "unexpected_keyword_argument",
+        "missing",
+        "missing_argument",
+    }
+    stray: set[str] = set()
+    saw_unexpected = False
+    for err in exc.errors():
+        err_type = str(err.get("type", ""))
+        if err_type not in allowed_with_hint:
+            return None
+        if err_type != "unexpected_keyword_argument":
+            continue
+        saw_unexpected = True
+        loc = err.get("loc") or ()
+        param = str(loc[0]) if loc else "?"
+        if param not in call_args or param in tool_param_names:
+            return None
+        stray.add(param)
+    if not saw_unexpected:
+        return None
+    return stray or None
+
+
+def _resolve_dispatch_op_name(
+    selector: str,
+    *,
+    call_args: dict[str, Any],
+    stray: set[str],
+) -> tuple[str | None, str | None]:
+    """Return (op_name, key_consumed_for_op) from call payload and stray keys."""
+    if selector in call_args and selector not in stray:
+        raw = call_args[selector]
+        return (str(raw) if raw is not None else None), None
+    alias = _DISPATCH_SELECTOR_ALIAS.get(selector, "")
+    if alias and alias in stray:
+        raw = call_args.get(alias)
+        return (str(raw) if raw is not None else None), alias
+    if selector in stray:
+        raw = call_args.get(selector)
+        return (str(raw) if raw is not None else None), selector
+    return None, None
+
+
+def _dispatch_inner_argument_keys(
+    stray: set[str],
+    *,
+    op_key_consumed: str | None,
+    call_args: dict[str, Any],
+) -> list[str]:
+    return [
+        key
+        for key in call_args
+        if key in stray and key != op_key_consumed
+    ]
+
+
+def _json_argument_blob(values: dict[str, Any]) -> str:
+    return json.dumps(values, ensure_ascii=False, separators=(", ", ": "))
+
+
+def _dispatch_placeholder_example(tool_name: str, selector: str) -> str:
+    return (
+        f'{tool_name}({selector}="<op>", '
+        f"arguments='{_DISPATCH_PLACEHOLDER_INNER}')"
+    )
+
+
+def _build_dispatch_shape_hint(
+    tool_name: str,
+    schema: dict[str, Any],
+    exc: PydanticValidationError,
+    call_args: dict[str, Any],
+) -> tuple[str, str] | None:
+    if not _is_dispatch_shaped_schema(schema):
+        return None
+    selector = _dispatch_selector_key(schema)
+    if not selector:
+        return None
+    props_raw = schema.get("properties", {})
+    tool_param_names = (
+        {k for k in props_raw if isinstance(k, str)} if isinstance(props_raw, dict) else set()
+    )
+    stray = _dispatch_stray_params(
+        exc, tool_param_names=tool_param_names, call_args=call_args
+    )
+    if stray is None:
+        return None
+
+    use_placeholder = "arguments" in call_args
+    op_name, op_key_consumed = _resolve_dispatch_op_name(
+        selector, call_args=call_args, stray=stray
+    )
+    if not use_placeholder and op_name is None:
+        use_placeholder = True
+
+    if use_placeholder:
+        example = _dispatch_placeholder_example(tool_name, selector)
+    else:
+        inner_keys = _dispatch_inner_argument_keys(
+            stray, op_key_consumed=op_key_consumed, call_args=call_args
+        )
+        inner_obj = {k: call_args[k] for k in inner_keys}
+        inner_json = _json_argument_blob(inner_obj)
+        example = f'{tool_name}({selector}="{op_name}", arguments=\'{inner_json}\')'
+        if len(example) > _DISPATCH_EXAMPLE_MAX_CHARS:
+            example = _dispatch_placeholder_example(tool_name, selector)
+
+    hint = (
+        f"Dispatch-style tool '{tool_name}': put op-specific parameters inside the "
+        f"`arguments` JSON string, not as top-level keys. "
+        "See agent_skill:dispatch-shape."
+    )
+    return hint, example
+
+
 def _record_invocation(session_id: str, tool_name: str) -> bool:
     """Record invocation; return True if this is the first call for (session, tool).
 
@@ -234,142 +387,156 @@ class ToolErrorEnricher(Middleware):
         session_id = str(meta.get("mcp_session_id") or "")
         first_invocation = _record_invocation(session_id, tool_name)
 
+        pydantic_exc: PydanticValidationError | None = None
         try:
             return await call_next(context)
-        except ValidationError as exc:
-            schema: dict[str, Any] = {}
-            try:
-                if context.fastmcp_context and context.fastmcp_context.fastmcp:
-                    tool_obj = await context.fastmcp_context.fastmcp.get_tool(tool_name)
-                    if tool_obj is not None:
-                        schema = getattr(tool_obj, "parameters", {}) or {}
-            except Exception as exc:
-                # lookup failure must never poison the error path
-                logger.debug(
-                    "ToolErrorEnricher schema lookup failed for %s: %s", tool_name, exc
-                )
-
-            schema_props_raw = (
-                schema.get("properties", {}) if isinstance(schema, dict) else {}
-            )
-            schema_props = (
-                schema_props_raw if isinstance(schema_props_raw, dict) else {}
-            )
-            tool_param_names = {k for k in schema_props if isinstance(k, str)}
-
-            # Heuristic: enrich only errors that look like they came from the
-            # FastMCP tool-arg validation boundary. If no error loc matches a
-            # tool parameter name AND no error type is arg-boundary-specific,
-            # the ValidationError almost certainly came from inside the tool
-            # body (e.g. an internal Model.model_validate call); enriching it
-            # with the tool's schema would emit misleading hints (the tool's
-            # parameter list would be listed as accepted_params for an
-            # internal Model error). Re-raise and let the tool's own
-            # try/except — or the generic _tool_error_envelope downstream —
-            # handle it.
-            arg_boundary_types = {
-                "unexpected_keyword_argument",
-                "missing",
-                "missing_argument",
-            }
-            err_first_locs: set[str] = set()
-            err_types: set[str] = set()
-            for e in exc.errors():
-                loc_seq = e.get("loc") or ()
-                if loc_seq:
-                    err_first_locs.add(str(loc_seq[0]))
-                err_types.add(str(e.get("type", "")))
-            looks_like_arg_boundary = bool(
-                (err_first_locs & tool_param_names) or (err_types & arg_boundary_types)
-            )
-            if not looks_like_arg_boundary:
+        except FastMCPValidationError as wrapped:
+            if not isinstance(wrapped.__cause__, PydanticValidationError):
                 raise
+            pydantic_exc = wrapped.__cause__
+        except PydanticValidationError as err:
+            pydantic_exc = err
 
-            errors: list[dict[str, Any]] = []
-            for err in exc.errors():
-                loc = err.get("loc") or ()
-                param = str(loc[0]) if loc else "?"
-                err_type = str(err.get("type", "unknown"))
-                input_val = err.get("input")
-                # For missing/missing_argument, pydantic puts the entire call
-                # payload in err["input"]. Describing that payload's type as
-                # the "received" type is misleading — the agent didn't send
-                # a value for the missing param at all. Override here so the
-                # downstream hint reflects the actual structural cause.
-                if err_type in {"missing", "missing_argument"}:
-                    input_str = ""
-                    input_type = "<missing>"
-                else:
-                    input_str = str(input_val) if input_val is not None else ""
-                    input_type = (
-                        type(input_val).__name__
-                        if input_val is not None
-                        else "NoneType"
-                    )
-                entry: dict[str, Any] = {
-                    "type": err_type,
-                    "param": param,
-                    "msg": err.get("msg", ""),
-                    "input": input_str,
-                    "input_type": input_type,
-                }
-                if err_type == "unexpected_keyword_argument":
-                    accepted = sorted(tool_param_names)
-                    required_raw = (
-                        schema.get("required", []) if isinstance(schema, dict) else []
-                    )
-                    required = required_raw if isinstance(required_raw, list) else []
-                    entry["accepted_params"] = accepted
-                    entry["required_params"] = required
-                    acc = ", ".join(accepted) if accepted else "none"
-                    entry["hint"] = (
-                        f"'{param}' is not a parameter of '{tool_name}'. "
-                        f"Accepted: {acc}."
-                    )
-                elif err_type in {"missing", "missing_argument"}:
-                    prop_schema_raw = schema_props.get(param, {})
-                    prop_schema = (
-                        prop_schema_raw if isinstance(prop_schema_raw, dict) else {}
-                    )
-                    exp_type = prop_schema.get("type")
-                    if exp_type:
-                        entry["expected_type"] = exp_type
-                    type_hint = exp_type or "valid input"
-                    if tool_name == "fs" and param == "sandbox":
-                        entry["hint"] = fs_missing_sandbox_hint(
-                            _call_payload_path(err.get("input")),
-                            surface=str(meta.get("surface") or ""),
-                        )
-                    else:
-                        entry["hint"] = f"'{param}' is required (expects {type_hint})."
-                else:
-                    prop_schema_raw = schema_props.get(param, {})
-                    prop_schema = (
-                        prop_schema_raw if isinstance(prop_schema_raw, dict) else {}
-                    )
-                    exp_type = prop_schema.get("type")
-                    if exp_type:
-                        entry["expected_type"] = exp_type
-                    type_hint = exp_type or "valid input"
-                    entry["hint"] = (
-                        f"'{param}' expects {type_hint}; received {input_type}."
-                    )
-                errors.append(entry)
+        assert pydantic_exc is not None
+        exc = pydantic_exc
 
-            envelope: dict[str, Any] = {
-                "error": str(exc),
-                "error_type": "ValidationError",
-                "tool": tool_name,
-                "errors": errors,
-            }
-            record(
-                "mcp.tool.validation.error",
-                tool=tool_name,
-                error_count=len(errors),
-                error_types=sorted({e.get("type", "") for e in errors}),
-                first_invocation_this_session=first_invocation,
+        schema: dict[str, Any] = {}
+        try:
+            if context.fastmcp_context and context.fastmcp_context.fastmcp:
+                tool_obj = await context.fastmcp_context.fastmcp.get_tool(tool_name)
+                if tool_obj is not None:
+                    schema = getattr(tool_obj, "parameters", {}) or {}
+        except Exception as lookup_exc:
+            # lookup failure must never poison the error path
+            logger.debug(
+                "ToolErrorEnricher schema lookup failed for %s: %s",
+                tool_name,
+                lookup_exc,
             )
-            return ToolResult(structured_content=envelope, is_error=True)
+
+        schema_props_raw = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        schema_props = schema_props_raw if isinstance(schema_props_raw, dict) else {}
+        tool_param_names = {k for k in schema_props if isinstance(k, str)}
+
+        # Heuristic: enrich only errors that look like they came from the
+        # FastMCP tool-arg validation boundary. If no error loc matches a
+        # tool parameter name AND no error type is arg-boundary-specific,
+        # the ValidationError almost certainly came from inside the tool
+        # body (e.g. an internal Model.model_validate call); enriching it
+        # with the tool's schema would emit misleading hints (the tool's
+        # parameter list would be listed as accepted_params for an
+        # internal Model error). Re-raise and let the tool's own
+        # try/except — or the generic _tool_error_envelope downstream —
+        # handle it.
+        arg_boundary_types = {
+            "unexpected_keyword_argument",
+            "missing",
+            "missing_argument",
+        }
+        err_first_locs: set[str] = set()
+        err_types: set[str] = set()
+        for e in exc.errors():
+            loc_seq = e.get("loc") or ()
+            if loc_seq:
+                err_first_locs.add(str(loc_seq[0]))
+            err_types.add(str(e.get("type", "")))
+        looks_like_arg_boundary = bool(
+            (err_first_locs & tool_param_names) or (err_types & arg_boundary_types)
+        )
+        if not looks_like_arg_boundary:
+            raise exc
+
+        errors: list[dict[str, Any]] = []
+        for err in exc.errors():
+            loc = err.get("loc") or ()
+            param = str(loc[0]) if loc else "?"
+            err_type = str(err.get("type", "unknown"))
+            input_val = err.get("input")
+            # For missing/missing_argument, pydantic puts the entire call
+            # payload in err["input"]. Describing that payload's type as
+            # the "received" type is misleading — the agent didn't send
+            # a value for the missing param at all. Override here so the
+            # downstream hint reflects the actual structural cause.
+            if err_type in {"missing", "missing_argument"}:
+                input_str = ""
+                input_type = "<missing>"
+            else:
+                input_str = str(input_val) if input_val is not None else ""
+                input_type = (
+                    type(input_val).__name__ if input_val is not None else "NoneType"
+                )
+            entry: dict[str, Any] = {
+                "type": err_type,
+                "param": param,
+                "msg": err.get("msg", ""),
+                "input": input_str,
+                "input_type": input_type,
+            }
+            if err_type == "unexpected_keyword_argument":
+                accepted = sorted(tool_param_names)
+                required_raw = schema.get("required", []) if isinstance(schema, dict) else []
+                required = required_raw if isinstance(required_raw, list) else []
+                entry["accepted_params"] = accepted
+                entry["required_params"] = required
+                acc = ", ".join(accepted) if accepted else "none"
+                entry["hint"] = (
+                    f"'{param}' is not a parameter of '{tool_name}'. Accepted: {acc}."
+                )
+            elif err_type in {"missing", "missing_argument"}:
+                prop_schema_raw = schema_props.get(param, {})
+                prop_schema = prop_schema_raw if isinstance(prop_schema_raw, dict) else {}
+                exp_type = prop_schema.get("type")
+                if exp_type:
+                    entry["expected_type"] = exp_type
+                type_hint = exp_type or "valid input"
+                if tool_name == "fs" and param == "sandbox":
+                    entry["hint"] = fs_missing_sandbox_hint(
+                        _call_payload_path(err.get("input")),
+                        surface=str(meta.get("surface") or ""),
+                    )
+                else:
+                    entry["hint"] = f"'{param}' is required (expects {type_hint})."
+            else:
+                prop_schema_raw = schema_props.get(param, {})
+                prop_schema = prop_schema_raw if isinstance(prop_schema_raw, dict) else {}
+                exp_type = prop_schema.get("type")
+                if exp_type:
+                    entry["expected_type"] = exp_type
+                type_hint = exp_type or "valid input"
+                entry["hint"] = (
+                    f"'{param}' expects {type_hint}; received {input_type}."
+                )
+            errors.append(entry)
+
+        raw_call_args = getattr(context.message, "arguments", None)
+        call_args = raw_call_args if isinstance(raw_call_args, dict) else {}
+        dispatch_shape: tuple[str, str] | None = None
+        try:
+            dispatch_shape = _build_dispatch_shape_hint(tool_name, schema, exc, call_args)
+        except Exception as hint_exc:
+            logger.debug(
+                "ToolErrorEnricher dispatch hint build failed for %s: %s",
+                tool_name,
+                hint_exc,
+            )
+
+        envelope: dict[str, Any] = {}
+        if dispatch_shape is not None:
+            envelope["hint"] = dispatch_shape[0]
+            envelope["example"] = dispatch_shape[1]
+        envelope["error"] = str(exc)
+        envelope["error_type"] = "ValidationError"
+        envelope["tool"] = tool_name
+        envelope["errors"] = errors
+        record(
+            "mcp.tool.validation.error",
+            tool=tool_name,
+            error_count=len(errors),
+            error_types=sorted({e.get("type", "") for e in errors}),
+            first_invocation_this_session=first_invocation,
+            dispatch_shape_hint=dispatch_shape is not None,
+        )
+        return ToolResult(structured_content=envelope, is_error=True)
 
 
 def register_tool_error_enricher(mcp: FastMCP) -> None:
