@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any, Literal
 
 from claude_bundles.cse_url import parse_claude_seat_address
@@ -13,16 +12,6 @@ IdentityCheck = Literal[
     "foreign_transcript",
     "unverified",
 ]
-
-_CSE_TOKEN = re.compile(r"(cse_[A-Za-z0-9]+)")
-
-
-def _cse_url_from_token(raw: str) -> str | None:
-    text = (raw or "").strip()
-    parsed = parse_claude_seat_address(text)
-    if parsed is not None and parsed.kind in ("unified_chat", "cowork_cse"):
-        return parsed.canonical_url
-    return None
 
 
 def registration_drift_fields(
@@ -41,22 +30,14 @@ def cse_token_from_url(raw: str | None) -> str | None:
     parsed = parse_claude_seat_address(raw)
     if parsed is not None and parsed.kind == "cowork_cse":
         return parsed.primary_id
-    normalized = _cse_url_from_token(raw or "")
-    if not normalized:
-        return None
-    match = _CSE_TOKEN.search(normalized)
-    return match.group(1) if match else None
+    return None
 
 
 def _seat_primary_id(raw: str | None) -> str | None:
     parsed = parse_claude_seat_address(raw)
-    if parsed is None:
+    if parsed is None or parsed.kind not in ("unified_chat", "cowork_cse"):
         return None
-    if parsed.kind == "unified_chat":
-        return parsed.primary_id
-    if parsed.kind == "cowork_cse":
-        return parsed.primary_id
-    return None
+    return parsed.primary_id
 
 
 def build_harvest_identity_block(
