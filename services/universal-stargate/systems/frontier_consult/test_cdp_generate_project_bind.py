@@ -287,6 +287,11 @@ async def _submit_via_worker(
 
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    from agent_bus_store.db import init_db
+
+    init_db()
     staged = stage_cdp_prompt_with_skills(
         execution_id="exec-project-bind",
         prompt_text="project bind body\n",
