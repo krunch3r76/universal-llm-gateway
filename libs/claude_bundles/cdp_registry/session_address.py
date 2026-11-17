@@ -8,10 +8,11 @@ not the Jupiter registry; the pin is ``REGISTRATION_REGISTRY_SSH_ENV``
 from __future__ import annotations
 
 import contextlib
-import logging
 import time
 from collections.abc import Callable
 from typing import Any
+
+import logging
 
 from universal_protocol.errors import ProtocolError
 
@@ -242,10 +243,15 @@ def bind_session_address(
             return False
         updated = dict(row)
         prior = str(updated.get("chat_url") or "").strip()
-        if prior == url and (
+        prior_key = canonical_claude_seat_url(prior) or normalize_cse_url(prior)
+        if prior_key == url and (
             execution_id is None
             or str(updated.get("execution_id") or "") == str(execution_id)
         ):
+            if prior != url:
+                updated["chat_url"] = url
+                active[registration_id] = updated
+                _store.write_active(active)
             _append_lane_less_episode(
                 url=url,
                 registration_id=registration_id,

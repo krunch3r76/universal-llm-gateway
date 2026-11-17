@@ -100,6 +100,44 @@ def _live_seat(url: str = _CSE) -> str:
     return seat.registration_id
 
 
+def test_bind_session_address_idempotent_www_while_in_flight(
+    isolated_registry: Path,
+) -> None:
+    from claude_bundles.cdp_registry.execution_state import set_execution_state
+    from claude_bundles.cdp_registry.session_address import bind_session_address
+
+    legacy = "https://www.claude.ai/cowork/cse_inflight_ac10"
+    canonical = "https://claude.ai/cowork/cse_inflight_ac10"
+    other = "https://claude.ai/cowork/cse_inflight_other"
+    seat = reg.register_lane(
+        holder="inflight-www",
+        purpose="operator-proxy",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    rid = seat.registration_id
+    reg.bind_chat_url_only(rid, chat_url=canonical)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[rid])
+        row["chat_url"] = legacy
+        active[rid] = row
+        reg._store.write_active(active)
+    set_execution_state(
+        rid,
+        execution_id="exec-live",
+        state="streaming",
+        kind="execution",
+    )
+    with patch(
+        "claude_bundles.cdp_registry.session_address._project_holder",
+        return_value="ok",
+    ):
+        assert bind_session_address(rid, chat_url=legacy) is True
+        assert bind_session_address(rid, chat_url=other) is False
+    assert reg._store.load_active()[rid]["chat_url"] == canonical
+
+
 def test_retire_misbound_appends_provenance_journal(isolated_registry: Path) -> None:
     from claude_bundles.cdp_registry.session_address import (
         retire_misbound_dormant_attachment,
