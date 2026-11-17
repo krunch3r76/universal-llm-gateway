@@ -134,6 +134,9 @@ def hop_generate_payload(
     predecessor_registration_id: str | None = None,
     reasoning_effort: str | None = None,
     caller_agent: str,
+    project_uuid: str | None = None,
+    project_binding: str | None = None,
+    claude_project_name: str | None = None,
 ) -> dict[str, Any]:
     """Commission JSON for a hop POST. Omits ``job`` when the decision omitted it."""
     payload: dict[str, Any] = {
@@ -153,6 +156,13 @@ def hop_generate_payload(
         payload["predecessor_registration_id"] = reg
     if reasoning_effort:
         payload["reasoning_effort"] = reasoning_effort
+    for project_key, project_val in (
+        ("project_uuid", project_uuid),
+        ("project_binding", project_binding),
+        ("claude_project_name", claude_project_name),
+    ):
+        if project_val is not None:
+            payload[project_key] = project_val
     return payload
 
 
@@ -219,6 +229,9 @@ async def _hop_dispatch(
     after_turn: int = 0,
     subject: str | None = None,
     caller_agent: str | None = None,
+    project_uuid: str | None = None,
+    project_binding: str | None = None,
+    claude_project_name: str | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.hop``.
 
@@ -440,6 +453,9 @@ async def _hop_dispatch(
         predecessor_registration_id=cse_registration_id,
         reasoning_effort=wire_effort,
         caller_agent=wire_caller,
+        project_uuid=project_uuid,
+        project_binding=project_binding,
+        claude_project_name=claude_project_name,
     )
 
     async def _poster(body: dict[str, Any]) -> dict[str, Any]:

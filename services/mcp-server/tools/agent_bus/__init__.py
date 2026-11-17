@@ -218,7 +218,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
         **request:** RETIRED (a:38728) — refuses. Code commission: team_dispatch on ulg-code. Life CSE: life_dispatch. A bus turn: send.
 
-        **hop:** `thread` + `reason`. `desired_model` defaults to `cdp/opus-5.5-high`; a bare id such as `fable-5.1-high` is sent as `cdp/fable-5.1-high`. A slash-prefixed id (`cdp/opus-5.5-max`, `cursor/grok-4.7`) is sent as given. `desired_effort` is optional. Returns `successor`, not `status:done`.
+        **hop:** `thread` + `reason`. `desired_model` defaults to `cdp/opus-5.5-high`; a bare id such as `fable-5.1-high` is sent as `cdp/fable-5.1-high`. A slash-prefixed id (`cdp/opus-5.5-max`, `cursor/grok-4.7`) is sent as given. `desired_effort` is optional. Optional Cowork Project on the successor `generate` relay: `project_uuid`, `project_binding`, `claude_project_name` (Stargate admit precedence `project_uuid` > `project_binding` > `claude_project_name` > default Project; hop forwards verbatim, does not resolve). Continuity hops do not inherit the predecessor's Project — set one of these when the successor must land outside the default. Returns `successor`, not `status:done`.
 
         **substrate_graph_write:** `entity_id` + `claim` or **422 `graph_write_entity_required`|`graph_write_claim_required`**.
 
