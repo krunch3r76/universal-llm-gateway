@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sqlite3
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -23,7 +24,9 @@ from hop_handoff import (
     parse_successor_birth_id,
 )
 from hop_handoff.body import parse_hop_admitted_at, parse_responsibility
+from ruamel.yaml import YAML
 
+from tools import agent_bus as agent_bus_pkg
 from tools.agent_bus.hop import (
     _hop_dispatch,
     hop_generate_payload,
@@ -34,6 +37,24 @@ from tools.agent_bus.hop_cdp_caller import (
     resolve_hop_cdp_caller_agent,
 )
 from tools.agent_bus.request_intake import reset_request_id_registry_for_tests
+
+_PROJECT_FIELDS = ("project_uuid", "project_binding", "claude_project_name")
+_EXPLICIT_UUID = "0198c0de-1111-7000-8000-00000000beef"
+_PRECEDENCE = (
+    "project_uuid > project_binding > claude_project_name > default Project"
+)
+_CANONICAL = (
+    Path(__file__).resolve().parents[3] / "config" / "mcp" / "canonical.yaml"
+)
+
+
+def _agent_bus_hop_schema_properties() -> dict[str, Any]:
+    yaml = YAML()
+    data = yaml.load(_CANONICAL)
+    for tool in data["tools"]:
+        if tool.get("canonical_name") == "agent_bus_hop":
+            return tool["json_schema"]["properties"]
+    raise AssertionError("agent_bus_hop not found in canonical.yaml")
 
 
 def setup_function() -> None:
@@ -254,6 +275,117 @@ def test_hop_generate_payload_explicit_caller_passthrough() -> None:
         caller_agent="cursor-sdk-lane",
     )
     assert payload["caller_agent"] == "cursor-sdk-lane"
+
+
+def test_hop_generate_payload_omits_unset_project_fields() -> None:
+    """Breaks when unset Project keys appear on the generate relay."""
+    decision = {
+        "post": True,
+        "job": "freeform",
+        "reason": None,
+        "report_job": "freeform",
+    }
+    payload = hop_generate_payload(
+        model="cdp/opus-5.5",
+        prompt="TYPE: CONTINUITY_HANDOFF",
+        thread_id="77",
+        from_agent="web-anthropic",
+        decision=decision,
+        predecessor_registration_id="reg-1",
+        reasoning_effort="high",
+        caller_agent="cursor-sdk-lane",
+    )
+    assert payload == {
+        "op": "generate",
+        "model": "cdp/opus-5.5",
+        "prompt": "TYPE: CONTINUITY_HANDOFF",
+        "session": "operator-proxy",
+        "mission_kind": "hop",
+        "parent_thread": "77",
+        "dispatch_thread_id": "77",
+        "caller_agent": "cursor-sdk-lane",
+        "job": "freeform",
+        "predecessor_registration_id": "reg-1",
+        "reasoning_effort": "high",
+    }
+    for name in _PROJECT_FIELDS:
+        assert name not in payload
+
+
+def test_hop_generate_payload_forwards_all_project_fields_verbatim() -> None:
+    """Hop layer does not pick a winner when every Project field is set."""
+    decision = {"post": True, "job": None, "reason": None, "report_job": "absent"}
+    payload = hop_generate_payload(
+        model="cdp/opus-5.5-high",
+        prompt="TYPE: CONTINUITY_HANDOFF",
+        thread_id="88",
+        from_agent="cursor",
+        decision=decision,
+        caller_agent="cursor",
+        project_uuid=_EXPLICIT_UUID,
+        project_binding="impresario",
+        claude_project_name="Grand Impresario",
+    )
+    assert payload["project_uuid"] == _EXPLICIT_UUID
+    assert payload["project_binding"] == "impresario"
+    assert payload["claude_project_name"] == "Grand Impresario"
+
+
+def test_hop_canonical_schema_documents_project_precedence() -> None:
+    """Breaks when agent_bus_hop schema drops Project field docs or precedence."""
+    props = _agent_bus_hop_schema_properties()
+    uuid_desc = props["project_uuid"]["description"]
+    assert _PRECEDENCE in uuid_desc, uuid_desc
+    binding_desc = props["project_binding"]["description"]
+    assert "project_uuid is omitted" in binding_desc, binding_desc
+    name_desc = props["claude_project_name"]["description"]
+    assert "do not inherit" in name_desc.lower(), name_desc
+
+
+def test_hop_agent_bus_tool_doc_documents_project_fields() -> None:
+    """Breaks when the primary agent_bus docstring drops hop Project forwarding."""
+    src = inspect.getsource(agent_bus_pkg.register_agent_bus_tools)
+    for name in _PROJECT_FIELDS:
+        assert name in src, name
+    assert (
+        "project_uuid` > `project_binding` > `claude_project_name` > default Project"
+        in src
+    )
+
+
+def test_hop_relay_forwards_project_fields_verbatim() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-project-hop"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+        ):
+            return await _hop_dispatch(
+                thread="24088",
+                reason="context-pressure",
+                from_agent="web-anthropic",
+                caller_agent="cursor",
+                project_uuid=_EXPLICIT_UUID,
+                project_binding="impresario",
+                claude_project_name="Grand Impresario",
+            )
+
+    result = asyncio.run(run())
+    body = captured["body"]
+    assert body["project_uuid"] == _EXPLICIT_UUID
+    assert body["project_binding"] == "impresario"
+    assert body["claude_project_name"] == "Grand Impresario"
+    assert result["continuity_hop"] is True
 
 
 def test_hop_dispatch_sends_caller_model() -> None:
