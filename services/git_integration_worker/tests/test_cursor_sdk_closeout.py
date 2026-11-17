@@ -4542,6 +4542,14 @@ async def test_closeout_role_turn_follows_cursor_sdk_reply(
     assert [sender for sender, _body in replies] == ["cursor-sdk"]
     assert posts == []
 
+    await _run(
+        "check-review",
+        _CONFORMING_ROLE_BODY,
+        model="cursor/composer-2.5",
+    )
+    assert [sender for sender, _body in replies] == ["cursor-sdk"]
+    assert posts == []
+
 
 def test_multi_heading_closeout_executive_envelope_before_effects_manifest(
     tmp_path: Path,

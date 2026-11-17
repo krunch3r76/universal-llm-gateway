@@ -25,12 +25,14 @@ EventPublisher = Callable[[Any], None]
 
 
 def _default_reviewer_model() -> str:
-    from implement_admission.check_review_substrate import (
-        load_check_review_default_model,
-    )
-    from implement_admission.routing import load_route_policy
+    from implement_admission.review_defaults import load_review_default
 
-    return load_check_review_default_model(load_route_policy())
+    return load_review_default("spec").model
+
+
+# Block-list front matter shape (admission_read.frontmatter_list_value) so an
+# explicit empty scope wins over draft path scrape (friction a:31774).
+_DENSIFY_REVIEWER_EMPTY_SCOPE_PREFIX = "---\nfiles_expected:\n---\n\n"
 
 
 class DensifyCandidateReadyBody(BaseModel):
@@ -163,16 +165,19 @@ async def spawn_densify_reviewer_child(
     reviewer_model = _default_reviewer_model()
     if ModelId.parse(reviewer_model).backend_type != "cursor_sdk":
         return {}
+    scoped_prompt = _DENSIFY_REVIEWER_EMPTY_SCOPE_PREFIX + reviewer_prompt
     child_body = TeamDispatchGenerateBody(
         op="generate",
         seat="cursor-sdk",
         dispatch_thread_id=parent_dispatch_thread_id,
         model=reviewer_model,
         job="check-review",
-        prompt=reviewer_prompt,
+        prompt=scoped_prompt,
         auto_review_child=False,
         spawn_review_provenance="generate_review_child",
-        lane="A",
+        lane="B",
+        work_key=f"agent-bus:{parent_dispatch_thread_id}",
+        read_only=True,
     )
     result = await team_dispatch(child_body, response)
     if isinstance(result, JSONResponse):
