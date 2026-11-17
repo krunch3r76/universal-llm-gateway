@@ -21,6 +21,7 @@ from cursor_bridge.cursor_agents_hop import (
     _archive_agent_js,
     _archive_async,
     _launch_async,
+    _model_pick_from_glass_launch,
     _prune_predecessors_async,
     _root_row_pattern,
     _select_agent_js,
@@ -373,6 +374,309 @@ async function runUnknownWithoutKnobsReportsPick() {
   process.stdout.write(JSON.stringify(out));
 })();
 """
+
+
+_LAUNCH_IIFE_HARNESS = r"""
+const launchSrc = __LAUNCH_SRC__;
+const scenario = __SCENARIO__;
+
+function installGlass(buildServices) {
+  const serviceInstances = buildServices();
+  const entriesObj = {
+    entries() {
+      return Object.entries(serviceInstances).map(([k, v]) => [k, { instance: v }]);
+    },
+  };
+  const anchor = {
+    parentElement: null,
+    getAttribute() { return null; },
+    closest() { return null; },
+  };
+  anchor["__reactFiber$fake"] = {
+    return: null,
+    memoizedProps: {
+      value: {
+        workspace: {
+          instantiationService: {
+            _services: { _entries: entriesObj },
+          },
+        },
+      },
+    },
+  };
+  globalThis.document = {
+    querySelector(sel) {
+      if (sel && (sel.includes("glass-sidebar-agent-row") || sel.includes("Prompt"))) {
+        return anchor;
+      }
+      return null;
+    },
+    querySelectorAll() { return []; },
+  };
+}
+
+function workspaceCollection() {
+  const targetEnv = {
+    id: "env-1",
+    uri: { path: "/home/io/universal-llm-gateway", scheme: "vscode-remote" },
+  };
+  return {
+    getWorkspaceInstances: () => [{ workspaceIdentifier: targetEnv }],
+  };
+}
+
+const scenarios = {
+  no_model_config_strict() {
+    let createCount = 0;
+  return {
+      agentRepositoryService: {
+        getAgentHeader: () => null,
+        createAgent: async () => { createCount += 1; return "agent-1"; },
+      },
+      workspaceCollectionService: workspaceCollection(),
+      __createCount: () => createCount,
+    };
+  },
+  strict_unknown() {
+    let createAgentCount = 0;
+    let createComposerCount = 0;
+    const models = [{ name: "composer-2.5", serverModelName: "composer-2.5" }];
+    return {
+      modelConfigService: {
+        getAvailableDefaultModels: () => models,
+        resolveModelNameToCatalog: async (q) => ({ modelId: q, parameters: [] }),
+      },
+      agentRepositoryService: {
+        getAgentHeader: () => null,
+        createAgent: async () => { createAgentCount += 1; return "agent-1"; },
+      },
+      composerService: {
+        createComposer: async () => { createComposerCount += 1; return { composerId: "c-1" }; },
+      },
+      composerDataService: { getComposerHandleById: async () => null },
+      composerChatService: {
+        submitChatMaybeAbortCurrent: async () => {},
+      },
+      workspaceCollectionService: workspaceCollection(),
+      __createAgentCount: () => createAgentCount,
+      __createComposerCount: () => createComposerCount,
+    };
+  },
+  no_agent_id_with_pick() {
+    const models = [{ name: "claude-sonnet-5-5", serverModelName: "claude-sonnet-5-5" }];
+    return {
+      modelConfigService: {
+        getAvailableDefaultModels: () => models,
+        resolveModelNameToCatalog: async (q) => ({ modelId: "claude-sonnet-5-5", parameters: [] }),
+      },
+      agentRepositoryService: {
+        getAgentHeader: () => null,
+        createAgent: async () => ({}),
+      },
+      workspaceCollectionService: workspaceCollection(),
+    };
+  },
+};
+
+(async () => {
+  try {
+    globalThis.window = globalThis;
+    installGlass(scenarios[scenario]);
+    const built = scenarios[scenario]();
+    const expr = "(" + launchSrc + ")";
+    const result = await eval(expr);
+    const meta = {};
+    if (typeof built.__createCount === "function") meta.createCount = built.__createCount();
+    if (typeof built.__createAgentCount === "function") {
+      meta.createAgentCount = built.__createAgentCount();
+      meta.createComposerCount = built.__createComposerCount();
+    }
+    process.stdout.write(JSON.stringify({ ok: true, result, meta }));
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ ok: false, error: String(err && err.stack ? err.stack : err) }));
+  }
+})();
+"""
+
+
+def _run_launch_iife_harness(
+    tmp_path: Path,
+    *,
+    message: str,
+    model: str,
+    strict: bool,
+    scenario: str,
+) -> tuple[dict[str, object], dict[str, object]]:
+    launch_js = launch_new_agent_tab_js(message, model, strict_catalog_model=strict)
+    script = tmp_path / "launch_iife_harness.js"
+    script.write_text(
+        _LAUNCH_IIFE_HARNESS.replace("__LAUNCH_SRC__", json.dumps(launch_js)).replace(
+            "__SCENARIO__", json.dumps(scenario)
+        ),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        ["node", str(script)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+    wrapped = json.loads(proc.stdout)
+    assert wrapped.get("ok") is True, wrapped.get("error")
+    return wrapped["result"], wrapped.get("meta") or {}
+
+
+def test_model_pick_from_glass_launch_unverified_when_raw_missing() -> None:
+    out = _model_pick_from_glass_launch(
+        {"ok": True, "agent_id": "x"},
+        model_query="claude-sonnet-5-5",
+    )
+    assert out["ok"] is False
+    assert out["status"] == "unverified"
+
+
+def test_model_pick_from_glass_launch_hit_ok_true() -> None:
+    out = _model_pick_from_glass_launch(
+        {
+            "ok": True,
+            "model_pick": {
+                "status": "hit",
+                "requested": "claude-sonnet-5-5",
+                "applied_model_id": "claude-sonnet-5-5",
+                "tried": ["claude-sonnet-5-5"],
+            },
+        },
+        model_query="claude-sonnet-5-5",
+    )
+    assert out["ok"] is True
+    assert out["applied_model_id"] == "claude-sonnet-5-5"
+
+
+def test_launch_tab_js_no_model_config_service_strict_refuses(tmp_path: Path) -> None:
+    result, meta = _run_launch_iife_harness(
+        tmp_path,
+        message="hi",
+        model="claude-sonnet-5-5",
+        strict=True,
+        scenario="no_model_config_strict",
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "model_catalog_unavailable"
+    assert result["model_pick"]["status"] == "catalog_unavailable"
+    assert meta.get("createCount", 0) == 0
+
+
+def test_launch_tab_js_strict_unknown_refuses_in_launch_iife(tmp_path: Path) -> None:
+    result, meta = _run_launch_iife_harness(
+        tmp_path,
+        message="hi",
+        model="unknown-zzz-999",
+        strict=True,
+        scenario="strict_unknown",
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "model_not_in_catalog"
+    assert meta.get("createAgentCount", 0) == 0
+    assert meta.get("createComposerCount", 0) == 0
+
+
+def test_launch_tab_js_no_agent_id_includes_model_pick(tmp_path: Path) -> None:
+    result, _meta = _run_launch_iife_harness(
+        tmp_path,
+        message="hi",
+        model="claude-sonnet-5-5",
+        strict=False,
+        scenario="no_agent_id_with_pick",
+    )
+    assert result["reason"] == "no_agent_id"
+    assert "model_pick" in result
+    assert result["model_pick"]["status"] == "hit"
+
+
+@pytest.mark.asyncio
+async def test_launch_async_recovery_model_pick_unverified() -> None:
+    rid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval_await(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        if mid == 1:
+            return {"ok": True, "ids": []}
+        if mid == 2:
+            raise RuntimeError("Uncaught (in promise) Promise was collected")
+        if mid == 90:
+            return {"ok": True, "agent_id": rid, "method": "recovered_after_gc"}
+        return {"ok": False}
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch(
+            "cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await
+        ),
+    ):
+        out = await _launch_async(
+            "ws://fake",
+            "resume 10479",
+            page,
+            timeout_s=5.0,
+            model_query="Grok 4.7",
+            requested_agent_id=rid,
+        )
+    assert out["ok"] is True
+    assert out["model_pick"]["ok"] is False
+    assert out["model_pick"]["status"] == "unverified"
+
+
+@pytest.mark.asyncio
+async def test_launch_async_timer_win_model_pick_unverified() -> None:
+    rid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval_await(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        if mid == 1:
+            return {"ok": True, "ids": []}
+        if mid == 2:
+            return {
+                "ok": False,
+                "delivered": False,
+                "race_winner": "timer",
+                "reason": "delivery_unconfirmed",
+                "agent_id": rid,
+                "editor_agent_id": rid,
+            }
+        return {"ok": False}
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch(
+            "cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await
+        ),
+    ):
+        out = await _launch_async(
+            "ws://fake",
+            "resume 10479",
+            page,
+            timeout_s=5.0,
+            model_query="Grok 4.7",
+            requested_agent_id=rid,
+        )
+    assert out["ok"] is True
+    assert out["model_pick"]["ok"] is False
+    assert out["model_pick"]["status"] == "unverified"
 
 
 def test_pick_catalog_model_harness(tmp_path: Path) -> None:

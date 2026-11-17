@@ -39,7 +39,7 @@ def _model_pick_from_glass_launch(
         return {"ok": True, "skipped": True}
     raw = glass_launch.get("model_pick") if isinstance(glass_launch, dict) else None
     if not isinstance(raw, dict):
-        return {"ok": True, "model_query": model_query}
+        return {"ok": False, "model_query": model_query, "status": "unverified"}
     status = str(raw.get("status") or "")
     ok = status == "hit"
     out: dict[str, Any] = {
