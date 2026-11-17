@@ -101,3 +101,60 @@ def test_assertion_get_malformed_id_is_validation_not_absence(
     assert isinstance(err, dict)
     assert err.get("error") == "invalid_assertion_id"
     assert "Assertion not found" not in str(result)
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    "wire_id",
+    [
+        "\u2074",
+        "1\u00b2",
+        "\u00b2\u00b3",
+    ],
+)
+def test_assertion_get_unicode_digit_mismatch_is_shape_error(
+    cortex_test_db: int, wire_id: str
+) -> None:
+    _ = cortex_test_db
+    assert wire_id.isdigit()
+    result = _op_assertion_get(assertion_id=wire_id)
+    assert result.get("status_code") == 422
+    err = result.get("error")
+    assert isinstance(err, dict)
+    assert err.get("error") == "invalid_assertion_id"
+    assert "Assertion not found" not in str(result)
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    "wire_id",
+    [
+        9223372036854775808,
+        "9223372036854775808",
+        "a:9223372036854775808",
+        "assertion:9223372036854775808",
+    ],
+)
+def test_assertion_get_oversized_id_is_shape_error(
+    cortex_test_db: int, wire_id: int | str
+) -> None:
+    _ = cortex_test_db
+    result = _op_assertion_get(assertion_id=wire_id)
+    assert result.get("status_code") == 422
+    err = result.get("error")
+    assert isinstance(err, dict)
+    assert err.get("error") == "invalid_assertion_id"
+    assert "Assertion not found" not in str(result)
+
+
+@pytest.mark.offline
+def test_assertion_get_dispatch_path_rejects_oversized_id(cortex_test_db: int) -> None:
+    _ = cortex_test_db
+    result = execute_op(
+        "assertion_get",
+        {"assertion_id": "9223372036854775808"},
+    )
+    assert result.get("status_code") == 422
+    err = result.get("error")
+    assert isinstance(err, dict)
+    assert err.get("error") == "invalid_assertion_id"

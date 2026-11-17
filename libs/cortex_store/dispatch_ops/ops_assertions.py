@@ -184,9 +184,10 @@ def _op_analyze_impact(
             "error": f"Invalid confidence {confidence!r}. "
             f"Must be one of: {sorted(_VALID_CONFIDENCE)}"
         }
-    data = analyze_impact_semantic(
-        ImpactAnalysisRequest(entity_id=entity_id, claim=claim, confidence=confidence)
-    )
+    impact_kwargs: dict[str, Any] = {"entity_id": entity_id, "claim": claim}
+    if confidence is not None:
+        impact_kwargs["confidence"] = confidence
+    data = analyze_impact_semantic(ImpactAnalysisRequest(**impact_kwargs))
     return data.model_dump(mode="json")
 
 
