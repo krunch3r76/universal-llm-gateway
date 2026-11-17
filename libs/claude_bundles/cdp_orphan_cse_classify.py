@@ -16,7 +16,11 @@ from typing import Any, Literal
 from claude_bundles import cdp_registry
 from claude_bundles.cdp_reclaim_refuse import reclaim_refuse_reason
 from claude_bundles.cse_idle_probe import in_flight_from_state, probe_page_liveness_sync
-from claude_bundles.cse_url import is_bindable_claude_seat_url, normalize_cse_url
+from claude_bundles.cse_url import (
+    canonical_claude_seat_url,
+    is_bindable_claude_seat_url,
+    normalize_cse_url,
+)
 
 _DEFAULT_CSE_IDLE_DWELL_S = 300.0
 
@@ -72,15 +76,19 @@ def cse_pages_from_list(payload: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _bindable_url_index_key(url: str) -> str:
+    return canonical_claude_seat_url(url) or normalize_cse_url(url)
+
+
 def build_chat_url_index(fetch_json: FetchJsonFn) -> dict[str, str]:
-    """Map normalized CSE URL → registration_id from attached registry lanes."""
+    """Map canonical bindable URL → registration_id from attached registry lanes."""
     index: dict[str, str] = {}
     for lane in cdp_registry.list_active():
         page_list = fetch_json(f"{lane.cdp_url.rstrip('/')}/json/list")
         for page in cse_pages_from_list(page_list):
-            url = normalize_cse_url(str(page.get("url") or ""))
-            if url:
-                index[url] = lane.registration_id
+            key = _bindable_url_index_key(str(page.get("url") or ""))
+            if key:
+                index[key] = lane.registration_id
     return index
 
 
@@ -120,9 +128,9 @@ def resolve_attach(
     running_registration_ids: set[str],
 ) -> tuple[AttachResolution | None, str | None]:
     """Resolve a CSE URL to registry or execution evidence using the attach ladder."""
-    norm = normalize_cse_url(cse_url)
-    if norm and norm in chat_url_index:
-        return "chat_url", chat_url_index[norm]
+    key = _bindable_url_index_key(cse_url)
+    if key and key in chat_url_index:
+        return "chat_url", chat_url_index[key]
     if profile is not None:
         rid = registration_id_for_profile(profile)
         if rid is not None:

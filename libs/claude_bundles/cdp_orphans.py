@@ -22,7 +22,11 @@ from claude_bundles.cdp_orphan_cse_classify import (
     cse_pages_from_list,
 )
 from claude_bundles.cdp_reclaim_refuse import guard_cse_reclaim
-from claude_bundles.cse_url import is_bindable_claude_seat_url, normalize_cse_url
+from claude_bundles.cse_url import (
+    canonical_claude_seat_url,
+    is_bindable_claude_seat_url,
+    normalize_cse_url,
+)
 
 LIVENESS_AUTHORITY_ATTACHMENT_ONLY = "attachment_only"
 _REG_PROFILE_PREFIX = "claude-ai-chrome-profile-reg-"
@@ -168,7 +172,7 @@ def _unique_cse_urls(page_urls: tuple[str, ...]) -> tuple[str, ...]:
     for url in page_urls:
         if not is_bindable_claude_seat_url(url):
             continue
-        normalized = normalize_cse_url(url)
+        normalized = canonical_claude_seat_url(url) or normalize_cse_url(url)
         if normalized and normalized not in seen:
             seen.add(normalized)
             out.append(normalized)
