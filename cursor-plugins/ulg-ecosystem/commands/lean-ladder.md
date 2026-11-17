@@ -66,7 +66,7 @@ Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retriev
 operator:  /lean-ladder "bind a Cowork project per team_dispatch hop" planner=glass:8
 
 seat       echo: slug (recommended)=cowork-project-team-dispatch-hop · architect=cdp/fable-5.2 high
-           · implement=cursor/composer-2.5 lane B · planner=glass:8 sonnet-5-5 high
+           · implement=cursor/composer-2.5 lane B · planner=glass:8 claude-sonnet-5-5 high
 seat       registry(todo:…) → empty · todo ensured (density_triage=mechanical) · arc thread 24xxx
 seat       retrieval gate (packet) → rag × scopes → retrieval-report → author packet (target: todo:…)
 seat       retrieval gate (spawn prompt) → report → author filled prompt

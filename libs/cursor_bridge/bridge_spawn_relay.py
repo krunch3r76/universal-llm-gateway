@@ -40,6 +40,7 @@ def relay_spawn_tab(
         model_knobs=knobs,
         debug_url=debug_url,
         requested_agent_id=requested,
+        strict_catalog_model=True,
     )
     return {
         **res,

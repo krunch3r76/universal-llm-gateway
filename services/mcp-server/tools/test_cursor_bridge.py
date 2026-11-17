@@ -34,6 +34,7 @@ def test_spawn_tab_calls_launch_with_debug_url(
         model_knobs=None,
         debug_url=expected_origin,
         requested_agent_id=None,
+        strict_catalog_model=True,
     )
     assert out["op"] == "spawn_tab"
     assert out["gui_host"] == gui_host
@@ -213,6 +214,18 @@ def test_spawn_tab_requires_prompt() -> None:
     out = _spawn_tab(gui_host=":8", prompt=None, model=None)
     assert out["ok"] is False
     assert out["error"] == "prompt_required"
+
+
+def test_spawn_tab_invalid_model_relays_model_not_in_catalog() -> None:
+    with patch("cursor_bridge.bridge_spawn_relay.launch_cursor_agents_tab") as launch:
+        launch.return_value = {
+            "ok": False,
+            "reason": "model_not_in_catalog",
+            "model_pick": {"ok": False, "status": "not_in_catalog"},
+        }
+        out = _spawn_tab(gui_host=":8", prompt="hello", model="not-a-real-model")
+    assert out["ok"] is False
+    assert "model_not_in_catalog" in str(out.get("reason", ""))
 
 
 def test_spawn_tab_forwards_knobs_and_agent_id() -> None:

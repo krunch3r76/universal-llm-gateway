@@ -44,3 +44,17 @@ def test_spawn_tab_valid_host_uses_container_rewrite(
         out = relay_spawn_tab(gui_host=":8", prompt="go", model="composer")
     assert out["ok"] is True
     assert launch.call_args.kwargs["debug_url"] == "http://172.18.0.1:9338"
+    assert launch.call_args.kwargs.get("strict_catalog_model") is True
+
+
+def test_spawn_house_launch_does_not_enable_strict_catalog() -> None:
+    with patch("cursor_bridge.bridge_spawn_relay.spawn_house_impl") as spawn:
+        spawn.return_value = {"ok": True}
+        relay_spawn_house(
+            gui_host=":8",
+            slug="s",
+            prompt="go",
+            model="composer",
+        )
+    spawn.assert_called_once()
+    assert "strict_catalog" not in (spawn.call_args.kwargs or {})

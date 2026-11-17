@@ -193,73 +193,121 @@ async function resolveComposerForAgent(byId, agentId) {
 
 def _resolve_catalog_js() -> str:
     return r"""
+const slugShape = (id) => typeof id === 'string' && id.length > 0 && !/\s/.test(id);
+const parseEffort = (text) => {
+  const lower = text.toLowerCase();
+  if (/\bxhigh\b|extra\s+high/.test(lower)) return 'xhigh';
+  if (/\bhigh\b/.test(lower)) return 'high';
+  if (/\bmedium\b/.test(lower)) return 'medium';
+  if (/\blow\b/.test(lower)) return 'low';
+  return null;
+};
+const mapFromLabel = (labelStr) => {
+  const lower = labelStr.toLowerCase();
+  const effort = parseEffort(lower);
+  if (lower.includes('gemini') && lower.includes('4') && lower.includes('argon')) {
+    return {
+      modelId: 'gemini-4-argon',
+      parameters: [{ id: 'reasoning_effort', value: effort || 'low' }],
+    };
+  }
+  if (lower.includes('grok') && lower.includes('4.7')) {
+    return {
+      modelId: 'grok-4.7',
+      parameters: [
+        { id: 'context', value: '256k' },
+        { id: 'reasoning_effort', value: effort || 'xhigh' },
+        { id: 'fast', value: 'false' },
+      ],
+    };
+  }
+  if (lower.includes('composer') && lower.includes('2.5')) {
+    return { modelId: 'composer-2.5', parameters: [] };
+  }
+  if (lower.includes('opus') && (lower.includes('5.5') || lower.includes('5-5'))) {
+    return {
+      modelId: 'claude-opus-5-5',
+      parameters: [{ id: 'effort', value: effort || 'high' }],
+    };
+  }
+  if (lower.includes('opus') && lower.includes('5')
+      && !lower.includes('5.5') && !lower.includes('5-5')) {
+    return {
+      modelId: 'claude-opus-5',
+      parameters: [{ id: 'reasoning_effort', value: effort || 'high' }],
+    };
+  }
+  if (lower.includes('sonnet') && (lower.includes('5.5') || lower.includes('5-5'))) {
+    return {
+      modelId: 'claude-sonnet-5-5',
+      parameters: [{ id: 'reasoning_effort', value: effort || 'high' }],
+    };
+  }
+  if (lower.includes('fable') && (lower.includes('5.1') || lower.includes('5-1'))) {
+    return {
+      modelId: 'claude-fable-5-1',
+      parameters: [{ id: 'reasoning_effort', value: effort || 'xhigh' }],
+    };
+  }
+  const stripped = labelStr.replace(/\s+(extra\s+high|xhigh|high|medium|low|fast)$/i, '').trim();
+  const slug = stripped.toLowerCase().replace(/\s+/g, '-');
+  if (slugShape(slug)) {
+    const params = effort ? [{ id: 'reasoning_effort', value: effort }] : [];
+    return { modelId: slug, parameters: params };
+  }
+  return null;
+};
+function catalogNameSet(modelConfigService) {
+  if (!modelConfigService || typeof modelConfigService.getAvailableDefaultModels !== 'function') {
+    return null;
+  }
+  try {
+    const models = modelConfigService.getAvailableDefaultModels();
+    const list = Array.isArray(models) ? models : [];
+    const names = new Set();
+    for (const m of list) {
+      if (!m || typeof m !== 'object') continue;
+      const name = String(m.name || '').trim();
+      const server = String(m.serverModelName || '').trim();
+      if (name) names.add(name);
+      if (server) names.add(server);
+    }
+    return { names, empty: !list.length };
+  } catch (e) {
+    return null;
+  }
+}
+async function pickCatalogModel(modelConfigService, modelLabel, catRaw) {
+  const requested = String(modelLabel || '').trim();
+  const tried = [];
+  const push = (id) => {
+    const s = String(id || '').trim();
+    if (s && !tried.includes(s)) tried.push(s);
+  };
+  if (catRaw && catRaw.modelId) push(catRaw.modelId);
+  const mapped = mapFromLabel(requested);
+  if (mapped && mapped.modelId) push(mapped.modelId);
+  const stripped = requested.replace(/\s+(extra\s+high|xhigh|high|medium|low|fast)$/i, '').trim();
+  const slug = stripped.toLowerCase().replace(/\s+/g, '-');
+  if (slugShape(slug)) push(slug);
+  push(requested);
+  const catInfo = catalogNameSet(modelConfigService);
+  if (!catInfo) {
+    return { status: 'catalog_unavailable', requested, applied_model_id: null, tried };
+  }
+  if (catInfo.empty) {
+    return { status: 'catalog_unavailable', requested, applied_model_id: null, tried };
+  }
+  for (const cand of tried) {
+    if (catInfo.names.has(cand)) {
+      return { status: 'hit', requested, applied_model_id: cand, tried };
+    }
+  }
+  return { status: 'not_in_catalog', requested, applied_model_id: null, tried };
+}
 async function resolveCatalog(modelConfigService, label) {
   const q = String(label || '').trim();
   if (!q) return null;
-  const slugShape = (id) => typeof id === 'string' && id.length > 0 && !/\s/.test(id);
-  const parseEffort = (text) => {
-    const lower = text.toLowerCase();
-    if (/\bxhigh\b|extra\s+high/.test(lower)) return 'xhigh';
-    if (/\bhigh\b/.test(lower)) return 'high';
-    if (/\bmedium\b/.test(lower)) return 'medium';
-    if (/\blow\b/.test(lower)) return 'low';
-    return null;
-  };
-  const mapFromLabel = (labelStr) => {
-    const lower = labelStr.toLowerCase();
-    const effort = parseEffort(lower);
-    if (lower.includes('gemini') && lower.includes('4') && lower.includes('argon')) {
-      return {
-        modelId: 'gemini-4-argon',
-        parameters: [{ id: 'reasoning_effort', value: effort || 'low' }],
-      };
-    }
-    if (lower.includes('grok') && lower.includes('4.7')) {
-      return {
-        modelId: 'grok-4.7',
-        parameters: [
-          { id: 'context', value: '256k' },
-          { id: 'reasoning_effort', value: effort || 'xhigh' },
-          { id: 'fast', value: 'false' },
-        ],
-      };
-    }
-    if (lower.includes('composer') && lower.includes('2.5')) {
-      return { modelId: 'composer-2.5', parameters: [] };
-    }
-    if (lower.includes('opus') && (lower.includes('5.5') || lower.includes('5-5'))) {
-      return {
-        modelId: 'claude-opus-5-5',
-        parameters: [{ id: 'effort', value: effort || 'high' }],
-      };
-    }
-    if (lower.includes('opus') && lower.includes('5')
-        && !lower.includes('5.5') && !lower.includes('5-5')) {
-      return {
-        modelId: 'claude-opus-5',
-        parameters: [{ id: 'reasoning_effort', value: effort || 'high' }],
-      };
-    }
-    if (lower.includes('sonnet') && (lower.includes('5.5') || lower.includes('5-5'))) {
-      return {
-        modelId: 'claude-sonnet-5-5',
-        parameters: [{ id: 'reasoning_effort', value: effort || 'high' }],
-      };
-    }
-    if (lower.includes('fable') && (lower.includes('5.1') || lower.includes('5-1'))) {
-      return {
-        modelId: 'claude-fable-5-1',
-        parameters: [{ id: 'reasoning_effort', value: effort || 'xhigh' }],
-      };
-    }
-    const stripped = labelStr.replace(/\s+(extra\s+high|xhigh|high|medium|low|fast)$/i, '').trim();
-    const slug = stripped.toLowerCase().replace(/\s+/g, '-');
-    if (slugShape(slug)) {
-      const params = effort ? [{ id: 'reasoning_effort', value: effort }] : [];
-      return { modelId: slug, parameters: params };
-    }
-    return null;
-  };
   if (modelConfigService && typeof modelConfigService.resolveModelNameToCatalog === 'function') {
     try {
       const cat = await modelConfigService.resolveModelNameToCatalog(q);
@@ -403,6 +451,8 @@ def launch_new_agent_tab_js(
     model_query: str,
     model_knobs: dict[str, str] | None = None,
     requested_agent_id: str | None = None,
+    *,
+    strict_catalog_model: bool = False,
 ) -> str:
     """CDP expression: create agent tab, set model from label plus house knobs, submit."""
     msg = json.dumps(message)
@@ -413,6 +463,7 @@ def launch_new_agent_tab_js(
     else:
         knobs_line = "  const houseKnobs = null;\n"
     req_id = json.dumps(str(requested_agent_id or "").strip())
+    strict_js = "true" if strict_catalog_model else "false"
     return (
         "(async () => {\n"
         f"{GLASS_SERVICE_MAP_FN}\n"
@@ -421,8 +472,11 @@ def launch_new_agent_tab_js(
         f"{LOAD_PARAMETER_DEFINITIONS_FN}\n"
         f"{APPLY_HOUSE_KNOBS_FN}\n"
         f"  const requestedAgentId = {req_id};\n"
+        f"  const strictCatalogModel = {strict_js};\n"
         "  const task = async () => {\n"
         "  let hopKnobWarnings = [];\n"
+        "  let modelPick = null;\n"
+        "  const withModelPick = (row) => (modelPick ? { ...row, model_pick: modelPick } : row);\n"
         "  const text = "
         f"{msg};\n"
         "  const modelLabel = "
@@ -442,9 +496,22 @@ def launch_new_agent_tab_js(
         "  let modelConfig = null;\n"
         "  if (modelLabel && modelConfigService) {\n"
         "    const catRaw = await resolveCatalog(modelConfigService, modelLabel);\n"
-        "    const cat = houseKnobs\n"
-        "      ? await applyHouseKnobs(modelConfigService, catRaw, houseKnobs)\n"
-        "      : catRaw;\n"
+        "    modelPick = await pickCatalogModel(modelConfigService, modelLabel, catRaw);\n"
+        "    if (strictCatalogModel && modelPick.status === 'not_in_catalog') {\n"
+        "      return {ok: false, reason: 'model_not_in_catalog', model_pick: modelPick};\n"
+        "    }\n"
+        "    let cat = null;\n"
+        "    if (modelPick.status === 'hit' && modelPick.applied_model_id) {\n"
+        "      cat = {\n"
+        "        modelId: modelPick.applied_model_id,\n"
+        "        parameters: (catRaw && catRaw.parameters) ? catRaw.parameters : [],\n"
+        "      };\n"
+        "    } else if (modelPick.status !== 'not_in_catalog' && catRaw && catRaw.modelId) {\n"
+        "      cat = catRaw;\n"
+        "    }\n"
+        "    if (cat && houseKnobs) {\n"
+        "      cat = await applyHouseKnobs(modelConfigService, cat, houseKnobs);\n"
+        "    }\n"
         "    if (cat && cat.knob_warnings) hopKnobWarnings = cat.knob_warnings;\n"
         "    if (cat && cat.modelId) {\n"
         "      modelConfig = {\n"
@@ -460,9 +527,9 @@ def launch_new_agent_tab_js(
         "    try {\n"
         "      const existing = agentRepositoryService.getAgentHeader(requestedAgentId);\n"
         "      if (existing) {\n"
-        "        return {ok: true, agent_id: requestedAgentId, editor_agent_id: requestedAgentId,\n"
+        "        return withModelPick({ok: true, agent_id: requestedAgentId, editor_agent_id: requestedAgentId,\n"
         "          transport: 'cdp_glass_services', method: 'already_created',\n"
-        "          knob_warnings: hopKnobWarnings};\n"
+        "          knob_warnings: hopKnobWarnings});\n"
         "      }\n"
         "    } catch (e) {}\n"
         "  }\n"
@@ -489,9 +556,9 @@ def launch_new_agent_tab_js(
         "    if (glassActiveAgentService && typeof glassActiveAgentService.setActiveAgentId === 'function') {\n"
         "      await glassActiveAgentService.setActiveAgentId(agentId);\n"
         "    }\n"
-        "    return {ok: true, agent_id: agentId, editor_agent_id: agentId,\n"
+        "    return withModelPick({ok: true, agent_id: agentId, editor_agent_id: agentId,\n"
         "      transport: 'cdp_glass_services', method: 'createAgent',\n"
-        "      knob_warnings: hopKnobWarnings};\n"
+        "      knob_warnings: hopKnobWarnings});\n"
         "  }\n"
         "  if (!composerService || !composerDataService || !composerChatService) {\n"
         "    return {ok: false, reason: 'missing_services'};\n"
@@ -508,19 +575,8 @@ def launch_new_agent_tab_js(
         "  if (!agentId) return {ok: false, reason: 'no_composer_id'};\n"
         "  const handle = await composerDataService.getComposerHandleById(agentId);\n"
         "  if (!handle) return {ok: false, reason: 'no_handle', agent_id: agentId};\n"
-        "  if (modelLabel && modelConfigService) {\n"
-        "    const catRaw = await resolveCatalog(modelConfigService, modelLabel);\n"
-        "    const cat = houseKnobs\n"
-        "      ? await applyHouseKnobs(modelConfigService, catRaw, houseKnobs)\n"
-        "      : catRaw;\n"
-        "    if (cat && cat.knob_warnings) hopKnobWarnings = cat.knob_warnings;\n"
-        "    if (cat && cat.modelId) {\n"
-        "      modelConfigService.setModelConfigForComposer(handle, {\n"
-        "        modelName: cat.modelId,\n"
-        "        maxMode: false,\n"
-        "        selectedModels: [{ modelId: cat.modelId, parameters: cat.parameters || [] }],\n"
-        "      }, 'composer');\n"
-        "    }\n"
+        "  if (modelConfig) {\n"
+        "    modelConfigService.setModelConfigForComposer(handle, modelConfig, 'composer');\n"
         "  }\n"
         "  const prompt = document.querySelector(\n"
         '    \'[aria-label="Prompt"][contenteditable="true"][data-sidebar-file-drop-editor-agent-id="\' + agentId + \'"]\'\n'
@@ -530,7 +586,7 @@ def launch_new_agent_tab_js(
         "  if (hasDomEditor) {\n"
         "    const existing = (prompt.innerText || '').trim();\n"
         "    if (existing.length > 0 && !stale && existing !== String(text || '').trim()) {\n"
-        "      return {ok: false, reason: 'composer_not_empty', draft: existing, agent_id: agentId};\n"
+        "      return withModelPick({ok: false, reason: 'composer_not_empty', draft: existing, agent_id: agentId});\n"
         "    }\n"
         "  }\n"
         "  const composerUtilsService = byId.get('composerUtilsService');\n"
@@ -563,10 +619,10 @@ def launch_new_agent_tab_js(
         "    clearDraft();\n"
         "  }\n"
         "  const delivered = raceWinner !== 'timer';\n"
-        "  return {ok: delivered, delivered, race_winner: raceWinner, agent_id: agentId,\n"
+        "  return withModelPick({ok: delivered, delivered, race_winner: raceWinner, agent_id: agentId,\n"
         "    editor_agent_id: agentId, transport: 'cdp_glass_services',\n"
         "    knob_warnings: hopKnobWarnings,\n"
-        "    reason: delivered ? 'submitted' : 'delivery_unconfirmed'};\n"
+        "    reason: delivered ? 'submitted' : 'delivery_unconfirmed'});\n"
         "  };\n"
         "  window.__ulgPendingLaunchPromise = task();\n"
         "  try {\n"

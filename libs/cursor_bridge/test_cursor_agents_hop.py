@@ -296,6 +296,157 @@ def test_resolve_catalog_js_claude_opus_and_sonnet_high() -> None:
     assert "claude-sonnet-5-5" in sonnet_js
 
 
+def test_launch_tab_js_includes_catalog_pick_and_strict_gate() -> None:
+    js = launch_new_agent_tab_js("hello", "sonnet-5-5", strict_catalog_model=True)
+    assert "pickCatalogModel" in js
+    assert "strictCatalogModel" in js
+    assert "model_not_in_catalog" in js
+    assert js.index("model_not_in_catalog") < js.index("createAgent")
+
+
+def test_launch_tab_js_syntax_check(tmp_path: Path) -> None:
+    js = launch_new_agent_tab_js(
+        "hello", "claude-sonnet-5-5", strict_catalog_model=True
+    )
+    path = tmp_path / "launch_tab.js"
+    path.write_text(js, encoding="utf-8")
+    proc = subprocess.run(
+        ["node", "--check", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+_MODEL_PICK_HARNESS = r"""
+const catalogSrc = __CATALOG_SRC__;
+eval(catalogSrc);
+
+async function runSonnetAliasHit() {
+  const models = [{ name: 'claude-sonnet-5-5', serverModelName: 'claude-sonnet-5-5' }];
+  const svc = {
+    getAvailableDefaultModels: () => models,
+    resolveModelNameToCatalog: async (q) => ({ modelId: q, parameters: [] }),
+  };
+  const catRaw = await resolveCatalog(svc, 'sonnet-5-5');
+  return pickCatalogModel(svc, 'sonnet-5-5', catRaw);
+}
+
+async function runUnknownStrictRefusal() {
+  let createCount = 0;
+  const models = [{ name: 'composer-2.5', serverModelName: 'composer-2.5' }];
+  const svc = {
+    getAvailableDefaultModels: () => models,
+    resolveModelNameToCatalog: async (q) => ({ modelId: q, parameters: [] }),
+  };
+  const modelLabel = 'not-a-real-model-slug';
+  const strictCatalogModel = true;
+  const catRaw = await resolveCatalog(svc, modelLabel);
+  const modelPick = await pickCatalogModel(svc, modelLabel, catRaw);
+  if (strictCatalogModel && modelPick.status === 'not_in_catalog') {
+    return { refused: true, modelPick, createCount };
+  }
+  createCount += 1;
+  return { refused: false, modelPick, createCount };
+}
+
+async function runUnknownWithoutKnobsReportsPick() {
+  const models = [{ name: 'composer-2.5', serverModelName: 'composer-2.5' }];
+  const svc = {
+    getAvailableDefaultModels: () => models,
+    resolveModelNameToCatalog: async (q) => ({ modelId: q, parameters: [] }),
+  };
+  const houseKnobs = null;
+  const modelLabel = 'unknown-zzz-999';
+  const catRaw = await resolveCatalog(svc, modelLabel);
+  const modelPick = await pickCatalogModel(svc, modelLabel, catRaw);
+  const modelConfig = null;
+  return { houseKnobs, modelPick, modelConfig };
+}
+
+(async () => {
+  const out = {
+    sonnet_hit: await runSonnetAliasHit(),
+    strict_refusal: await runUnknownStrictRefusal(),
+    no_knobs_pick: await runUnknownWithoutKnobsReportsPick(),
+  };
+  process.stdout.write(JSON.stringify(out));
+})();
+"""
+
+
+def test_pick_catalog_model_harness(tmp_path: Path) -> None:
+  catalog_src = _resolve_catalog_js().strip()
+  script = tmp_path / "model_pick_harness.js"
+  script.write_text(
+      _MODEL_PICK_HARNESS.replace("__CATALOG_SRC__", json.dumps(catalog_src)),
+      encoding="utf-8",
+  )
+  proc = subprocess.run(
+      ["node", str(script)],
+      capture_output=True,
+      text=True,
+      timeout=15,
+  )
+  assert proc.returncode == 0, proc.stderr
+  data = json.loads(proc.stdout)
+  assert data["sonnet_hit"]["status"] == "hit"
+  assert data["sonnet_hit"]["applied_model_id"] == "claude-sonnet-5-5"
+  assert data["strict_refusal"]["refused"] is True
+  assert data["strict_refusal"]["createCount"] == 0
+  assert data["strict_refusal"]["modelPick"]["status"] == "not_in_catalog"
+  assert data["no_knobs_pick"]["modelPick"]["status"] == "not_in_catalog"
+  assert data["no_knobs_pick"]["houseKnobs"] is None
+
+
+@pytest.mark.asyncio
+async def test_launch_async_model_pick_not_in_catalog_ok_false() -> None:
+    page = {"title": "Cursor Agents", "web_socket_debugger_url": "ws://fake"}
+    glass = {
+        "ok": False,
+        "reason": "model_not_in_catalog",
+        "model_pick": {
+            "status": "not_in_catalog",
+            "requested": "bad-model",
+            "applied_model_id": None,
+            "tried": ["bad-model"],
+        },
+    }
+
+    class _WsCtx:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+    async def fake_eval_await(ws, mid, expression, timeout_s):  # type: ignore[no-untyped-def]
+        if mid == 1:
+            return {"ok": True, "ids": []}
+        if mid == 2:
+            return glass
+        return {"ok": False}
+
+    with (
+        patch("websockets.connect", return_value=_WsCtx()),
+        patch(
+            "cursor_bridge.cursor_agents_hop._eval_await", side_effect=fake_eval_await
+        ),
+    ):
+        out = await _launch_async(
+            "ws://fake",
+            "hello",
+            page,
+            timeout_s=5.0,
+            model_query="bad-model",
+            strict_catalog_model=True,
+        )
+    assert out["ok"] is False
+    assert out["reason"] == "model_not_in_catalog"
+    assert out["model_pick"]["ok"] is False
+    assert out["model_pick"]["status"] == "not_in_catalog"
+
+
 def test_cursor_agents_archive_imports_without_circular_error() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     libs = str(repo_root / "libs")

@@ -29,6 +29,32 @@ def cursor_debug_url_for_gui_host(gui_host: str | None) -> str:
     return cdp_origin_for_gui_host(gui_host)
 
 
+def _model_pick_from_glass_launch(
+    glass_launch: dict[str, Any] | None,
+    *,
+    model_query: str,
+) -> dict[str, Any]:
+    """Map JS ``model_pick`` facts to the hop-level relay (no hardcoded ok:True)."""
+    if not str(model_query or "").strip():
+        return {"ok": True, "skipped": True}
+    raw = glass_launch.get("model_pick") if isinstance(glass_launch, dict) else None
+    if not isinstance(raw, dict):
+        return {"ok": True, "model_query": model_query}
+    status = str(raw.get("status") or "")
+    ok = status == "hit"
+    out: dict[str, Any] = {
+        "ok": ok,
+        "model_query": model_query,
+        "status": status,
+        "requested": raw.get("requested"),
+        "applied_model_id": raw.get("applied_model_id"),
+        "tried": raw.get("tried"),
+    }
+    if status in ("not_in_catalog", "catalog_unavailable"):
+        out["ok"] = False
+    return out
+
+
 def pick_chat_page(
     pages: list[dict[str, str]], *, surface: str = "cursor"
 ) -> dict[str, str] | None:
@@ -87,6 +113,7 @@ def launch_cursor_agents_tab(
     timeout_s: float = 15.0,
     gui_host: str | None = None,
     requested_agent_id: str | None = None,
+    strict_catalog_model: bool = False,
 ) -> dict[str, Any]:
     """Open a Glass agent tab, apply model knobs, and submit the hop message.
 
@@ -121,6 +148,7 @@ def launch_cursor_agents_tab(
             model_query=model_query,
             model_knobs=model_knobs,
             requested_agent_id=agent_id,
+            strict_catalog_model=strict_catalog_model,
         )
     )
 
@@ -134,6 +162,7 @@ async def _launch_async(
     model_query: str = "",
     model_knobs: dict[str, str] | None = None,
     requested_agent_id: str = "",
+    strict_catalog_model: bool = False,
 ) -> dict[str, Any]:
     """Run the Glass launch expression and map a timer win to unconfirmed.
 
@@ -151,6 +180,7 @@ async def _launch_async(
         model_query,
         model_knobs,
         requested_agent_id=requested_agent_id,
+        strict_catalog_model=strict_catalog_model,
     )
     async with websockets.connect(ws_url, max_size=2_000_000) as ws:
         pre_ids: set[str] = set()
@@ -216,10 +246,8 @@ async def _launch_async(
                 "page_title": page.get("title"),
                 "editor_agent_id": editor_id,
                 "model_query": model_query,
-                "model_pick": (
-                    {"ok": True, "model_query": model_query}
-                    if model_query
-                    else {"ok": True, "skipped": True}
+                "model_pick": _model_pick_from_glass_launch(
+                    result, model_query=model_query
                 ),
                 "send_fallback_clicked": False,
                 "glass_launch": result,
@@ -241,6 +269,9 @@ async def _launch_async(
         if not result.get("ok"):
             result.setdefault("model_query", model_query)
             result.setdefault("phase", "keystroke")
+            result["model_pick"] = _model_pick_from_glass_launch(
+                result, model_query=model_query
+            )
             return result
     editor_id = str(result.get("editor_agent_id") or result.get("agent_id") or "").strip()
     return {
@@ -249,7 +280,7 @@ async def _launch_async(
         "page_title": page.get("title"),
         "editor_agent_id": editor_id,
         "model_query": model_query,
-        "model_pick": {"ok": True, "model_query": model_query} if model_query else {"ok": True, "skipped": True},
+        "model_pick": _model_pick_from_glass_launch(result, model_query=model_query),
         "send_fallback_clicked": False,
         "glass_launch": result,
         "requested_agent_id": requested_agent_id,
