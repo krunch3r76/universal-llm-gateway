@@ -99,10 +99,13 @@ async def find_page_on_lane(cdp_url: str, chat_url: str) -> tuple[Any, Any] | No
         pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
     except Exception:
         return None
-    target_norm = normalize_cse_url(chat_url)
+    def _page_url_key(raw: str) -> str:
+        return normalize_cse_url(canonical_claude_seat_url(raw) or raw)
+
+    target_norm = _page_url_key(chat_url)
     try:
         for page in ctx.pages:
-            if normalize_cse_url(page.url or "") == target_norm:
+            if _page_url_key(page.url or "") == target_norm:
                 return page, pw
         await pw.stop()
         return None
