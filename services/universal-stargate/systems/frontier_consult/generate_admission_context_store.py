@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -16,6 +17,7 @@ SpawnProvenance = Literal["generate_review_child"]
 
 def is_generate_review_child_lane_wired() -> bool:
     return True
+
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS generate_admission_context (
@@ -71,13 +73,14 @@ _MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
     ("caller_seat", "TEXT"),
     ("work_key", "TEXT"),
     ("caller_agent", "TEXT"),
+    ("frozen_instruction_text", "TEXT"),
+    ("frozen_instruction_sha256", "TEXT"),
 )
 
 
 def _ensure_migration_columns(conn: sqlite3.Connection) -> None:
     existing = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(generate_admission_context)")
+        row[1] for row in conn.execute("PRAGMA table_info(generate_admission_context)")
     }
     for name, col_type in _MIGRATION_COLUMNS:
         if name not in existing:
@@ -114,6 +117,8 @@ class AdmissionContext:
     caller_seat: str | None = None
     work_key: str | None = None
     caller_agent: str | None = None
+    frozen_instruction_text: str | None = None
+    frozen_instruction_sha256: str | None = None
     created_at: str = ""
 
 
@@ -149,7 +154,13 @@ def write_admission_context(
     caller_seat: str | None = None,
     work_key: str | None = None,
     caller_agent: str | None = None,
+    frozen_instruction_text: str | None = None,
 ) -> None:
+    frozen_instruction_sha256 = (
+        hashlib.sha256(frozen_instruction_text.encode("utf-8")).hexdigest()
+        if frozen_instruction_text is not None
+        else None
+    )
     conn = _connect()
     try:
         conn.execute(
@@ -159,7 +170,9 @@ def write_admission_context(
             "review_surface, dispatch_lane, suppress_review_spawn, "
             "prompt_turn_number, prompt_bind_mode, resolved_effort, "
             "caller_seat, work_key, caller_agent, "
-            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "frozen_instruction_text, frozen_instruction_sha256, "
+            "created_at) VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 execution_id,
                 int(auto_review_child),
@@ -178,6 +191,8 @@ def write_admission_context(
                 caller_seat,
                 work_key,
                 caller_agent,
+                frozen_instruction_text,
+                frozen_instruction_sha256,
                 _now(),
             ),
         )
@@ -195,6 +210,7 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
             "review_surface, dispatch_lane, suppress_review_spawn, "
             "prompt_turn_number, prompt_bind_mode, resolved_effort, "
             "caller_seat, work_key, caller_agent, "
+            "frozen_instruction_text, frozen_instruction_sha256, "
             "created_at FROM generate_admission_context WHERE execution_id=?",
             (execution_id,),
         ).fetchone()
@@ -230,6 +246,16 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
         caller_seat=row["caller_seat"] if "caller_seat" in row.keys() else None,
         work_key=row["work_key"] if "work_key" in row.keys() else None,
         caller_agent=row["caller_agent"] if "caller_agent" in row.keys() else None,
+        frozen_instruction_text=(
+            row["frozen_instruction_text"]
+            if "frozen_instruction_text" in row.keys()
+            else None
+        ),
+        frozen_instruction_sha256=(
+            row["frozen_instruction_sha256"]
+            if "frozen_instruction_sha256" in row.keys()
+            else None
+        ),
         created_at=row["created_at"],
     )
 

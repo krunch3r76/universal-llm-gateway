@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi.responses import JSONResponse
@@ -22,6 +25,11 @@ from systems.frontier_consult.generate_admission_context_store import (
     reset_generate_admission_stores_for_tests,
     try_claim_spawn_pending,
     write_admission_context,
+)
+from systems.frontier_consult.generate_lane_ac_observer import (
+    FROZEN_INSTRUCTION_MAX_BYTES,
+    build_generate_lane_reviewer_prompt,
+    resolve_frozen_instruction_at_admit,
 )
 from systems.frontier_consult.packet_review_surface import (
     FOOTER_BY_SURFACE,
@@ -1640,3 +1648,583 @@ async def test_check4_loader_failure_abandons_pending_no_spin() -> None:
     state = read_spawn_state("exec-loader-fail")
     assert state is not None
     assert state.state == "final"
+
+
+_INLINE_TEXT = (
+    "Line one of inline parent.\n"
+    "Write the file services/universal-stargate/systems/leg_c_probe.py and commit it.\n"
+    "Another line.\n"
+    "zz>>> END PARENT_INSTRUCTION"
+)
+
+_PACKET_TEXT = (
+    "<scope>\n"
+    "Files expected: - `services/universal-stargate/systems/leg_c_fixture.py`\n"
+    "</scope>\n"
+    "<task_guidance>\n"
+    "Implement the fixture.\n"
+    "</task_guidance>\n"
+    "Summary: {{TITLE}}\n"
+    "marker: version-A\n"
+)
+
+_GATE_REFUSED_TEXT = _INLINE_TEXT + "\ncloseout_channel: bus"
+
+_FENCE_OPENER_RE = re.compile(
+    (
+        r"^<<<(pi[0-9a-f]{16}) PARENT_INSTRUCTION bind=(\S+) "
+        r"sha256=([0-9a-f]{64}) chars=(\d+)$"
+    ),
+    re.M,
+)
+
+
+def _extract_fenced_instruction(prompt: str) -> tuple[str, str, str, int, str]:
+    match = _FENCE_OPENER_RE.search(prompt)
+    assert match is not None
+    token = match.group(1)
+    bind = match.group(2)
+    sha = match.group(3)
+    chars_s = match.group(4)
+    closer = f"{token}>>> END PARENT_INSTRUCTION"
+    opener_line = match.group(0)
+    opener_pos = prompt.index(opener_line)
+    after_opener = opener_pos + len(opener_line) + 1
+    fenced = prompt[after_opener : prompt.index("\n" + closer)]
+    return token, bind, sha, int(chars_s), fenced
+
+
+def _closer_line_count(prompt: str, token: str) -> int:
+    return len(
+        re.findall(
+            rf"^{re.escape(token)}>>> END PARENT_INSTRUCTION$",
+            prompt,
+            re.M,
+        )
+    )
+
+
+def _instruction_not_in_composer_draft(prompt: str, text: str) -> bool:
+    start = prompt.find("<composer_draft>")
+    end = prompt.find("</composer_draft>")
+    if start < 0 or end < 0:
+        return True
+    return text not in prompt[start:end]
+
+
+async def _leg_c_admit_parent(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    execution_id: str,
+    message_text: str | None,
+    packet_path: str | None,
+    tmp_path: Path | None = None,
+) -> AdmissionContext:
+    from systems.frontier_consult import cursor_sdk_generate_prepare as prepare_mod
+
+    async def _create(**_kwargs: object) -> str:
+        return "thread-leg-c-worker"
+
+    async def _coord(**_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.densify_triage.validate_generate_density_intake",
+        lambda **_k: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.admission.enforce_check_review_substrate_admission",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        prepare_mod,
+        "align_cursor_knobs",
+        lambda **_k: type(
+            "A",
+            (),
+            {
+                "aligned_knobs": None,
+                "warnings_as_dicts": lambda self: [],
+                "knob_resolution_as_dicts": lambda self: [],
+            },
+        )(),
+    )
+    monkeypatch.setattr(prepare_mod, "emit_sdk_generate_requested", lambda **_k: None)
+    monkeypatch.setattr(prepare_mod, "emit_sdk_thread_created", lambda **_k: None)
+    monkeypatch.setattr(prepare_mod, "create_handoff_thread", _create)
+    monkeypatch.setattr(
+        prepare_mod, "admit_handoff_dispatch", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(prepare_mod, "post_coord_admit_pointer", _coord)
+    monkeypatch.setattr(
+        prepare_mod,
+        "probe_continuity_root_thread_id",
+        AsyncMock(return_value=None),
+    )
+    if tmp_path is not None:
+        monkeypatch.setattr(
+            "systems.frontier_consult.handoff._workspaces_root",
+            lambda: tmp_path,
+        )
+
+    await prepare_mod.prepare_cursor_sdk_generate(
+        request_id=f"req-{execution_id}",
+        role="cursor-sdk",
+        model="cursor/composer-2.5",
+        subject="leg-c",
+        caller_agent="cursor-sdk-lane",
+        contract="none",
+        packet_path=packet_path,
+        message_text=message_text,
+        parent_dispatch_thread_id="thread:leg-c-coord",
+        dispatch_thread_id="thread:leg-c-coord",
+        prompt_bind_mode="explicit_external",
+        prompt_turn_number=None,
+        auto_review_child=True,
+        execution_id=execution_id,
+        dispatch_id=f"disp-{execution_id}",
+    )
+    ctx = read_admission_context(execution_id)
+    assert ctx is not None
+    return ctx
+
+
+def _leg_c_write_packet(tmp_path: Path, text: str) -> str:
+    packet_dir = tmp_path / "leg-c-ac"
+    packet_dir.mkdir(parents=True, exist_ok=True)
+    name = f"{uuid4().hex}.md"
+    (packet_dir / name).write_text(text, encoding="utf-8")
+    return f"workspaces://leg-c-ac/{name}"
+
+
+@pytest.mark.asyncio
+async def test_leg_c_inline_parent_review_child_carries_frozen_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles.cdp_review_prompt_gate import enforce_review_prompt_gate
+
+    from systems.frontier_consult.review_child_spawn_hook import (
+        spawn_generate_lane_review_child,
+    )
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    exec_id = "exec-leg-c-c1"
+    ctx = await _leg_c_admit_parent(
+        monkeypatch,
+        execution_id=exec_id,
+        message_text=_INLINE_TEXT,
+        packet_path=None,
+    )
+    captured: list[object] = []
+
+    async def _capture(body: object, _resp: object) -> dict[str, str]:
+        captured.append(body)
+        return {"execution_id": "child-leg-c"}
+
+    with patch("systems.frontier_consult.route.team_dispatch", _capture):
+        await spawn_generate_lane_review_child(
+            request_id="req-c1",
+            ctx=ctx,
+            parent_thread_id="thread-leg-c-worker",
+            reviewer=ReviewerSelection(
+                model="cdp/opus-5",
+                identity=consultant_identity("cdp/opus-5", None),
+                contract="code-review",
+                effort="high",
+            ),
+        )
+
+    assert len(captured) == 1
+    body = captured[0]
+    assert isinstance(body, TeamDispatchGenerateBody)
+    assert body.prompt_turn_number is None
+    assert body.prompt_bind_mode == "explicit_external"
+    assert body.prompt_sha256 is None
+    assert "<review_mandate>" in (body.prompt or "")
+    token, bind, sha, _chars, fenced = _extract_fenced_instruction(body.prompt or "")
+    assert bind == "explicit_external"
+    assert fenced == _INLINE_TEXT
+    assert sha == hashlib.sha256(_INLINE_TEXT.encode()).hexdigest()
+    assert sha == ctx.frozen_instruction_sha256
+    assert _closer_line_count(body.prompt or "", token) == 1
+    assert (body.prompt or "").count(_INLINE_TEXT) == 1
+    assert _instruction_not_in_composer_draft(body.prompt or "", _INLINE_TEXT)
+    enforce_review_prompt_gate(
+        contract="code-review",
+        prompt_text=body.prompt or "",
+        dispatch_thread_id="thread:leg-c-coord",
+    )
+
+
+@pytest.mark.asyncio
+async def test_leg_c_packet_parent_review_child_carries_admit_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from systems.frontier_consult.cursor_sdk_admit_loop import (
+        classify_admit_pointer_loop,
+    )
+    from systems.frontier_consult.dispatch_thread_context import (
+        reject_unresolved_placeholders,
+    )
+    from systems.frontier_consult.review_child_spawn_hook import (
+        spawn_generate_lane_review_child,
+    )
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    packet_path = _leg_c_write_packet(tmp_path, _PACKET_TEXT)
+    exec_id = "exec-leg-c-c2"
+    ctx = await _leg_c_admit_parent(
+        monkeypatch,
+        execution_id=exec_id,
+        message_text=None,
+        packet_path=packet_path,
+        tmp_path=tmp_path,
+    )
+    captured: list[object] = []
+
+    async def _capture(body: object, _resp: object) -> dict[str, str]:
+        captured.append(body)
+        return {"execution_id": "child-leg-c"}
+
+    with patch("systems.frontier_consult.route.team_dispatch", _capture):
+        await spawn_generate_lane_review_child(
+            request_id="req-c2",
+            ctx=ctx,
+            parent_thread_id="thread-leg-c-worker",
+            reviewer=ReviewerSelection(
+                model="cursor/composer-2.5",
+                identity=consultant_identity("cursor/composer-2.5", None),
+                contract="check-review",
+                effort=None,
+            ),
+        )
+
+    assert len(captured) == 1
+    body = captured[0]
+    assert isinstance(body, TeamDispatchGenerateBody)
+    assert body.seat == "cursor-sdk"
+    assert body.lane == "B"
+    assert body.read_only is True
+    assert body.prompt_turn_number is None
+    assert body.prompt_bind_mode == "explicit_external"
+    assert (body.prompt or "").startswith(_REVIEWER_EMPTY_SCOPE_PREFIX)
+    _token, _bind, sha, _chars, fenced = _extract_fenced_instruction(body.prompt or "")
+    assert fenced == _PACKET_TEXT
+    assert sha == ctx.frozen_instruction_sha256
+    reject_unresolved_placeholders(
+        request_id="req-c2",
+        text=body.prompt or "",
+        field="prompt",
+    )
+    loop = classify_admit_pointer_loop(
+        admit_target_thread=body.dispatch_thread_id or "",
+        prompt_source_thread=body.dispatch_thread_id or "",
+        prompt_bind_mode=body.prompt_bind_mode,
+        prompt_turn_number=body.prompt_turn_number,
+        has_explicit_prompt_source=True,
+    )
+    assert loop.loop_closure is False
+
+
+@pytest.mark.asyncio
+async def test_leg_c_packet_edit_after_admit_does_not_change_review(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from systems.frontier_consult.review_child_spawn_hook import (
+        spawn_generate_lane_review_child,
+    )
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    packet_path = _leg_c_write_packet(tmp_path, _PACKET_TEXT)
+    packet_file = tmp_path / "leg-c-ac" / packet_path.rsplit("/", 1)[-1]
+    exec_id = "exec-leg-c-c3"
+    ctx = await _leg_c_admit_parent(
+        monkeypatch,
+        execution_id=exec_id,
+        message_text=None,
+        packet_path=packet_path,
+        tmp_path=tmp_path,
+    )
+    packet_file.write_text(
+        _PACKET_TEXT.replace("marker: version-A", "marker: version-B"),
+        encoding="utf-8",
+    )
+    captured: list[object] = []
+
+    async def _capture(body: object, _resp: object) -> dict[str, str]:
+        captured.append(body)
+        return {"execution_id": "child-leg-c"}
+
+    with patch("systems.frontier_consult.route.team_dispatch", _capture):
+        await spawn_generate_lane_review_child(
+            request_id="req-c3",
+            ctx=ctx,
+            parent_thread_id="thread-leg-c-worker",
+            reviewer=ReviewerSelection(
+                model="cursor/composer-2.5",
+                identity=consultant_identity("cursor/composer-2.5", None),
+                contract="check-review",
+                effort=None,
+            ),
+        )
+
+    assert len(captured) == 1
+    body = captured[0]
+    assert isinstance(body, TeamDispatchGenerateBody)
+    assert "marker: version-A" in (body.prompt or "")
+    assert "marker: version-B" not in (body.prompt or "")
+    _token, _bind, sha, _chars, _fenced = _extract_fenced_instruction(body.prompt or "")
+    assert sha == hashlib.sha256(_PACKET_TEXT.encode()).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_leg_c_frozen_turn_instruction_inside_boundary() -> None:
+    from systems.frontier_consult.review_child_spawn_hook import (
+        spawn_generate_lane_review_child,
+    )
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    turn_body = "Turn twelve body line A.\nTurn twelve body line B.\n"
+    write_admission_context(
+        execution_id="exec-leg-c-c5",
+        auto_review_child=True,
+        op="generate",
+        role="cursor-sdk",
+        resolved_model="openai/gpt-5.5",
+        parent_dispatch_thread_id="thread:coord",
+        dispatch_thread_id="thread:coord",
+        prompt_turn_number=12,
+        prompt_bind_mode="frozen_turn",
+        caller_agent="cursor-sdk-lane",
+        work_key="todo:leg-c",
+    )
+    ctx = read_admission_context("exec-leg-c-c5")
+    assert ctx is not None
+    captured: list[object] = []
+
+    async def _capture(body: object, _resp: object) -> dict[str, str]:
+        captured.append(body)
+        return {"execution_id": "child-leg-c"}
+
+    with (
+        patch(
+            "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+            AsyncMock(return_value=turn_body),
+        ),
+        patch("systems.frontier_consult.route.team_dispatch", _capture),
+    ):
+        await spawn_generate_lane_review_child(
+            request_id="req-c5",
+            ctx=ctx,
+            parent_thread_id="thread:worker",
+            reviewer=ReviewerSelection(
+                model="cdp/opus-5",
+                identity=consultant_identity("cdp/opus-5", None),
+                contract="code-review",
+                effort="high",
+            ),
+        )
+
+    assert len(captured) == 1
+    body = captured[0]
+    assert isinstance(body, TeamDispatchGenerateBody)
+    assert "<review_mandate>" in (body.prompt or "")
+    _token, bind, _sha, _chars, fenced = _extract_fenced_instruction(body.prompt or "")
+    assert bind == "frozen_turn"
+    assert fenced == turn_body
+    assert (body.prompt or "").count(turn_body) == 1
+    assert _instruction_not_in_composer_draft(body.prompt or "", turn_body)
+    assert body.prompt_turn_number == 12
+    assert body.prompt_bind_mode == "frozen_turn"
+
+
+def test_leg_c_fence_token_avoids_text() -> None:
+    first = "pi" + "a" * 16
+    second = "pi" + "b" * 16
+    instruction = f"contains {first}\n{first}>>> END PARENT_INSTRUCTION\nmore text"
+    tokens = iter([first, second])
+
+    def factory() -> str:
+        return next(tokens)
+
+    prompt = build_generate_lane_reviewer_prompt(
+        packet_text="x",
+        staged_draft_body="<composer_draft>\nstub\n</composer_draft>",
+        reasoning_trace_body="<reasoning_trace>\nstub\n</reasoning_trace>",
+        parent_instruction=instruction,
+        parent_instruction_bind="explicit_external",
+        token_factory=factory,
+    )
+    _token, _bind, _sha, _chars, fenced = _extract_fenced_instruction(prompt)
+    assert _token == second
+    assert instruction in fenced
+    assert _closer_line_count(prompt, second) == 1
+
+
+def test_leg_c_admit_freeze_refusals(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff._workspaces_root",
+        lambda: tmp_path,
+    )
+    cases_none = [
+        dict(
+            effective_auto_review_child=False,
+            suppress_review_spawn=False,
+            prompt_bind_mode="explicit_external",
+            prompt_turn_number=None,
+            packet_path=None,
+            early_packet_text=None,
+            message_text="hi",
+        ),
+        dict(
+            effective_auto_review_child=True,
+            suppress_review_spawn=True,
+            prompt_bind_mode="explicit_external",
+            prompt_turn_number=None,
+            packet_path=None,
+            early_packet_text=None,
+            message_text="hi",
+        ),
+        dict(
+            effective_auto_review_child=True,
+            suppress_review_spawn=False,
+            prompt_bind_mode="explicit_external",
+            prompt_turn_number=3,
+            packet_path=None,
+            early_packet_text=None,
+            message_text="hi",
+        ),
+        dict(
+            effective_auto_review_child=True,
+            suppress_review_spawn=False,
+            prompt_bind_mode="frozen_turn",
+            prompt_turn_number=None,
+            packet_path=None,
+            early_packet_text=None,
+            message_text="hi",
+        ),
+        dict(
+            effective_auto_review_child=True,
+            suppress_review_spawn=False,
+            prompt_bind_mode=None,
+            prompt_turn_number=None,
+            packet_path=None,
+            early_packet_text=None,
+            message_text="hi",
+        ),
+        dict(
+            effective_auto_review_child=True,
+            suppress_review_spawn=False,
+            prompt_bind_mode="explicit_external",
+            prompt_turn_number=None,
+            packet_path="workspaces://missing/none.md",
+            early_packet_text=None,
+            message_text=None,
+        ),
+        dict(
+            effective_auto_review_child=True,
+            suppress_review_spawn=False,
+            prompt_bind_mode="explicit_inline",
+            prompt_turn_number=None,
+            packet_path=None,
+            early_packet_text=None,
+            message_text="   ",
+        ),
+        dict(
+            effective_auto_review_child=True,
+            suppress_review_spawn=False,
+            prompt_bind_mode="explicit_external",
+            prompt_turn_number=None,
+            packet_path=None,
+            early_packet_text=None,
+            message_text="x" * (FROZEN_INSTRUCTION_MAX_BYTES + 1),
+        ),
+    ]
+    for kwargs in cases_none:
+        assert resolve_frozen_instruction_at_admit(**kwargs) is None
+
+    assert (
+        resolve_frozen_instruction_at_admit(
+            effective_auto_review_child=True,
+            suppress_review_spawn=False,
+            prompt_bind_mode="explicit_inline",
+            prompt_turn_number=None,
+            packet_path=None,
+            early_packet_text=None,
+            message_text="inline-eligible",
+        )
+        == "inline-eligible"
+    )
+    assert (
+        resolve_frozen_instruction_at_admit(
+            effective_auto_review_child=True,
+            suppress_review_spawn=False,
+            prompt_bind_mode="explicit_external",
+            prompt_turn_number=None,
+            packet_path="workspaces://leg-c-ac/p.md",
+            early_packet_text="early-bytes",
+            message_text=None,
+        )
+        == "early-bytes"
+    )
+
+
+@pytest.mark.asyncio
+async def test_leg_c_gate_refused_prompt_abandons_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from systems.frontier_consult.review_child_spawn_hook import (
+        reconcile_pending_spawns,
+    )
+
+    exec_id = "exec-leg-c-c10"
+    await _leg_c_admit_parent(
+        monkeypatch,
+        execution_id=exec_id,
+        message_text=_GATE_REFUSED_TEXT,
+        packet_path=None,
+    )
+    try_claim_spawn_pending(
+        parent_execution_id=exec_id,
+        parent_dispatch_thread_id="thread:leg-c-coord",
+        parent_thread_id="thread:worker",
+        reviewer_model="cdp/opus-5",
+    )
+    captured: list[object] = []
+    published: list[str] = []
+    with (
+        patch(
+            "systems.frontier_consult.route.team_dispatch",
+            AsyncMock(
+                side_effect=lambda b, _r: (
+                    captured.append(b) or {"execution_id": "child"}
+                )
+            ),
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
+            side_effect=_terminal_stub,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.publish_frontier_event",
+            side_effect=lambda ev: published.append(ev.signal),
+        ),
+    ):
+        await reconcile_pending_spawns()
+        await reconcile_pending_spawns()
+
+    state = read_spawn_state(exec_id)
+    assert state is not None
+    assert state.state == "final"
+    assert state.review_child_execution_id is None
+    meta = json.loads(state.attempt_metadata)
+    assert meta["abandon_reason"] == "review_prompt_gate_refused"
+    assert captured == []
+    assert published.count("frontier.review_child.prompt_bind") == 1
