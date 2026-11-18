@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from claude_bundles.journal_hop_projection import MAESTRO_REGISTER_URI
 from claude_bundles.operator_proxy_mission import (
-    _BRIEFING_BLOCK,
+    _HOP_ARRIVAL_TEMPLATE,
     _HOP_REFUSALS_MARKER,
-    _HOP_SUCCESSOR_TEMPLATE,
     LIFE_SURFACE_FORBIDDEN_TOOLS,
     LIFE_SURFACE_LEGAL_TOOLS,
     MISSION_ARRIVAL_SKILL_SLUGS,
@@ -62,8 +62,6 @@ def test_purpose_recognition() -> None:
 _SECTION_ORDER = (
     "## What is running now",
     "## CURRENT LEG (rendered checkpoint)",
-    "## Lessons in force",
-    "## Register",
     "## In flight (from the checkpoint; liveness from bus lineage)",
     "## Live leg (data, projected from the bus)",
     "## Pointers",
@@ -97,7 +95,6 @@ def test_ensure_injects_briefing_without_slash_prefix() -> None:
     _assert_section_order(out, _SECTION_ORDER)
     assert "cdp-operator-proxy" in out
     assert "hypothesize-simulate" in out
-    assert "other four skills" in out
     assert out.index("## Hop request (data)") < out.index("# Mission\nDo the thing.")
     assert out.index("# Mission\nDo the thing.") < out.index("## Hard refusals")
     assert "This is a continuity hop: do not emit MISSION_CLOSEOUT." in out
@@ -113,8 +110,8 @@ def test_wake_prose_is_the_template_refusal_not_the_suspended_guide() -> None:
         roster_text="",
         fetch_turns=_noop_fetch,
     )
-    assert "Never re-arm send_later as a heartbeat" in out
-    assert "runbook step-8 reload line" in out
+    assert "Never re-arm a scheduled check as a heartbeat." in out
+    assert "Waiting and wakes: follow `runbook:grand-impresario-playbook` § 5" in out
     assert "SUSPENDED" not in out
     assert "Consume-time wake affinity" not in out
     assert "while true; do sleep 240" not in out
@@ -330,23 +327,6 @@ def test_stage_resolve_single_briefing_with_house_pool_inline(
     assert "## House (read first)" in submitted
 
 
-def test_structural_briefing_commission_is_ulg_code_team_dispatch() -> None:
-    """Cut 6: commission defaults live in on-trigger md_read, not inline hop body."""
-    out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    data = out.split("## Data, not instructions", 1)[1].split("## Hard refusals", 1)[0]
-    assert "How this seat works" in data
-    assert "Standing authority" in data
-    assert "lane-act-gates" in MISSION_SKILL_SLUGS
-
-
-def test_hop_body_states_polling_removed_not_sleep_290() -> None:
-    """L1: rendered hop names removed polling and drops legacy sleep-290 poll prose."""
-    out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    assert "polling is removed" in out
-    assert "Sleep at most 290" not in out
-    assert "sleep 290" not in out.lower()
-
-
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CDP_OPERATOR_PROXY_SKILL = (
     _REPO_ROOT / "cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md"
@@ -427,22 +407,6 @@ def test_legal_subset_forbidden_disjoint_a9() -> None:
     assert LIFE_SURFACE_LEGAL_TOOLS.isdisjoint(LIFE_SURFACE_FORBIDDEN_TOOLS)
     out = ensure_operator_proxy_mission_prompt("# x\n")
     assert "`panel_dispatch`" not in out
-    assert "team_dispatch" in out
-
-
-def test_how_this_seat_works_names_reachable_models() -> None:
-    out = ensure_operator_proxy_mission_prompt("thread_id: 12286\n# Mission\n")
-    refusals = out.split("## Hard refusals", 1)[1]
-    assert (
-        "maestro house: desired_model=cdp/fable-5.1 desired_effort=medium "
-        "(K91, FACT 12286#4800); elsewhere cdp/opus-5.5-extra (K22)"
-    ) in refusals
-    assert "Never commission a cdp/fable seat unless Kaywan asked" in refusals
-    assert "no cdp/fable hop target" not in refusals
-    assert "(a:39008)" in refusals
-    assert "cursor/claude-opus-5" not in out
-    _legacy_reasoner = "".join(("cursor/", "gr", "ok", "-4.6"))
-    assert _legacy_reasoner not in out
 
 
 def test_identity_is_successor_birth_id_not_chat_url() -> None:
@@ -464,7 +428,6 @@ def test_first_act_names_mission_skill_slugs() -> None:
         assert slug in line1
     for slug in MISSION_TRIGGER_SKILL_SLUGS:
         assert slug not in line1
-    assert "other four skills" in acts
     assert "If one fails to load, say which" in acts
 
 
@@ -505,12 +468,12 @@ def _runbook_for_refuse_coverage() -> str:
 
 
 def test_refuse_bullets_map_to_template_lines() -> None:
-    """Hop template keeps 11 original bullets plus L5 append (1685-1687 cite)."""
-    refusals = _BRIEFING_BLOCK.split("## Hard refusals", 1)[1]
+    """Hop template keeps twelve hard-refusal bullets."""
+    refusals = _HOP_ARRIVAL_TEMPLATE.split(_HOP_REFUSALS_MARKER, 1)[1]
     hop_bullets = [ln for ln in refusals.splitlines() if ln.startswith("- ")]
-    assert len(hop_bullets) == 17
+    assert len(hop_bullets) == 12
     assert "wc -m" in refusals
-    assert "conductor_hop.py:1685-1687" in refusals
+    assert "conductor_hop.py" not in refusals
     assert "Sleep at most 290" not in refusals
 
 
@@ -541,9 +504,9 @@ def test_git_posture_forward_only_section_contains_forward_only_marker() -> None
 
 def test_hop_refusal_forward_only_cites_git_posture_section() -> None:
     """Hop hard refusal must not name parity note item 7 as the rule body."""
-    assert "grok-bot-ulg-cursor-parity.md item 7" not in _HOP_SUCCESSOR_TEMPLATE
-    assert "git-posture/SKILL.md" in _HOP_SUCCESSOR_TEMPLATE
-    assert "Forward only" in _HOP_SUCCESSOR_TEMPLATE
+    assert "grok-bot-ulg-cursor-parity.md item 7" not in _HOP_ARRIVAL_TEMPLATE
+    assert "git-posture/SKILL.md" in _HOP_ARRIVAL_TEMPLATE
+    assert "Forward only" in _HOP_ARRIVAL_TEMPLATE
 
 
 def test_enforce_hop_render_max_sha_inflated_checkpoint_appends_flag_after_loop() -> (
@@ -588,7 +551,7 @@ def test_enforce_hop_render_max_sha_inflated_checkpoint_appends_flag_after_loop(
         journal_text="",
         register_text="",
     )
-    ck_section = out.split(prefix, 1)[1].split("## Lessons", 1)[0]
+    ck_section = out.split(prefix, 1)[1].split("## Live leg", 1)[0]
     marker = "[budget_exceeded checkpoint "
     assert ck_section.count(marker) == 1
     before, rest = ck_section.split(marker, 1)
@@ -601,14 +564,16 @@ def test_enforce_hop_render_max_sha_inflated_checkpoint_appends_flag_after_loop(
         f"\u2014 read {uri}]"
     )
     acts = out.split("## Your first acts", 1)[1].split("## Data", 1)[0]
-    assert f"{lane}-standing-handoff.md" in acts
-    assert f"{lane}-house-rules.md" in acts
+    assert f"`{lane}-standing-handoff.md` whole" in acts
 
 
 def test_enforce_hop_render_max_last_leg_overage_denominator_ge_floor() -> None:
     """Truncatable ### LAST LEG (not NOTES) over cap: hop trim floor stays >= 2048, never /0."""
     from claude_bundles.operator_proxy_mission import HOP_LEG_FLOOR_B
-    from claude_bundles.operator_proxy_standing_render import measure_checkpoint_budget_bytes
+    from claude_bundles.operator_proxy_standing_render import (
+        HOP_RENDER_MAX_B,
+        measure_checkpoint_budget_bytes,
+    )
 
     sidecar = (
         "## CURRENT LEG\nLEG 1\n"
@@ -620,7 +585,7 @@ def test_enforce_hop_render_max_last_leg_overage_denominator_ge_floor() -> None:
     assert mb is not None and mb > HOP_LEG_FLOOR_B
 
     out = ensure_operator_proxy_mission_prompt(
-        "thread_id: 18587\n",
+        "thread_id: 18587\n" + ("C" * 6000) + "\n",
         standing_handoff_text=sidecar,
         roster_text="",
         fetch_turns=_noop_fetch,
@@ -628,8 +593,11 @@ def test_enforce_hop_render_max_last_leg_overage_denominator_ge_floor() -> None:
         register_text="",
     )
     ck = out.split("## CURRENT LEG (rendered checkpoint)\n", 1)[1].split(
-        "## Lessons", 1
+        "## Live leg", 1
     )[0]
+    hop_bytes = len(out.encode("utf-8"))
+    ck_bytes = len(ck.encode("utf-8"))
+    assert hop_bytes - ck_bytes > HOP_RENDER_MAX_B - HOP_LEG_FLOOR_B
     assert "[budget_exceeded LAST LEG " in ck
     assert "[budget_exceeded NOTES" not in ck
     marker = "[budget_exceeded checkpoint "
@@ -660,7 +628,7 @@ def test_floor_wins_over_cap_infeasible() -> None:
 
     house_rules = "## HOUSE RULES\n" + ("r" * 6000) + "\n"
     journal = "# journal\n" + ("j" * 4000) + "\n"
-    caller = "thread_id: 18588\n" + ("C" * 2000) + "\n"
+    caller = "thread_id: 18588\n" + ("C" * 6000) + "\n"
 
     prefix = "## CURRENT LEG (rendered checkpoint)\n"
     out = ensure_operator_proxy_mission_prompt(
@@ -673,7 +641,10 @@ def test_floor_wins_over_cap_infeasible() -> None:
         register_text="",
     )
     assert len(out.encode("utf-8")) > HOP_RENDER_MAX_B
-    ck = out.split(prefix, 1)[1].split("## Lessons", 1)[0]
+    hop_bytes = len(out.encode("utf-8"))
+    ck = out.split(prefix, 1)[1].split("## Live leg", 1)[0]
+    ck_bytes = len(ck.encode("utf-8"))
+    assert hop_bytes - ck_bytes > HOP_RENDER_MAX_B - HOP_LEG_FLOOR_B
     marker = "[budget_exceeded checkpoint "
     assert marker in ck
     before, rest = ck.rsplit(marker, 1)
@@ -712,7 +683,7 @@ def test_hop_le_12000_with_floor() -> None:
         journal_text="",
         register_text="",
     )
-    ck_section = out.split(prefix, 1)[1].split("## Lessons", 1)[0]
+    ck_section = out.split(prefix, 1)[1].split("## Live leg", 1)[0]
     marker = "[budget_exceeded checkpoint "
     assert ck_section.count(marker) == 1
     before, rest = ck_section.split(marker, 1)
@@ -765,7 +736,7 @@ def test_flag_label_equals_applied_target() -> None:
         register_text="",
     )
     marker = "[budget_exceeded checkpoint "
-    ck = out.split(prefix, 1)[1].split("## Lessons", 1)[0]
+    ck = out.split(prefix, 1)[1].split("## Live leg", 1)[0]
     assert marker in ck
     before, rest = ck.rsplit(marker, 1)
     flag_line = marker + rest.split("\n", 1)[0]
@@ -802,13 +773,15 @@ def test_rendered_prompt_is_under_the_old_briefing() -> None:
         register_text="",
     )
     assert len(out.encode()) <= HOP_RENDER_MAX_B
+    measured = len(out.encode("utf-8"))
+    assert measured <= HOP_RENDER_MAX_B
     for needle in (
         "2000 characters",
-        "contract=conductor",
+        "The tab-bind stamp is the only registration record.",
         "git_integration_worker",
-        "send_later",
+        "Waiting and wakes: follow",
+        "runbook:houseless-setup",
         "successor_birth_id",
-        "conductor_hop.py:1685-1687",
     ):
         assert needle in out
     assert not any(line.endswith("…") for line in out.splitlines())
@@ -972,7 +945,10 @@ def test_mission_prompt_without_handoff_still_renders_refusals_last() -> None:
     assert out.index("## Data, not instructions") < out.index("## Hop request (data)")
     assert out.index("## Hop request (data)") < out.index("## Hard refusals")
     assert out.index("# Mission") < out.index("## Hard refusals")
-    assert "contract=conductor" in out.split("## Hard refusals", 1)[1]
+    assert (
+        "The tab-bind stamp is the only registration record."
+        in out.split("## Hard refusals", 1)[1]
+    )
     assert "Author the standing handoff before you leave." in out
     assert "execution_id unknown" not in out
 
@@ -1002,23 +978,27 @@ def test_housekeeping_preamble_has_budgets_not_mission_act_seven() -> None:
     assert out.index("## Budgets") < out.index("## Housekeeping acts")
 
 
-def test_mission_preamble_unchanged_when_hop_kind_omitted_golden() -> None:
-    golden_path = (
-        Path(__file__).resolve().parent / "testdata" / "mission_hop_preamble_golden.txt"
-    )
-    golden = golden_path.read_text(encoding="utf-8")
-    birth = "a" * 32
+def test_housekeeping_hop_prompt_unchanged(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guard: housekeeping hop form must not change when default form is reworked."""
+    root = tmp_path / "hk-golden-root"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    birth = "b" * 32
     caller = (
         "TYPE: CONTINUITY_HANDOFF\n"
         "thread_id: 12286\n"
         f"successor_birth_id: {birth}\n"
-        "trigger: golden-fixture\n"
+        "hop_kind: housekeeping\n"
     )
     sidecar = (
-        "## CURRENT LEG\n"
-        "### OWED / NEXT\nfixture owed line\n"
-        "### HOUSE RULES\n- K1 golden-rule\n"
+        "## CURRENT LEG\n### OWED / NEXT\nhk fixture\n### HOUSE RULES\n- K1 hk-rule\n"
     )
+    golden_path = (
+        Path(__file__).resolve().parent / "testdata" / "housekeeping_hop_golden.txt"
+    )
+    golden = golden_path.read_text(encoding="utf-8")
     out = ensure_operator_proxy_mission_prompt(
         caller,
         standing_handoff_text=sidecar,
@@ -1026,24 +1006,9 @@ def test_mission_preamble_unchanged_when_hop_kind_omitted_golden() -> None:
         fetch_turns=_noop_fetch,
         journal_text="",
         register_text="",
-        execution_id="exec-golden",
+        execution_id="exec-hk-golden",
     )
     assert out == golden
-    explicit = ensure_operator_proxy_mission_prompt(
-        caller + "hop_kind: mission\n",
-        standing_handoff_text=sidecar,
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text="",
-        register_text="",
-        execution_id="exec-golden",
-    )
-    assert "Act on the running items" in explicit
-    assert "## Housekeeping acts" not in explicit
-    assert (
-        explicit.split("## Hop request (data)", 1)[0]
-        == golden.split("## Hop request (data)", 1)[0]
-    )
 
 
 def test_hop_paste_shows_admit_stamp_and_responsibility_from_body() -> None:
@@ -1087,8 +1052,7 @@ def test_hop_paste_legacy_body_shows_not_recorded_for_missing_fields() -> None:
 
 def test_hop_successor_template_has_single_refusals_marker() -> None:
     """Module split assumes one canonical refusals heading in the raw template."""
-    assert _HOP_SUCCESSOR_TEMPLATE.count(_HOP_REFUSALS_MARKER) == 1
-    assert _BRIEFING_BLOCK.count(_HOP_REFUSALS_MARKER) == 1
+    assert _HOP_ARRIVAL_TEMPLATE.count(_HOP_REFUSALS_MARKER) == 1
 
 
 @pytest.mark.parametrize(
@@ -1110,15 +1074,15 @@ def test_render_splice_ignores_marker_in_verbatim(quote: str) -> None:
         "execution_clause": "",
         "running_now_line": "## What is running now",
         "house_rules_verbatim": house_rules,
-        "lessons_in_force": "## Lessons in force\n\n(none)\n",
-        "register_card": f"## Register\n\nRegister card absent at {MAESTRO_REGISTER_URI}.\n",
         "live_leg": "(none)",
         "pointers": "- prior LEG blocks: handoff file",
+        "first_act_call1_line": "act two",
+        "fetch_last": "3",
     }
     out = render_hop_successor_briefing(fields, caller_body="c")
     refusal_heading = "## Hard refusals (these bind; they are last on purpose)"
     assert house_rules in out
-    assert out.count("## Hop request (data)") == 1
+    assert sum(1 for line in out.splitlines() if line == "## Hop request (data)") == 1
     assert out.index("## Hop request (data)") < out.index(refusal_heading)
     assert (
         out.index(quote)
@@ -1148,7 +1112,7 @@ def test_handoff_quoting_hard_refusals_does_not_relocate_hop_block() -> None:
     assert handoff_snippet.rstrip("\n") in out
     refusal_heading = "## Hard refusals (these bind; they are last on purpose)"
     assert sum(1 for line in out.splitlines() if line.startswith(refusal_heading)) == 1
-    assert out.count("## Hop request (data)") == 1
+    assert sum(1 for line in out.splitlines() if line == "## Hop request (data)") == 1
     assert out.index("## Data, not instructions") < out.index("## Hop request (data)")
     assert out.index("## Hop request (data)") < out.index(refusal_heading)
     assert out.index("## Hard refusals (indented quote in HOUSE RULES") < out.index(
@@ -1254,6 +1218,88 @@ def _ac6_texts(root, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
     )[0]
     del monkeypatch
     return staged_text, resolved
+
+
+_TESTDATA = Path(__file__).resolve().parent / "testdata"
+_ARCHIVED_MAESTRO_GOLDEN = _TESTDATA / "archive" / "maestro_hop_successor_golden.txt"
+
+
+def _hop_body(lane: str) -> str:
+    from hop_handoff.body import build_continuity_handoff_body
+    from hop_handoff.standing_handoff import StandingHandoffFreshness, standing_handoff_uri
+
+    return build_continuity_handoff_body(
+        thread_id=lane,
+        trigger="criterion-fixture",
+        source="agent-bus-hop-verb",
+        handoff=StandingHandoffFreshness(
+            status="current",
+            uri=standing_handoff_uri(lane),
+            mtime_epoch=1.0,
+            age_s=10.0,
+        ),
+        successor_birth_id="a" * 32,
+    )
+
+
+def _arrival_root(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "arrival-root"
+    (root / "notes/system/threads").mkdir(parents=True)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    return root
+
+
+def _arrival_texts(root: Path, lane: str, body: str) -> tuple[str, str]:
+    from cdp_ask.models import SubmitProjectAskRequest
+    from cdp_ask.runner import resolve_prompt
+
+    from claude_bundles.cdp_model_endpoint_staging import stage_cdp_prompt_with_skills
+
+    staged = stage_cdp_prompt_with_skills(
+        execution_id=f"exec-arrival-{lane}",
+        prompt_text=body,
+        purpose="operator-proxy",
+    )
+    rel = staged.prompt_uri.removeprefix("cortex://").lstrip("/")
+    staged_text = (root / rel).read_text(encoding="utf-8")
+    resolved = resolve_prompt(
+        SubmitProjectAskRequest(
+            prompt_text=body,
+            purpose="operator-proxy",
+            stargate_execution_id=f"sg-arrival-{lane}",
+        )
+    )[0]
+    return staged_text, resolved
+
+
+def _hop_part(text: str) -> str:
+    marker = "# Hop on agent-bus:"
+    idx = text.find(marker)
+    assert idx >= 0, "hop preamble missing in staged text"
+    return text[idx:]
+
+
+def _write_arrival_fixture_files(root: Path, lane: str) -> None:
+    threads = root / "notes/system/threads"
+    threads.mkdir(parents=True, exist_ok=True)
+    (threads / f"{lane}-standing-handoff.md").write_text(
+        "## CURRENT LEG\nLEG 1\n### OWED / NEXT\nowed-sentinel\n",
+        encoding="utf-8",
+    )
+    operational = root / "notes/system/operational"
+    operational.mkdir(parents=True, exist_ok=True)
+    (operational / "maestro-sidekick-roster.md").write_text(
+        "| N | Display name | Lane | Mailbox | State |\n"
+        "| 1 | Fixture | 15999 `fixture` | `x` | live |\n",
+        encoding="utf-8",
+    )
+    maestro = root / "notes/system/maestro"
+    maestro.mkdir(parents=True, exist_ok=True)
+    (maestro / "journal.md").write_text(
+        "## 2026-11-17 — entry 1\nRULE: [route] JOURNAL-SENTINEL\n",
+        encoding="utf-8",
+    )
+    (maestro / "register.md").write_text("REGISTER-SENTINEL\n", encoding="utf-8")
 
 
 def test_ac6_production_seams_render_rules_lineage_and_archive(
@@ -1375,21 +1421,6 @@ def test_ac1_missing_rules_file_is_plain_inline_fallback(
         assert "House rules (do not inline)" in text
 
 
-def test_ac3_unreadable_journal_renders_unavailable(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _ac6_cortex(tmp_path, monkeypatch)
-    journal = root / "notes/system/maestro/journal.md"
-    journal.parent.mkdir(parents=True)
-    journal.write_text("# journal\n", encoding="utf-8")
-    os.chmod(journal, 0o000)
-    try:
-        for text in _ac6_texts(root, monkeypatch):
-            assert "journal unavailable" in text
-    finally:
-        os.chmod(journal, 0o644)
-
-
 def test_ac6_checkpoint_raise_replaces_only_that_block(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1419,32 +1450,169 @@ def test_ac6_checkpoint_raise_replaces_only_that_block(
     assert "## Hard refusals" in out
 
 
-def test_ac7_non_utf8_roster_does_not_block_hop(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+_ARIVAL_MARKERS = (
+    "owed-sentinel",
+    "cdp-operator-proxy",
+    "runbook:houseless-setup",
+    "§ 3",
+    "§ 8",
+    "runbook:claude-ai-houseless-setup",
+    "§ 6",
+    "runbook:grand-impresario-playbook",
+    "§ 5",
+    "§ 9",
+    "Waiting and wakes: follow",
+    "The tab-bind stamp is the only registration record.",
+)
+
+_FORBIDDEN_BASE = (
+    "you are the operator seat",
+    "## Induction (K44)",
+    "## Lessons in force",
+    "## Register",
+    "to=maestro",
+    "maestro-loop",
+    "maestro/journal.md",
+    "maestro house:",
+    "maestro-sidekick-roster",
+    "Send TYPE: SEAT_REGISTRATION",
+    "15999",
+    "JOURNAL-SENTINEL",
+    "REGISTER-SENTINEL",
+    "K91",
+    "K22",
+    "R5:",
+)
+
+
+@pytest.mark.parametrize("lane", ["12286", "24136"])
+def test_default_hop_prompt_on_every_lane_through_staging_and_runner(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, lane: str
 ) -> None:
-    root = _ac6_cortex(tmp_path, monkeypatch)
+    root = _arrival_root(tmp_path, monkeypatch)
+    _write_arrival_fixture_files(root, lane)
+    body = _hop_body(lane)
+    for text in _arrival_texts(root, lane, body):
+        part = _hop_part(text)
+        assert part.split("\n", 1)[0] == (
+            f"# Hop on agent-bus:{lane}: you are the arriving seat"
+        )
+        assert f"on lane {lane}" in part
+        for marker in _ARIVAL_MARKERS:
+            assert marker in part
+        assert "on lanes" not in part
+        for forbidden in _FORBIDDEN_BASE:
+            assert forbidden not in part
     operational = root / "notes/system/operational"
-    operational.mkdir(parents=True)
     (operational / "maestro-sidekick-roster.md").write_bytes(b"\xff")
-    texts = _ac6_texts(root, monkeypatch)
-    for text in texts:
-        assert "## Hard refusals" in text
-        assert "## Live leg" in text
-        assert "roster unreadable: UnicodeDecodeError" in text
-
-
-def test_ac8_non_utf8_journal_and_register_degrade(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _ac6_cortex(tmp_path, monkeypatch)
     maestro = root / "notes/system/maestro"
-    maestro.mkdir(parents=True)
     (maestro / "journal.md").write_bytes(b"\xff")
     (maestro / "register.md").write_bytes(b"\xff")
-    for text in _ac6_texts(root, monkeypatch):
-        lessons = text.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
-        assert "RULE:" not in lessons
-        assert (
-            "[render_failed register_card: UnicodeDecodeError — read "
-            "cortex://notes/system/maestro/register.md]"
-        ) in text
+    for text in _arrival_texts(root, lane, body):
+        part = _hop_part(text)
+        assert "roster unreadable" not in part
+        assert "render_failed register_card" not in part
+        assert "journal unavailable" not in part
+
+
+def test_default_hop_keeps_3000_bytes_of_an_over_budget_leg(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lane = "24136"
+    root = _arrival_root(tmp_path, monkeypatch)
+    notes = "n" * 9000
+    handoff = (
+        f"## CURRENT LEG\nLEG 1\n### OWED / NEXT\nx\n### NOTES\n{notes}\n"
+    )
+    threads = root / "notes/system/threads"
+    threads.mkdir(parents=True, exist_ok=True)
+    (threads / f"{lane}-standing-handoff.md").write_text(handoff, encoding="utf-8")
+    body = _hop_body(lane)
+    uri = f"cortex://notes/system/threads/{lane}-standing-handoff.md"
+    for text in _arrival_texts(root, lane, body):
+        part = _hop_part(text)
+        runs = [len(s) for s in re.findall(r"n+", part)]
+        assert max(runs) >= 3000
+        assert any(
+            ln.startswith("[budget_exceeded checkpoint ") and uri in ln
+            for ln in part.splitlines()
+        )
+
+
+def test_archived_maestro_paste_is_not_passed_through(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = _ARCHIVED_MAESTRO_GOLDEN.read_text(encoding="utf-8")
+    root = _arrival_root(tmp_path, monkeypatch)
+    for text in _arrival_texts(root, "12286", body):
+        part = _hop_part(text)
+        hop_lines = [
+            ln for ln in part.splitlines() if ln.startswith("# Hop on agent-bus:")
+        ]
+        assert hop_lines[0] == "# Hop on agent-bus:12286: you are the arriving seat"
+        data_idx = part.index("## Hop request (data)")
+        op_idx = part.index("you are the operator seat")
+        assert op_idx > data_idx
+
+
+def test_maestro_archive_is_on_tree_and_intact() -> None:
+    archive_golden = _ARCHIVED_MAESTRO_GOLDEN
+    archive_template = _TESTDATA / "archive" / "maestro_hop_successor_template.txt"
+    mission_golden = _TESTDATA / "mission_hop_preamble_golden.txt"
+    expected_sha = (
+        "a74b048937011bc6001976e36540f65ba785605fad48fd8aeea45b5dbab530e7"
+    )
+    assert archive_golden.is_file(), "archive maestro successor golden missing"
+    sha = hashlib.sha256(archive_golden.read_bytes()).hexdigest()
+    assert sha == expected_sha
+    template = archive_template.read_text(encoding="utf-8")
+    assert template.startswith("# Hop on agent-bus:{lane}: you are the operator seat")
+    assert "{induction_k44_block}" in template
+    assert "{maestro_self_hop_refusal_tail}" in template
+    assert template.count("## Hard refusals") == 1
+    assert not mission_golden.is_file()
+
+
+def test_default_hop_prompt_golden(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    golden_path = _TESTDATA / "hop_arrival_golden.txt"
+    assert golden_path.is_file(), "hop arrival golden missing"
+    golden = golden_path.read_text(encoding="utf-8")
+    root = _arrival_root(tmp_path, monkeypatch)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    birth = "a" * 32
+    caller = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "thread_id: 12286\n"
+        f"successor_birth_id: {birth}\n"
+        "trigger: golden-fixture\n"
+    )
+    sidecar = (
+        "## CURRENT LEG\n"
+        "### OWED / NEXT\nfixture owed line\n"
+        "### HOUSE RULES\n- K1 golden-rule\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        caller,
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+        execution_id="exec-golden",
+    )
+    assert out == golden
+    explicit = ensure_operator_proxy_mission_prompt(
+        caller + "hop_kind: mission\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+        execution_id="exec-golden",
+    )
+    assert (
+        explicit.split("## Hop request (data)", 1)[0]
+        == golden.split("## Hop request (data)", 1)[0]
+    )

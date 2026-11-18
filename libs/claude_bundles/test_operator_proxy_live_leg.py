@@ -11,7 +11,6 @@ import pytest
 
 from claude_bundles import operator_proxy_live_leg as live_leg_mod
 from claude_bundles.operator_proxy_live_leg import (
-    GOVERNING_RULE,
     LaneFoldState,
     LiveLeg,
     OpenItem,
@@ -252,9 +251,9 @@ def test_ac1_carried_pickup_and_plan_keep_their_verbs() -> None:
     leg, _saved = _project_saved(state, [])
     text = render_live_leg(leg)
     assert "PICKUP|todo:pick" in text
-    assert GOVERNING_RULE["PICKUP"].split(":")[0] in text
-    assert "PLAN|todo:plan" in text
-    assert GOVERNING_RULE["PLAN"].split(":")[0] in text
+    assert "- lane 15851 #150 PICKUP|todo:pick" in text.splitlines()
+    assert "- lane 15851 #160 PLAN|todo:plan" in text.splitlines()
+    assert " — " not in text
     pickup = next(item for item in leg.items if item.key == "todo:pick")
     assert pickup.verb == "PICKUP"
     assert "R5" not in text.split("todo:pick", 1)[1].split("\n", 1)[0]

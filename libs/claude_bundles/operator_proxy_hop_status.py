@@ -23,15 +23,9 @@ from hop_handoff.body import (
 from hop_handoff.standing_handoff import standing_handoff_path, standing_handoff_uri
 from implement_admission.closeout_helpers import cortex_files_root
 
-from claude_bundles.journal_hop_projection import (
-    JOURNAL_HEAD_BYTES,
-    MAESTRO_JOURNAL_URI,
-    MAESTRO_REGISTER_URI,
-    ReadJournalHead,
-    hop_journal_projection_fields,
-)
-from claude_bundles.maestro_runbook_load import load_maestro_runbook
+from claude_bundles.journal_hop_projection import JOURNAL_HEAD_BYTES, ReadJournalHead
 from claude_bundles.operator_proxy_bus_fetch import lineage_status_for_execution
+from claude_bundles.operator_proxy_housekeeping_fields import housekeeping_fields
 from claude_bundles.operator_proxy_live_leg import (
     FoldStateSaver,
     FoldStateStore,
@@ -40,7 +34,6 @@ from claude_bundles.operator_proxy_live_leg import (
     project_live_leg,
     render_live_leg,
 )
-from claude_bundles.operator_proxy_induction_render import render_induction_k44_block
 from claude_bundles.operator_proxy_standing_render import (
     HOP_INFLIGHT_CAP_B,
     HOP_LIVE_LEG_CAP_B,
@@ -54,13 +47,10 @@ from claude_bundles.operator_proxy_standing_render import (
     hop_boundary_turn_from_header,
     hop_house_rules_pointer,
     inflight_section_from_sidecar,
-    measure_checkpoint_budget_bytes,
-    render_budgets_table_block,
     render_checkpoint_block,
     render_house_rules_block,
     render_inflight_block,
     render_pointers_block,
-    runbook_refuse_steps_bytes,
 )
 
 # CONSUMERS = import-nomination (GIW). INJECTORS = seat paste (cdp_ask).
@@ -268,6 +258,7 @@ def hop_successor_fields(
     lane = extract_thread_id(prompt_text) or UNKNOWN_FIELD
     birth = parse_successor_birth_id(prompt_text) or UNKNOWN_FIELD
     hop_kind = parse_hop_kind(prompt_text)
+    housekeeping = hop_kind == "housekeeping"
     admitted_raw = parse_hop_admitted_at(prompt_text)
     responsibility_raw = parse_responsibility(prompt_text)
     hop_admitted_at_display = admitted_raw if admitted_raw else "not recorded"
@@ -282,16 +273,20 @@ def hop_successor_fields(
     execution_clause = f", execution_id {exec_id}" if exec_id else ""
 
     roster_unreadable: str | None = None
-    if roster_text is not None:
-        roster = roster_text
+    roster_clause = ""
+    if housekeeping:
+        if roster_text is not None:
+            roster = roster_text
+        else:
+            loaded = load_maestro_roster_text()
+            roster = loaded.text
+            roster_unreadable = loaded.unreadable
+        lanes = house_lanes(roster)
+        roster_clause = (
+            f"roster unreadable: {roster_unreadable}; " if roster_unreadable else ""
+        )
     else:
-        loaded = load_maestro_roster_text()
-        roster = loaded.text
-        roster_unreadable = loaded.unreadable
-    lanes = house_lanes(roster)
-    roster_clause = (
-        f"roster unreadable: {roster_unreadable}; " if roster_unreadable else ""
-    )
+        lanes = [lane] if lane != UNKNOWN_FIELD else []
     if fetch_turns is None:
         from claude_bundles.operator_proxy_bus_fetch import fetch_turns_for_lane
 
@@ -378,6 +373,48 @@ def hop_successor_fields(
     except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
         house_rules_verbatim = _render_failed("house_rules", exc, rules_uri)
 
+    if handoff_failure:
+        digest = ""
+        detail = handoff_failure
+    elif sidecar:
+        digest = handoff_file_sha256(sidecar)
+        detail = f"handoff sha256 {digest}"
+    else:
+        digest = ""
+        detail = "standing handoff file absent"
+
+    fetch_last = act5_fetch_last if act5_fetch_last is not None else 3
+
+    if housekeeping:
+        lane_list = ", ".join(lanes) if lanes else "none"
+        running_now = (
+            f"## What is running now; {roster_clause}{detail}\non lanes {lane_list}"
+        )
+        return housekeeping_fields(
+            lane=lane,
+            hop_kind=hop_kind,
+            hop_admitted_at_display=hop_admitted_at_display,
+            responsibility_display=responsibility_display,
+            birth=birth,
+            execution_clause=execution_clause,
+            digest=digest,
+            running_now_line=running_now,
+            house_rules_verbatim=house_rules_verbatim,
+            checkpoint_block=checkpoint_block,
+            inflight_block=inflight_block,
+            fetch_last=fetch_last,
+            sidecar=sidecar,
+            handoff_failure=handoff_failure,
+            inline_rules=inline_rules,
+            journal_text=journal_text,
+            register_text=register_text,
+            read_cortex_uri=read_cortex_uri,
+            read_journal_head=read_journal_head or read_cortex_journal_head,
+            inflight_projection_lookup=inflight_projection_lookup,
+            role=role,
+            archive_path_exists=archive_path_exists,
+        )
+
     try:
         leg = project_live_leg(
             lanes,
@@ -391,106 +428,23 @@ def hop_successor_fields(
         live_leg = render_live_leg(
             leg,
             declared_in_flight=inflight_count,
-            max_bytes=HOP_LIVE_LEG_CAP_B if hop_kind == "mission" else None,
+            max_bytes=HOP_LIVE_LEG_CAP_B,
         )
     except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
         live_leg = _render_failed("live_leg", exc, handoff_uri)
-    lane_list = ", ".join(lanes) if lanes else "none"
 
-    if handoff_failure:
-        digest = ""
-        detail = handoff_failure
-    elif sidecar:
-        digest = handoff_file_sha256(sidecar)
-        detail = f"handoff sha256 {digest}"
-    else:
-        digest = ""
-        detail = "standing handoff file absent"
-    # Sha (or absence) stays on the first line, under HOP_RUNNING_NOW_CAP_B,
-    # so a long lane list drops as a whole following line. One combined line
-    # used to exceed the cap and the byte cut ate the sha (friction:39828).
-    running_now = (
-        f"## What is running now; {roster_clause}{detail}\non lanes {lane_list}"
-    )
-
-    pointers = render_pointers_block(
-        checkpoint_preamble=checkpoint_header,
-        rules_text=house_rules_verbatim,
-        max_bytes=HOP_POINTERS_CAP_B if hop_kind == "mission" else None,
-    )
-
-    try:
-        journal_fields = hop_journal_projection_fields(
-            journal_text=journal_text,
-            register_text=register_text,
-            read_uri=read_cortex_uri,
-            read_journal_head=read_journal_head or read_cortex_journal_head,
-            archive_path_exists=archive_path_exists,
-            role=role,
-            lane=lane,
-            inflight_projection_lookup=inflight_projection_lookup,
-        )
-    except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
-        journal_fields = {
-            "lessons_in_force": (
-                "## Lessons in force\n\n"
-                + _render_failed("lessons_in_force", exc, MAESTRO_JOURNAL_URI)
-                + "\n"
-            ),
-            "register_card": (
-                "## Register\n\n"
-                + _render_failed("register_card", exc, MAESTRO_REGISTER_URI)
-                + "\n"
-            ),
-        }
-
-    fetch_last = act5_fetch_last if act5_fetch_last is not None else 3
-
-    rules_bytes = (
-        len((house_rules_verbatim or "").encode("utf-8"))
-        if house_rules_verbatim
-        else None
-    )
-    checkpoint_bytes = (
-        measure_checkpoint_budget_bytes(sidecar, inline_house_rules=inline_rules)
-        if sidecar and not handoff_failure
-        else None
-    )
-    runbook_bytes: int | None = None
-    try:
-        runbook_body, _runbook_err = load_maestro_runbook()
-        runbook_bytes = runbook_refuse_steps_bytes(runbook_body)
-    except Exception:  # noqa: BLE001 — budgets table is fail-open
-        runbook_bytes = None
-    raw_journal_bytes = journal_fields.get("journal_head_bytes")
-    journal_head_bytes = int(raw_journal_bytes) if raw_journal_bytes else None
-    try:
-        budgets_table = render_budgets_table_block(
-            lane=lane,
-            checkpoint_capped_bytes=checkpoint_bytes,
-            house_rules_bytes=rules_bytes,
-            runbook_bytes=runbook_bytes,
-            journal_head_bytes=journal_head_bytes,
-        )
-        over_budget = journal_fields.get("journal_over_budget_flag") or ""
-        if hop_kind == "housekeeping" and over_budget:
-            budgets_table = f"{budgets_table}\n\n{over_budget}"
-    except Exception as exc:  # noqa: BLE001 — fail-open; one block, not the hop
-        budgets_table = _render_failed("budgets_table", exc, standing_handoff_uri(lane))
-
+    running_now = f"## What is running now; {detail}\non lane {lane}"
     if hop_kind == "mission":
         running_now = cap_utf8_for_hop(
             running_now, HOP_RUNNING_NOW_CAP_B, label="running_now"
         )
 
-    call1_line = (
-        first_act_call1_line(lane=lane, checkpoint_block=checkpoint_block)
-        if hop_kind == "mission"
-        else ""
+    pointers = render_pointers_block(
+        lane=lane,
+        checkpoint_preamble=checkpoint_header,
+        max_bytes=HOP_POINTERS_CAP_B if hop_kind == "mission" else None,
     )
-    induction_k44 = (
-        render_induction_k44_block(lane=lane) if hop_kind == "mission" else ""
-    )
+    call1_line = first_act_call1_line(lane=lane, checkpoint_block=checkpoint_block)
 
     return {
         "hop_kind": hop_kind,
@@ -504,14 +458,11 @@ def hop_successor_fields(
         "house_rules_verbatim": house_rules_verbatim,
         "checkpoint_block": checkpoint_block,
         "inflight_block": inflight_block,
-        "lessons_in_force": journal_fields["lessons_in_force"],
-        "register_card": journal_fields["register_card"],
-        "induction_k44_block": induction_k44,
         "live_leg": live_leg,
         "pointers": pointers,
         "first_act_call1_line": call1_line,
         "fetch_last": str(fetch_last),
-        "budgets_table": budgets_table,
+        "budgets_table": "",
     }
 
 

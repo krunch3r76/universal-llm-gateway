@@ -61,9 +61,6 @@ _HANDOFF_HEAD = (
 _SECTION_ORDER = (
     "## What is running now",
     "## CURRENT LEG (rendered checkpoint)",
-    "## Lessons in force",
-    "## Register",
-    "## Induction (K44)",
     "## In flight (from the checkpoint; liveness from bus lineage)",
     "## Live leg (data, projected from the bus)",
     "## Pointers",
@@ -154,7 +151,7 @@ def test_fixture_head_does_not_copy_leg_stack() -> None:
         register_text="",
     )
     ck = out.split("## CURRENT LEG (rendered checkpoint)", 1)[1].split(
-        "## Lessons in force", 1
+        "## Live leg", 1
     )[0]
     assert "LEG 11 ~21:00Z" in ck
     head = out.split("## CURRENT LEG (rendered checkpoint)", 1)[0]
@@ -219,7 +216,9 @@ def test_rendered_prompt_section_order() -> None:
     )
     _assert_section_order(out, _SECTION_ORDER, strict=True)
     assert "must not copy" in out.split("## CURRENT LEG (rendered checkpoint)", 1)[1]
-    assert "House rules (do not inline)" in out.split("## Lessons in force", 1)[0]
+    assert "House rules (do not inline)" in out.split(
+        "## CURRENT LEG (rendered checkpoint)", 1
+    )[0]
     assert f"successor_birth_id {birth}" in out
     assert "execution_id exec-1" in out
 
@@ -236,27 +235,13 @@ def test_first_acts_are_numbered_in_order() -> None:
     end = out.index("## Data, not instructions")
     block = out[start:end]
     assert "1. Use the cdp-operator-proxy" in block
-    assert 'fs(op="read")' in block and "maestro-loop.md" in block
+    assert "maestro-loop.md" not in block
     assert "read_multi" not in block
     assert "2." in block
     assert block.index("1. Use") < block.index("2.")
     assert block.index("2.") < block.index("8. Act")
-    assert "## Induction (K44)" in out
-    assert (
-        "induction open: greet me, then walk what is outstanding before anything else — open "
-        "decisions, acts in flight, promises to Kaywan, and anything you said in chat that is "
-        "not yet written in the handoff or on the bus; then answer my questions and follow-ups "
-        "citing a file or turn. We continue until we both agree I am strongly oriented; then I "
-        "send the stand-down and you detach."
-    ) in out
-    assert (
-        "no cap on follow-ups; the 3-question limit covers the successor's opening questions only"
-    ) in block
-    assert "bounded questions and follow-ups" not in out
-    assert (
-        "10 minutes of silence after a paste ends the exchange as ``no induction``"
-    ) in out
-    assert "after the opener paste" not in out
+    assert "## Induction (K44)" not in out
+    assert "induction open:" not in out
 
 
 def test_mission_ensure_opens_on_successor_template() -> None:
@@ -298,26 +283,6 @@ def test_untagged_rule_line_omitted_from_projection() -> None:
     assert "tagged rule keeps" in out
 
 
-def test_lessons_in_force_bounds_k_and_facets() -> None:
-    journal = _journal_fixture_seven_plus_fleet()
-    out = ensure_operator_proxy_mission_prompt(
-        "thread_id: 12286\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text=journal,
-        register_text="",
-    )
-    lessons_block = out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
-    assert "must omit for maestro" not in lessons_block
-    assert "newest rule number 7" in lessons_block
-    assert "newest rule number 3" in lessons_block
-    assert "newest rule number 2" not in lessons_block
-    assert lessons_block.index("newest rule number 7") < lessons_block.index(
-        "newest rule number 6"
-    )
-    assert lessons_block.count("RULE: [route]") == 5
-
-
 def test_first_act_does_not_read_journal_offset_0() -> None:
     out = ensure_operator_proxy_mission_prompt(
         "# Mission\n",
@@ -330,65 +295,18 @@ def test_first_act_does_not_read_journal_offset_0() -> None:
     assert "arrival projection" in out
 
 
-def test_lessons_ignore_standing_rule_headings_and_midline_rule() -> None:
-    journal = (
-        "## STANDING RULE — lean verification\n"
-        "RULE: [route] must not project from standing heading\n"
-        "## 2026-10-14 — entry 157\n"
-        "- **A tool that refuses early execution** when the only executor is the seat **RULE:** mid-bullet must not match\n"
-        "   - RULE: [route] indented line-start keeps\n"
-        "RULE: [bus] line-start keeps\n"
-    )
-    out = ensure_operator_proxy_mission_prompt(
-        "thread_id: 12286\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text=journal,
-        register_text="",
-    )
-    lessons_block = out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
-    assert "must not project from standing heading" not in lessons_block
-    assert "mid-bullet must not match" not in lessons_block
-    assert "indented line-start keeps" in lessons_block
-    assert "line-start keeps" in lessons_block
-
-
-def test_register_absent_is_named() -> None:
-    out = ensure_operator_proxy_mission_prompt(
-        "# Mission\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text="",
-        register_text=None,
-        read_cortex_uri=lambda _uri: None,
-    )
-    assert f"Register card absent at {MAESTRO_REGISTER_URI}" in out
-    register_tail = out.split("## Register", 1)[1].split("## Induction (K44)", 1)[0]
-    assert "Register card absent" in register_tail
-    assert "Kaywan" not in register_tail
-
-
 def test_inflight_projection_does_not_block(monkeypatch: pytest.MonkeyPatch) -> None:
-    journal = "## 2026-10-01 — entry 1\nRULE: [route] durable\n"
     sidecar = (
         "## CURRENT LEG\n### IN FLIGHT\n"
         '- row · worker 7 · exec ex7 · poll_hint {"a":1}\n'
     )
-
-    def _lookup() -> str | None:
-        return "exec-inflight-99"
 
     out = ensure_operator_proxy_mission_prompt(
         "thread_id: 12286\n",
         standing_handoff_text=sidecar,
         roster_text="",
         fetch_turns=_noop_fetch,
-        journal_text=journal,
-        register_text="",
-        inflight_projection_lookup=_lookup,
     )
-    assert "exec-inflight-99" in out
-    assert "durable" in out
     assert "liveness:" in out
 
     def _raise(*_args: object, **_kwargs: object) -> str:
@@ -403,39 +321,9 @@ def test_inflight_projection_does_not_block(monkeypatch: pytest.MonkeyPatch) -> 
         standing_handoff_text=sidecar,
         roster_text="",
         fetch_turns=_noop_fetch,
-        journal_text=journal,
-        register_text="",
     )
-    assert "durable" in guarded
     assert "[render_failed inflight: RuntimeError — read " in guarded
-
-    def _raise() -> str | None:
-        raise OSError("down")
-
-    out2 = ensure_operator_proxy_mission_prompt(
-        "thread_id: 12286\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text=journal,
-        register_text="",
-        inflight_projection_lookup=_raise,
-    )
-    assert "durable" in out2
-    assert "exec-inflight" not in out2
-
-
-def test_journal_read_oserror_renders_unavailable() -> None:
-    def _read_head(_uri: str, _limit: int) -> tuple[str | None, int | None]:
-        raise OSError("disk")
-
-    out = ensure_operator_proxy_mission_prompt(
-        "# Mission\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        read_journal_head=_read_head,
-    )
-    assert "journal unavailable" in out
-    assert out.startswith("# Hop on agent-bus:")
+    assert "## Hard refusals" in guarded
 
 
 def test_read_cortex_journal_head_on_disk_bounded_and_total(
@@ -451,54 +339,6 @@ def test_read_cortex_journal_head_on_disk_bounded_and_total(
     assert text is not None
     assert "from-disk" in text
     assert len(text.encode("utf-8")) <= JOURNAL_HEAD_BYTES
-
-
-def test_read_cortex_journal_head_unreadable_renders_unavailable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _cortex_root(tmp_path, monkeypatch)
-    journal_path = tmp_path / "notes/system/maestro/journal.md"
-    journal_path.parent.mkdir(parents=True)
-    journal_path.write_text("## 2026-10-01 — entry\nRULE: [route] hidden\n")
-    os.chmod(journal_path, 0o000)
-    try:
-        out = ensure_operator_proxy_mission_prompt(
-            "# Mission\n",
-            roster_text="",
-            fetch_turns=_noop_fetch,
-            register_text="",
-        )
-    finally:
-        os.chmod(journal_path, 0o644)
-    assert "journal unavailable" in out
-    assert (
-        "(none)"
-        not in out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
-    )
-
-
-def test_journal_head_trim_drops_severed_rule_line(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _cortex_root(tmp_path, monkeypatch)
-    journal_path = tmp_path / "notes/system/maestro/journal.md"
-    journal_path.parent.mkdir(parents=True)
-    body = b"## 2026-10-01 -- entry\nRULE: [route] kept_rule\n"
-    severed = b"RULE: [route] severed_must_not_project"
-    while len(body) < JOURNAL_HEAD_BYTES - len(severed) + 5:
-        body += b"fill\n"
-    assert body.endswith(b"\n")
-    assert len(body) < JOURNAL_HEAD_BYTES < len(body) + len(severed)
-    journal_path.write_bytes(body + severed + b"\n" + b"w" * 8192)
-    out = ensure_operator_proxy_mission_prompt(
-        "# Mission\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        register_text="",
-    )
-    lessons = out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
-    assert "kept_rule" in lessons
-    assert "severed_must_not_project" not in lessons
 
 
 def test_load_journal_head_read_bounded_at_64kb() -> None:
@@ -521,42 +361,13 @@ def test_journal_head_projection_matches_full_under_budget() -> None:
     journal = _journal_fixture_seven_plus_fleet()
     direct = project_lessons_in_force(journal, role="maestro")
     via_hop = hop_successor_fields(
-        "thread_id: 1\n",
+        "hop_kind: housekeeping\nthread_id: 1\n",
         roster_text="",
         fetch_turns=_noop_fetch,
         journal_text=journal,
         register_text="",
     )["lessons_in_force"]
     assert via_hop == direct
-
-
-def test_journal_head_over_budget_renders_flag() -> None:
-    rules = "".join(
-        f"## 2026-10-{index:02d} — entry {index}\nRULE: [route] rule {index}\n"
-        for index in range(7, 0, -1)
-    )
-    pad = "x" * (JOURNAL_HEAD_BYTES - len(rules.encode("utf-8")) + 1024)
-    journal = (
-        f"archived_prev: cortex://notes/system/threads/prev.md sha256 {'a' * 64}\n"
-        f"{rules}\n{pad}\n"
-    )
-
-    out = ensure_operator_proxy_mission_prompt(
-        "thread_id: 12286\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text=journal,
-        register_text="",
-        archive_path_exists=lambda _p: True,
-    )
-    assert "[journal_over_budget" in out
-    assert "65536" in out
-    assert "rotation owed at next hop" in out
-    lessons = out.split("## Lessons in force", 1)[1].split("## Register", 1)[0]
-    assert lessons.count("RULE: [route]") == 5
-    assert "rule 7" in lessons
-    assert "rule 3" in lessons
-    assert "rule 2" not in lessons
 
 
 def _exact_utf8(text: str, total: int) -> str:
@@ -633,8 +444,7 @@ def test_runbook_cost_is_refuse_plus_steps(
         register_text="",
     )
     assert f"| {n}/32768 |" in housekeeping
-    assert 'section="Trigger"' in mission
-    assert 'fs(op="read")' in mission
+    assert "maestro-loop.md" not in mission
     assert str(whole) not in housekeeping
     assert str(whole) not in mission
 
@@ -653,45 +463,6 @@ def test_runbook_cost_is_refuse_plus_steps(
     assert cell in over_out
     numerator = cell.split("|")[1].strip().split("/")[0]
     assert int(numerator) > 32768
-
-
-def test_journal_archived_prev_missing_flags_archive_missing() -> None:
-    journal = (
-        f"archived_prev: cortex://notes/system/threads/missing-prev.md sha256 {'b' * 64}\n"
-        "## 2026-10-01 — entry\nRULE: [route] ok\n"
-    )
-    out = ensure_operator_proxy_mission_prompt(
-        "thread_id: 12286\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text=journal,
-        register_text="",
-        archive_path_exists=lambda _p: False,
-    )
-    assert "archive_missing: journal" in out
-    assert "ok" in out
-
-
-def test_journal_archive_path_oserror_does_not_abort_hop() -> None:
-    journal = (
-        f"archived_prev: cortex://notes/system/threads/unreadable.md sha256 {'c' * 64}\n"
-        "## 2026-10-01 — entry\nRULE: [route] ok\n"
-    )
-
-    def _exists(_path: str) -> bool:
-        raise OSError("perm")
-
-    out = ensure_operator_proxy_mission_prompt(
-        "thread_id: 12286\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text=journal,
-        register_text="",
-        archive_path_exists=_exists,
-    )
-    assert "[render_failed archive_path: OSError" in out
-    assert "ok" in out
-    assert out.startswith("# Hop on agent-bus:")
 
 
 def test_hop_successor_fields_parses_admit_and_responsibility() -> None:
@@ -747,7 +518,7 @@ def test_hop_successor_fields_parses_hop_kind_and_body_metadata() -> None:
 def test_hop_journal_default_uri_is_maestro() -> None:
     assert MAESTRO_JOURNAL_URI == "cortex://notes/system/maestro/journal.md"
     fields = hop_successor_fields(
-        "thread_id: 1\n",
+        "hop_kind: housekeeping\nthread_id: 1\n",
         roster_text="",
         fetch_turns=_noop_fetch,
         journal_text="",
@@ -768,7 +539,7 @@ def test_mission_ensure_idempotent_with_this_hop() -> None:
     assert twice.rstrip("\n") == once.rstrip("\n")
     assert once.count("# Hop on agent-bus:") == 1
     assert once.count("## Hard refusals") == 1
-    assert once.count("## Hop request (data)") == 1
+    assert sum(1 for line in once.splitlines() if line == "## Hop request (data)") == 1
 
 
 def _checkpoint_fixture_20kb() -> str:
@@ -794,7 +565,7 @@ def test_ac1_checkpoint_budget_excludes_house_rules() -> None:
         fetch_turns=_noop_fetch,
     )
     ck = out.split("## CURRENT LEG (rendered checkpoint)", 1)[1].split(
-        "## Lessons in force", 1
+        "## In flight (from the checkpoint", 1
     )[0]
     inflight = out.split("## In flight (from the checkpoint", 1)[1].split(
         "## Live leg", 1
@@ -836,7 +607,7 @@ def test_ac2_nine_row_inflight_preamble_flag() -> None:
     assert len(out.encode()) <= 12_000
 
 
-def test_ac3_migrated_fixture_renders_every_rule_before_lessons() -> None:
+def test_ac3_migrated_fixture_house_rules_pointer_before_checkpoint() -> None:
     rules = "## HOUSE RULES\n- K9 operative rule text forty chars minimum here\n"
     sidecar = "## CURRENT LEG\nLEG 1\n### HOUSE RULES\n- inline fallback\n"
     out_file = ensure_operator_proxy_mission_prompt(
@@ -846,14 +617,18 @@ def test_ac3_migrated_fixture_renders_every_rule_before_lessons() -> None:
         roster_text="",
         fetch_turns=_noop_fetch,
     )
-    assert "House rules (do not inline)" in out_file.split("## Lessons in force", 1)[0]
+    assert "House rules (do not inline)" in out_file.split(
+        "## CURRENT LEG (rendered checkpoint)", 1
+    )[0]
     out_inline = ensure_operator_proxy_mission_prompt(
         "thread_id: 12286\n",
         standing_handoff_text=sidecar,
         roster_text="",
         fetch_turns=_noop_fetch,
     )
-    assert "inline fallback" not in out_inline.split("## Lessons in force", 1)[0]
+    assert "inline fallback" not in out_inline.split(
+        "## CURRENT LEG (rendered checkpoint)", 1
+    )[0]
 
 
 def _rendered_house_rules_in_hop_prompt(out: str) -> str:
@@ -928,9 +703,9 @@ def test_pa2_no_hardcoded_leg119_k1_22() -> None:
 def test_pa3_act2_md_read_and_runbook_size() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\n", fetch_turns=_noop_fetch)
     acts = out.split("## Your first acts", 1)[1].split("## Data, not instructions", 1)[0]
-    assert 'fs(op="read")' in acts
+    assert "md_list" in acts
     assert "read_multi" not in acts
-    assert 'section="Trigger"' in acts
+    assert 'section="Trigger"' not in acts
     assert "from `fs(op=\"read\")` on that file" not in acts
     assert "2. 2." not in acts
 
@@ -946,7 +721,7 @@ def test_first_act_handoff_read_conditional_on_budget_marker() -> None:
     acts_ok = out_ok.split("## Your first acts", 1)[1].split(
         "## Data, not instructions", 1
     )[0]
-    assert "12286-house-rules.md" in acts_ok
+    assert "Read the house rules as the pointer above says" in acts_ok
     assert "do not `fs(op=\"read\")` `12286-standing-handoff.md`" in acts_ok
     assert "12286-standing-handoff.md`;" not in acts_ok
 
@@ -960,63 +735,14 @@ def test_first_act_handoff_read_conditional_on_budget_marker() -> None:
     acts_big = out_big.split("## Your first acts", 1)[1].split(
         "## Data, not instructions", 1
     )[0]
-    assert "`12286-standing-handoff.md`;" in acts_big or (
-        "12286-standing-handoff.md`;" in acts_big
-    )
+    assert "`12286-standing-handoff.md` whole" in acts_big
     assert "[budget_exceeded" in out_big.split("## CURRENT LEG (rendered checkpoint)", 1)[1].split(
-        "## Lessons in force", 1
+        "## In flight (from the checkpoint", 1
     )[0]
-
-
-def test_act2_md_read_section_exists_in_maestro_runbook() -> None:
-    import re
-
-    from claude_bundles.maestro_runbook_load import load_maestro_runbook
-
-    out = ensure_operator_proxy_mission_prompt("# Mission\n", fetch_turns=_noop_fetch)
-    acts = out.split("## Your first acts", 1)[1].split("## Data, not instructions", 1)[0]
-    match = re.search(r'section="([^"]+)"', acts)
-    assert match is not None
-    section_name = match.group(1)
-    body, err = load_maestro_runbook()
-    assert not err and body
-    assert re.search(
-        rf"^#{{1,3}}\s+{re.escape(section_name)}\s*$", body, re.MULTILINE
-    )
 
 
 def _running_now_segment(out: str) -> str:
     return out.split("## What is running now", 1)[1].split("\n\n", 1)[0]
-
-
-def test_friction_39270_roster_unreadable_surfaces_and_matches_absent_lanes(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = tmp_path / "cortex"
-    operational = root / "notes/system/operational"
-    operational.mkdir(parents=True)
-    (operational / "maestro-sidekick-roster.md").write_bytes(b"\xff")
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
-    unreadable_out = ensure_operator_proxy_mission_prompt(
-        "# Mission\n",
-        fetch_turns=_noop_fetch,
-        journal_text="",
-        register_text="",
-    )
-    absent_out = ensure_operator_proxy_mission_prompt(
-        "# Mission\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text="",
-        register_text="",
-    )
-    assert "roster unreadable: UnicodeDecodeError" in unreadable_out
-    unreadable_rn = _running_now_segment(unreadable_out)
-    absent_rn = _running_now_segment(absent_out)
-    assert (
-        unreadable_rn.split("; roster unreadable:")[0]
-        == absent_rn.split("; standing")[0]
-    )
 
 
 def test_friction_39270_absent_roster_omits_unreadable_clause() -> None:
@@ -1114,7 +840,7 @@ def test_ac5_live_shape_house_rules_heading_is_not_in_the_checkpoint() -> None:
         fetch_turns=_noop_fetch,
     )
     ck = out.split("## CURRENT LEG (rendered checkpoint)", 1)[1].split(
-        "## Lessons in force", 1
+        "## Live leg", 1
     )[0]
     assert sentinel not in ck
     assert "House rules (do not inline)" in out
@@ -1160,7 +886,7 @@ def test_ac17_full_preamble_span_flags_nine_inflight_rows() -> None:
     assert "[hop_budget_exceeded inflight" in out
     if hop_bytes > HOP_RENDER_MAX_B:
         prefix = "## CURRENT LEG (rendered checkpoint)\n"
-        ck = out.split(prefix, 1)[1].split("## Lessons", 1)[0]
+        ck = out.split(prefix, 1)[1].split("## In flight (from the checkpoint", 1)[0]
         marker = "[budget_exceeded checkpoint "
         if marker in ck:
             before = ck.rsplit(marker, 1)[0]
@@ -1263,40 +989,7 @@ def test_ac5_prose_registration_does_not_widen_fetch() -> None:
     assert "checkpoint_stale" not in out
 
 
-def test_ac8_journal_projection_raise_replaces_only_those_blocks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _boom(*_args: object, **_kwargs: object) -> dict[str, str]:
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(
-        "claude_bundles.operator_proxy_hop_status.hop_journal_projection_fields",
-        _boom,
-    )
-    sidecar = (
-        "## HOUSE RULES\n- K1 rules-still-here\n\n"
-        "## CURRENT LEG\n### OWED / NEXT\ncheckpoint-x\n"
-    )
-    out = ensure_operator_proxy_mission_prompt(
-        "thread_id: 12286\n",
-        standing_handoff_text=sidecar,
-        roster_text="",
-        fetch_turns=lambda _lane: [],
-        journal_text="",
-        register_text="",
-    )
-    assert (
-        "[render_failed lessons_in_force: RuntimeError — read "
-        "cortex://notes/system/maestro/journal.md]"
-    ) in out
-    assert "[render_failed register_card: RuntimeError" in out
-    assert "House rules (do not inline)" in out
-    assert "checkpoint-x" in out
-    assert "## Hard refusals" in out
-
-
 _ABSENT_HANDOFF = "standing handoff file absent"
-_ABSENT_REGISTER = f"Register card absent at {MAESTRO_REGISTER_URI}"
 _SHA = "a" * 64
 
 
@@ -1428,15 +1121,6 @@ def test_read_cortex_uri_absent_is_none(
         read_cortex_uri_from_root("cortex://notes/system/maestro/register.md") is None
     )
     assert _read_cortex_uri(MAESTRO_REGISTER_URI) is None
-    out = ensure_operator_proxy_mission_prompt(
-        "# Mission\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text="",
-        register_text=None,
-        read_cortex_uri=read_cortex_uri_from_root,
-    )
-    assert _ABSENT_REGISTER in out
 
 
 def test_read_cortex_uri_oserror_is_render_failed(
@@ -1453,16 +1137,8 @@ def test_read_cortex_uri_oserror_is_render_failed(
     monkeypatch.setattr(Path, "read_text", _boom)
     with pytest.raises(OSError, match="read"):
         read_cortex_uri_from_root(MAESTRO_REGISTER_URI)
-    out = ensure_operator_proxy_mission_prompt(
-        "# Mission\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text="",
-        register_text=None,
-        read_cortex_uri=read_cortex_uri_from_root,
-    )
-    assert "[render_failed register_card: OSError — read " in out
-    assert _ABSENT_REGISTER not in out
+    with pytest.raises(OSError, match="read"):
+        _read_cortex_uri(MAESTRO_REGISTER_URI)
 
 
 def test_read_cortex_uri_non_utf8_is_render_failed(
@@ -1476,19 +1152,6 @@ def test_read_cortex_uri_non_utf8_is_render_failed(
         read_cortex_uri_from_root(MAESTRO_REGISTER_URI)
     with pytest.raises(UnicodeDecodeError):
         _read_cortex_uri(MAESTRO_REGISTER_URI)
-    out = ensure_operator_proxy_mission_prompt(
-        "# Mission\n",
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text="",
-        register_text=None,
-    )
-    assert (
-        "[render_failed register_card: UnicodeDecodeError — read "
-        f"{MAESTRO_REGISTER_URI}]"
-    ) in out
-    assert _ABSENT_REGISTER not in out
-    assert "## Hard refusals" in out
 
 
 def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
@@ -1540,44 +1203,23 @@ def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
     assert "a:39707" not in keys_named
 
     stale_keys = [
-        "15851:1560:REQUEST|freeform|decision:anthropic-api-credits-use-A — stargate path check: does pid 1555855 (43013d190) load any path changed in 43013d190..b23846d77? Read-only, FACT back",
-        "15851:1577:REQUEST|freeform|decision:anthropic-api-credits-use-C1 — did RULING #1570 reach cc1? Name cc1's worker thread and work_key for the harness fix leg (read-only)",
-        "15851:1613:PLAN|friction:39550 r2 sha f94b1b05 — VERDICT PASS_WITH_NITS (2cb8d764fd86-542620b1)",
-        "15851:1631:PLAN|friction:39330|cc of #1630 (lane 17905)",
-        "15851:1798:PICKUP|friction:39610 #1793 items 1-2 dispatched; #1790 relays out; restarts per Kaywan (re #1790, #1793, #1794)",
-        "15851:1853:PICKUP|friction:39550 house 16416 (cursor) under f94b1b05; 39516 step-0 probe + 39330 c9d6e983 folded (re #1849)",
-        "15851:1854:PICKUP|friction:39614 residue investigate routed to house 16416 (read-only leg first) (re #1852)",
-        "15851:1983:PLAN|todo:cursor-sdk-token-efficiency-lean-a-d|Shape A PLAN ready for K43 xhigh review via gc1 (sha 7d367208; queued behind #1902 / 39668 / 39638)",
-        "15851:1998:PLAN|a:39687 G1+G2 implement proposal 2/2: tests and gates (re RULING #1996)",
-        "15851:2037:REQUEST|a:39707 needs owner; fable-5-1 consult on floor enforcement first",
-        "15851:2080:REQUEST|freeform|friction:39707: relay one question to Kaywan; the 2026-10-07 composer retirement exists only as a runbook changelog line",
-        "15851:2081:PLAN|todo:conductor-admit-pipeline-options-shape-a r-next^2",
-        "15851:2083:REQUEST|freeform|friction:39668: child 4 (child 3 refused step1_mcp_not_exception_b on operator streams); route a:39712; route K43s on #2081 and #2082",
-        "15851:2091:REQUEST|freeform|friction:39710 range forward fixes (K46 18302 REQUEST_CHANGES)",
-        "15851:2281:REQUEST|freeform|friction:30054 — co-sign or rule: K43 bar amendment per fork D (VERDICT line binds; envelope capture class informational); ACK 16416#863",
-        "15851:2300:REQUEST|freeform|todo:conductor-admit-pipeline-options-shape-a — stargate sync_restart on G1-G3 to load bb75af8b",
+        "15851:1560:REQUEST|freeform|decision:anthropic-api-credits-use-A — stargate path check",
+        "15851:2300:REQUEST|freeform|todo:conductor-admit-pipeline-options-shape-a — stargate sync_restart",
     ]
-    fold_state = {
-        "15851": LaneFoldState(watermark=3000, open_keys=stale_keys),
-        "15722": LaneFoldState(watermark=90, open_keys=[]),
-    }
+    stale_keys_12286 = [k.replace("15851:", "12286:", 1) for k in stale_keys]
+    fold_state = {"12286": LaneFoldState(watermark=3000, open_keys=stale_keys_12286)}
 
     def _fetch(lane: str) -> list[dict[str, Any]]:
-        if lane == "15722":
-            return [{"turn_number": 150, "subject": "PLAN|todo:peer-open"}]
-        if lane == "15851":
-            return [{"turn_number": 4000, "subject": "PICKUP|decision:x"}]
+        if lane == "12286":
+            return [
+                {"turn_number": 5150, "subject": "PLAN|todo:peer-open"},
+                {"turn_number": 6000, "subject": "PICKUP|decision:x"},
+            ]
         return []
 
-    roster = (
-        "| N | Display name | Lane | Mailbox | State |\n"
-        "| 1 | Sidekick | 15722 `sidekick` | `x` | live |\n"
-        "| 2 | GC | 15851 `gc` | `y` | live |\n"
-    )
     fields_empty = hop_successor_fields(
         "thread_id: 12286\nhop_kind: mission\n",
         standing_handoff_text=sidecar_empty,
-        roster_text=roster,
         fetch_turns=_fetch,
         fold_state_load=lambda: dict(fold_state),
         fold_state_save=lambda _s: None,
@@ -1591,7 +1233,6 @@ def test_plain_inflight_line_enables_l23_filter_not_prose_mention() -> None:
     fields_named = hop_successor_fields(
         "thread_id: 12286\nhop_kind: mission\n",
         standing_handoff_text=sidecar_named,
-        roster_text=roster,
         fetch_turns=_fetch,
         fold_state_load=lambda: dict(fold_state),
         fold_state_save=lambda _s: None,
@@ -1846,3 +1487,34 @@ def test_inflight_plain_terminator_first_line_after_bullets() -> None:
     assert weak_open_only_misses, "OPEN-only pattern must fail at least one row"
     assert weak_no_paren_misses, "no-paren pattern must fail at least one row"
     assert weak_no_carried_misses, "no-CARRIED pattern must fail at least one row"
+
+
+def test_default_hop_reads_only_the_hop_lane(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    def recorder(lane: str) -> list[dict[str, Any]]:
+        calls.append(lane)
+        return [{"turn_number": 5, "subject": "REQUEST|freeform|todo:x"}]
+
+    root = tmp_path / "empty-cortex"
+    root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 24136\n",
+        standing_handoff_text=(
+            "## CURRENT LEG\nLEG 1 — 24136#1\n### OWED / NEXT\nx\n"
+        ),
+        fetch_turns=recorder,
+    )
+    assert calls == ["24136"]
+    live_start = out.index("## Live leg (data, projected from the bus)")
+    live_end = out.index("## Pointers")
+    live_section = out[live_start:live_end]
+    live_item_lines = [
+        ln for ln in live_section.splitlines() if ln.startswith("- lane")
+    ]
+    assert live_item_lines == ["- lane 24136 #5 REQUEST|freeform|todo:x"]
+    running_lines = out[out.index("## What is running now") :].splitlines()
+    assert running_lines[1] == "on lane 24136"
