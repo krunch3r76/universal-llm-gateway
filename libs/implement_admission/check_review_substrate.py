@@ -142,6 +142,24 @@ def model_identity(model: str) -> str:
     return UNKNOWN_MODEL_IDENTITY
 
 
+def is_claude_identity(folded_identity: str) -> bool:
+    """True when *folded_identity* is a catalogued Claude-family executor id.
+
+    *folded_identity* must be the string returned by :func:`model_identity` for
+  the executor wire model — not the wire model itself. Returns ``False`` for
+    :data:`UNKNOWN_MODEL_IDENTITY`, for non-Claude catalog ids (e.g.
+    ``composer-2.5``, ``gpt-5.5``), and for ids not present in
+    :data:`CURSOR_MODEL_CAPABILITIES`. Claude ids are those whose folded bare
+    id starts with ``claude-`` (e.g. ``claude-sonnet-5``, ``claude-opus-5``,
+    ``claude-fable-5-2``).
+    """
+    if not folded_identity or folded_identity == UNKNOWN_MODEL_IDENTITY:
+        return False
+    if folded_identity not in CURSOR_MODEL_CAPABILITIES:
+        return False
+    return folded_identity.startswith("claude-")
+
+
 def consultant_rung(model: str, knobs: Mapping[str, str] | None = None) -> str | None:
     """Return the normalized effort rung for one consultant seat, or ``None``.
 

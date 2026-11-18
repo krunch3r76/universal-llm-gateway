@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import Response
-from implement_admission.check_review_substrate import ConsultantIdentity
+from fastapi.responses import JSONResponse
+from implement_admission.check_review_substrate import (
+    UNKNOWN_MODEL_IDENTITY,
+    ConsultantIdentity,
+)
 from universal_logging import get_logger
 
 from .cursor_sdk_generate_signals import publish_frontier_event
@@ -21,6 +25,7 @@ from .events import (
 )
 from .generate_admission_context_store import (
     AdmissionContext,
+    abandon_spawn_state,
     delete_admission_context,
     finalize_spawn_state,
     list_pending_spawn_states,
@@ -33,9 +38,8 @@ from .skill_suggest_durable_state import DurableTerminalEvent, durable_catch_up_
 
 logger = get_logger(__name__)
 
-# OpenAI-family executors need a reviewer whose identity is not theirs.
-# cursor/grok-4.7 is the in-use cursor seat; cursor/claude-* is not spent.
-_OPENAI_EXECUTOR_ALTERNATE = "cursor/grok-4.7"
+# Matches densify_candidate_ready._DENSIFY_REVIEWER_EMPTY_SCOPE_PREFIX (do-not-touch).
+_REVIEWER_EMPTY_SCOPE_PREFIX = "---\nfiles_expected:\n---\n\n"
 _GENERATE_OP = "generate"
 _CURSOR_SDK_ROLE = "cursor-sdk"
 _SPAWN_PROVENANCE = "generate_review_child"
@@ -45,10 +49,24 @@ CONTEXT_MISS_RETRY_SECONDS = 0.25
 _PENDING_RECONCILE_INTERVAL_SECONDS = 5.0
 
 
+class ReviewDefaultLoadError(Exception):
+    """``load_review_default`` failed for a configured review kind."""
+
+    def __init__(self, kind: str, cause: ValueError) -> None:
+        self.kind = kind
+        self.cause = cause
+        super().__init__(str(cause))
+
+
 @dataclass(frozen=True, slots=True)
 class ReviewerSelection:
     model: str
     identity: ConsultantIdentity
+    contract: str | None = None
+    effort: str | None = None
+
+
+_loader_error_logged: set[str] = set()
 
 
 def _executor_identity(ctx: AdmissionContext) -> ConsultantIdentity:
@@ -71,13 +89,10 @@ def is_generate_review_child_lane_wired() -> bool:
     return _wired()
 
 
-def _default_independent_reviewer_model() -> str:
-    from implement_admission.check_review_substrate import (
-        load_check_review_default_model,
-    )
-    from implement_admission.routing import load_route_policy
+def _load_review_default(kind: str):
+    from implement_admission.review_defaults import load_review_default
 
-    return load_check_review_default_model(load_route_policy())
+    return load_review_default(kind)
 
 
 def select_independent_reviewer(
@@ -86,29 +101,48 @@ def select_independent_reviewer(
     """Pick a reviewer independently measured from the executor seat.
 
     Returns ``None`` when no admitted alternate exists or either identity or
-    rung is unmeasured — fail-closed.
+    rung is unmeasured — fail-closed. Raises :class:`ReviewDefaultLoadError`
+    when policy loading fails (caller should log once and not spin reconcile).
     """
     from implement_admission.check_review_substrate import (
         ConsultantIdentity,
         consultant_identity,
         consultant_rung,
         independently_measured,
+        is_claude_identity,
         model_identity,
     )
 
+    exec_folded = model_identity(resolved_model)
+    if exec_folded == UNKNOWN_MODEL_IDENTITY:
+        logger.warning(
+            "review_child spawn fail-closed: unknown executor identity for %s",
+            resolved_model,
+        )
+        return None
+    kind = (
+        "implementation_claude_author"
+        if is_claude_identity(exec_folded)
+        else "implementation"
+    )
+    try:
+        default = _load_review_default(kind)
+    except ValueError as exc:
+        raise ReviewDefaultLoadError(kind, exc) from exc
+    model = default.model
     effort = resolved_effort or consultant_rung(resolved_model, None)
-    executor = ConsultantIdentity(model_identity(resolved_model), effort)
-    exec_id = model_identity(resolved_model)
-    if exec_id.startswith(("gpt-", "o1", "o3", "o4")):
-        model = _OPENAI_EXECUTOR_ALTERNATE
-    else:
-        model = _default_independent_reviewer_model()
+    executor = ConsultantIdentity(exec_folded, effort)
     reviewer_identity = consultant_identity(model, None)
     if not independently_measured(executor, reviewer_identity):
         return None
     if not _reviewer_model_admitted(model):
         return None
-    return ReviewerSelection(model=model, identity=reviewer_identity)
+    return ReviewerSelection(
+        model=model,
+        identity=reviewer_identity,
+        contract=default.contract,
+        effort=default.effort,
+    )
 
 
 def _reviewer_model_admitted(model: str) -> bool:
@@ -254,25 +288,62 @@ async def _build_generate_lane_review_prompt(
     )
 
 
+def _resolve_review_work_key(parent_ctx: AdmissionContext, delivery_thread: str) -> str:
+    work_key = parent_ctx.work_key
+    if work_key and str(work_key).strip():
+        return str(work_key).strip()
+    return f"agent-bus:{delivery_thread}"
+
+
+def _normalize_parent_caller_agent(parent_ctx: AdmissionContext) -> str:
+    from cdp_caller_identity import normalize_cdp_caller_agent
+
+    return normalize_cdp_caller_agent(parent_ctx.caller_agent)
+
+
+def _json_response_error_code(result: JSONResponse) -> str | None:
+    try:
+        payload = json.loads(result.body.decode())
+    except (AttributeError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if isinstance(payload, dict):
+        code = payload.get("code")
+        return str(code) if code is not None else None
+    return None
+
+
 async def _dispatch_review_child(
     *,
     request_id: str,
     delivery_thread: str,
     prompt: str,
     reviewer: ReviewerSelection,
+    parent_ctx: AdmissionContext,
+    parent_execution_id: str,
     prompt_turn_number: int | None = None,
     prompt_bind_mode: str | None = None,
 ) -> dict[str, Any]:
-    """Admit one review child when ``reviewer.model`` is cursor_sdk.
+    """Dispatch one review child for CDP or cursor_sdk reviewer models.
 
-    Non-cursor backends do not spawn.
+    For CDP reviewers, ``abandon_spawn_state`` (when ``caller_agent`` is not
+    usable) runs here after the parent's spawn claim in
+    :func:`_attempt_spawn_for_completion` — not before claim.
     """
+    from cdp_caller_identity import is_valid_cdp_caller_agent
     from model_id import ModelId
 
     from .route import TeamDispatchGenerateBody, team_dispatch
 
-    if ModelId.parse(reviewer.model).backend_type != "cursor_sdk":
+    _ = request_id
+    backend = ModelId.parse(reviewer.model).backend_type
+    if backend not in ("cursor_sdk", "cdp"):
+        logger.warning(
+            "review_child spawn unsupported reviewer backend=%s model=%s",
+            backend,
+            reviewer.model,
+        )
         return {}
+
     if prompt_turn_number is None:
         logger.warning(
             "review_child spawn fail-closed: missing frozen_turn pin "
@@ -280,28 +351,72 @@ async def _dispatch_review_child(
             delivery_thread,
         )
         return {}
-    _ = prompt_bind_mode
-    child_body = TeamDispatchGenerateBody(
-        op=_GENERATE_OP,
-        seat=_CURSOR_SDK_ROLE,
-        dispatch_thread_id=delivery_thread,
-        model=reviewer.model,
-        job="check-review",
-        prompt=prompt,
-        # Child must not cascade another review-child spawn.
-        auto_review_child=False,
-        spawn_review_provenance=_SPAWN_PROVENANCE,
-        prompt_turn_number=prompt_turn_number,
-        prompt_bind_mode="frozen_turn",
-        lane="A",
+
+    work_key = _resolve_review_work_key(parent_ctx, delivery_thread)
+    caller_agent = _normalize_parent_caller_agent(parent_ctx)
+    contract = reviewer.contract or (
+        "check-review" if backend == "cursor_sdk" else "code-review"
     )
+
+    if backend == "cdp":
+        if not is_valid_cdp_caller_agent(caller_agent):
+            logger.warning(
+                "review_child spawn abandoned: unusable caller_agent parent=%s",
+                parent_execution_id,
+            )
+            abandon_spawn_state(
+                parent_execution_id=parent_execution_id,
+                reason="cdp_caller_agent_missing",
+            )
+            return {}
+        child_body = TeamDispatchGenerateBody(
+            op=_GENERATE_OP,
+            model=reviewer.model,
+            job=contract,
+            reasoning_effort=reviewer.effort,
+            prompt=prompt,
+            dispatch_thread_id=delivery_thread,
+            caller_agent=caller_agent,
+            work_key=work_key,
+            auto_review_child=False,
+            spawn_review_provenance=_SPAWN_PROVENANCE,
+            prompt_turn_number=prompt_turn_number,
+            prompt_bind_mode=prompt_bind_mode or "frozen_turn",
+        )
+    else:
+        scoped_prompt = _REVIEWER_EMPTY_SCOPE_PREFIX + prompt
+        child_body = TeamDispatchGenerateBody(
+            op=_GENERATE_OP,
+            seat=_CURSOR_SDK_ROLE,
+            dispatch_thread_id=delivery_thread,
+            model=reviewer.model,
+            job=contract,
+            prompt=scoped_prompt,
+            auto_review_child=False,
+            spawn_review_provenance=_SPAWN_PROVENANCE,
+            prompt_turn_number=prompt_turn_number,
+            prompt_bind_mode="frozen_turn",
+            lane="B",
+            read_only=True,
+            work_key=work_key,
+            caller_agent=caller_agent or None,
+        )
+
     result = await team_dispatch(child_body, Response())
-    child_op, child_role = _GENERATE_OP, _CURSOR_SDK_ROLE
+    if isinstance(result, JSONResponse):
+        logger.warning(
+            "review_child dispatch refused status=%s code=%s parent=%s",
+            result.status_code,
+            _json_response_error_code(result),
+            parent_execution_id,
+        )
+        return {}
 
     if not isinstance(result, dict):
         return {}
+
     child_exec = result.get("execution_id")
-    if child_exec:
+    if child_exec and backend == "cursor_sdk":
         from implement_admission.check_review_substrate import consultant_rung
 
         from .generate_admission_context_store import write_admission_context
@@ -309,8 +424,8 @@ async def _dispatch_review_child(
         write_admission_context(
             execution_id=str(child_exec),
             auto_review_child=True,
-            op=child_op,
-            role=child_role,
+            op=_GENERATE_OP,
+            role=_CURSOR_SDK_ROLE,
             resolved_model=reviewer.model,
             parent_dispatch_thread_id=delivery_thread,
             dispatch_thread_id=delivery_thread,
@@ -361,6 +476,8 @@ async def spawn_generate_lane_review_child(
         delivery_thread=delivery_thread,
         prompt=build.prompt,
         reviewer=reviewer,
+        parent_ctx=ctx,
+        parent_execution_id=ctx.execution_id,
         prompt_turn_number=build.prompt_turn_number,
         prompt_bind_mode=(
             "frozen_turn"
@@ -431,9 +548,24 @@ async def _attempt_spawn_for_completion(
     if existing is not None and existing.state == "final":
         return False
 
-    reviewer = select_independent_reviewer(
-        ctx.resolved_model, ctx.resolved_effort
-    )
+    try:
+        reviewer = select_independent_reviewer(
+            ctx.resolved_model, ctx.resolved_effort
+        )
+    except ReviewDefaultLoadError as exc:
+        if exc.kind not in _loader_error_logged:
+            logger.error(
+                "review_defaults load failed kind=%s: %s",
+                exc.kind,
+                exc.cause,
+            )
+            _loader_error_logged.add(exc.kind)
+        if existing is not None and existing.state == "pending":
+            abandon_spawn_state(
+                parent_execution_id=execution_id,
+                reason="review_default_load_failed",
+            )
+        return False
     if reviewer is None:
         logger.warning(
             "review_child spawn fail-closed: no independent reviewer for %s",
@@ -678,6 +810,7 @@ async def start_review_child_spawn_listener() -> None:
 def reset_review_child_spawn_hook_for_tests() -> None:
     global _listener_task, _reconcile_task
     _miss_trackers.clear()
+    _loader_error_logged.clear()
     if _listener_task is not None:
         _listener_task.cancel()
         _listener_task = None
