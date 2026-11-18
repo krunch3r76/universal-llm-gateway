@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -61,18 +60,19 @@ _HANDLE_BASE = {
 }
 
 
-def _pin_hub_cortex_db(monkeypatch: pytest.MonkeyPatch) -> None:
-    import cortex_store.db as cortex_db
+def _bind_isolated_cortex_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Isolated head-schema cortex DB under tmp_path (cortex_store/conftest pattern)."""
+    from cortex_store import db as cortex_db
+    from cortex_store._test_db_bootstrap import materialize_head_schema_template
 
-    hub = Path(os.environ.get("CORTEX_DB_PATH", "/home/io/.cortex/cortex.db"))
-    if not hub.is_file():
-        return
-    monkeypatch.setenv("CORTEX_DB_PATH", str(hub))
-    monkeypatch.setattr(cortex_db, "_CORTEX_DB", hub)
+    db_path = tmp_path / "cortex_test.db"
+    materialize_head_schema_template(db_path)
+    monkeypatch.setenv("CORTEX_DB_PATH", str(db_path))
+    monkeypatch.setattr(cortex_db, "_CORTEX_DB", db_path)
 
 
 def _write_primary_packet(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _pin_hub_cortex_db(monkeypatch)
+    _bind_isolated_cortex_db(monkeypatch, tmp_path)
     monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
     packet_dir = tmp_path / "universal-llm-gateway" / "tmp"
     packet_dir.mkdir(parents=True, exist_ok=True)
