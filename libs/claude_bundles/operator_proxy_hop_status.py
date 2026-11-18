@@ -434,14 +434,15 @@ def hop_successor_fields(
         live_leg = _render_failed("live_leg", exc, handoff_uri)
 
     running_now = f"## What is running now; {detail}\non lane {lane}"
-    running_now = cap_utf8_for_hop(
-        running_now, HOP_RUNNING_NOW_CAP_B, label="running_now"
-    )
+    if hop_kind == "mission":
+        running_now = cap_utf8_for_hop(
+            running_now, HOP_RUNNING_NOW_CAP_B, label="running_now"
+        )
 
     pointers = render_pointers_block(
         lane=lane,
         checkpoint_preamble=checkpoint_header,
-        max_bytes=HOP_POINTERS_CAP_B,
+        max_bytes=HOP_POINTERS_CAP_B if hop_kind == "mission" else None,
     )
     call1_line = first_act_call1_line(lane=lane, checkpoint_block=checkpoint_block)
 
@@ -457,8 +458,6 @@ def hop_successor_fields(
         "house_rules_verbatim": house_rules_verbatim,
         "checkpoint_block": checkpoint_block,
         "inflight_block": inflight_block,
-        "lessons_in_force": "",
-        "register_card": "",
         "live_leg": live_leg,
         "pointers": pointers,
         "first_act_call1_line": call1_line,

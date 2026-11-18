@@ -615,15 +615,17 @@ def ensure_operator_proxy_mission_prompt(
     fold_state_load: Callable[[], dict | None] | None = None,
     fold_state_save: Callable[[dict], None] | None = None,
 ) -> str:
-    """Prepend the hop-successor template when it is not already the opening.
+    """Prepend a hop template when the body is not already a rendered hop title.
 
-    Skill chips are delivered via staging Use-lines, not a leading slash prefix.
-    Legacy leading slash lines are stripped. *standing_handoff_text* supplies the
-    HOUSE RULES and live leg; this function does not read the filesystem unless
-    *fetch_turns* / *roster_text* are omitted (production defaults).
-    *execution_id* is the Stargate CDP generate id. Empty omits that clause.
-    The caller body is rendered under ``## Hop request (data)``, before
-    ``## Hard refusals``.
+    Prepends the arriving-seat form, or the housekeeping form when the body
+  names ``hop_kind: housekeeping``, unless *text* already opens with a rendered
+    hop title (see ``is_rendered_hop_prompt``). Skill chips are delivered via
+    staging Use-lines, not a leading slash prefix. Legacy leading slash lines are
+    stripped. *standing_handoff_text* supplies the HOUSE RULES and live leg;
+    this function does not read the filesystem unless *fetch_turns* / *roster_text*
+    are omitted (production defaults). *execution_id* is the Stargate CDP
+    generate id. Empty omits that clause. The caller body is rendered under
+    ``## Hop request (data)``, before ``## Hard refusals``.
     """
     body = (text or "").strip()
     _tokens, rest = split_leading_slash_skills(body)

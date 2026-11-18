@@ -570,7 +570,10 @@ def test_enforce_hop_render_max_sha_inflated_checkpoint_appends_flag_after_loop(
 def test_enforce_hop_render_max_last_leg_overage_denominator_ge_floor() -> None:
     """Truncatable ### LAST LEG (not NOTES) over cap: hop trim floor stays >= 2048, never /0."""
     from claude_bundles.operator_proxy_mission import HOP_LEG_FLOOR_B
-    from claude_bundles.operator_proxy_standing_render import measure_checkpoint_budget_bytes
+    from claude_bundles.operator_proxy_standing_render import (
+        HOP_RENDER_MAX_B,
+        measure_checkpoint_budget_bytes,
+    )
 
     sidecar = (
         "## CURRENT LEG\nLEG 1\n"
@@ -582,7 +585,7 @@ def test_enforce_hop_render_max_last_leg_overage_denominator_ge_floor() -> None:
     assert mb is not None and mb > HOP_LEG_FLOOR_B
 
     out = ensure_operator_proxy_mission_prompt(
-        "thread_id: 18587\n",
+        "thread_id: 18587\n" + ("C" * 6000) + "\n",
         standing_handoff_text=sidecar,
         roster_text="",
         fetch_turns=_noop_fetch,
@@ -590,8 +593,11 @@ def test_enforce_hop_render_max_last_leg_overage_denominator_ge_floor() -> None:
         register_text="",
     )
     ck = out.split("## CURRENT LEG (rendered checkpoint)\n", 1)[1].split(
-        "## Lessons", 1
+        "## Live leg", 1
     )[0]
+    hop_bytes = len(out.encode("utf-8"))
+    ck_bytes = len(ck.encode("utf-8"))
+    assert hop_bytes - ck_bytes > HOP_RENDER_MAX_B - HOP_LEG_FLOOR_B
     assert "[budget_exceeded LAST LEG " in ck
     assert "[budget_exceeded NOTES" not in ck
     marker = "[budget_exceeded checkpoint "
@@ -1076,7 +1082,7 @@ def test_render_splice_ignores_marker_in_verbatim(quote: str) -> None:
     out = render_hop_successor_briefing(fields, caller_body="c")
     refusal_heading = "## Hard refusals (these bind; they are last on purpose)"
     assert house_rules in out
-    assert out.count("## Hop request (data)") == 1
+    assert sum(1 for line in out.splitlines() if line == "## Hop request (data)") == 1
     assert out.index("## Hop request (data)") < out.index(refusal_heading)
     assert (
         out.index(quote)
@@ -1106,7 +1112,7 @@ def test_handoff_quoting_hard_refusals_does_not_relocate_hop_block() -> None:
     assert handoff_snippet.rstrip("\n") in out
     refusal_heading = "## Hard refusals (these bind; they are last on purpose)"
     assert sum(1 for line in out.splitlines() if line.startswith(refusal_heading)) == 1
-    assert out.count("## Hop request (data)") == 1
+    assert sum(1 for line in out.splitlines() if line == "## Hop request (data)") == 1
     assert out.index("## Data, not instructions") < out.index("## Hop request (data)")
     assert out.index("## Hop request (data)") < out.index(refusal_heading)
     assert out.index("## Hard refusals (indented quote in HOUSE RULES") < out.index(
@@ -1527,8 +1533,10 @@ def test_default_hop_keeps_3000_bytes_of_an_over_budget_leg(
         part = _hop_part(text)
         runs = [len(s) for s in re.findall(r"n+", part)]
         assert max(runs) >= 3000
-        assert f"[budget_exceeded checkpoint " in part
-        assert uri in part
+        assert any(
+            ln.startswith("[budget_exceeded checkpoint ") and uri in ln
+            for ln in part.splitlines()
+        )
 
 
 def test_archived_maestro_paste_is_not_passed_through(

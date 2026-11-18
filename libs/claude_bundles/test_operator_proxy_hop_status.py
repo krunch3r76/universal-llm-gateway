@@ -539,7 +539,7 @@ def test_mission_ensure_idempotent_with_this_hop() -> None:
     assert twice.rstrip("\n") == once.rstrip("\n")
     assert once.count("# Hop on agent-bus:") == 1
     assert once.count("## Hard refusals") == 1
-    assert once.count("## Hop request (data)") == 1
+    assert sum(1 for line in once.splitlines() if line == "## Hop request (data)") == 1
 
 
 def _checkpoint_fixture_20kb() -> str:
@@ -1512,6 +1512,9 @@ def test_default_hop_reads_only_the_hop_lane(
     live_start = out.index("## Live leg (data, projected from the bus)")
     live_end = out.index("## Pointers")
     live_section = out[live_start:live_end]
-    assert "- lane 24136 #5 REQUEST|freeform|todo:x" in live_section
+    live_item_lines = [
+        ln for ln in live_section.splitlines() if ln.startswith("- lane")
+    ]
+    assert live_item_lines == ["- lane 24136 #5 REQUEST|freeform|todo:x"]
     running_lines = out[out.index("## What is running now") :].splitlines()
     assert running_lines[1] == "on lane 24136"
