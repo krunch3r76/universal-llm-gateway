@@ -1227,6 +1227,10 @@ def _merge_record_json_conn(
     dispatch_id: str,
     patch: dict[str, Any],
 ) -> None:
+    """Read ``record_json``, shallow-merge ``patch``, and write it back on ``conn``.
+
+    The caller must hold ``BEGIN IMMEDIATE`` on ``conn``; this opens no transaction.
+    """
     row = conn.execute(
         "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
         (dispatch_id,),
@@ -1253,6 +1257,10 @@ def _merge_record_json_subobject_conn(
     subkey: str,
     patch: dict[str, Any],
 ) -> None:
+    """Read ``record_json``, merge ``patch`` into its ``subkey`` dict, write it back.
+
+    The caller must hold ``BEGIN IMMEDIATE`` on ``conn``; this opens no transaction.
+    """
     row = conn.execute(
         "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
         (dispatch_id,),
@@ -2809,8 +2817,12 @@ class CursorDispatchLedger:
 
         R3 conductor hop reactor merges ``hop_successor``, ``hop_admit_error``,
         and closeout ``hop_declared`` via ``merge_hop_patch`` or this method.
+
+        Takes the write lock (``BEGIN IMMEDIATE``) before it reads, so no other
+        connection can commit between this method's read and its write.
         """
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             _merge_record_json_conn(conn, dispatch_id=dispatch_id, patch=patch)
 
     def merge_record_json_subobject(
@@ -2820,8 +2832,13 @@ class CursorDispatchLedger:
         subkey: str,
         patch: dict[str, Any],
     ) -> None:
-        """Shallow-merge ``patch`` into ``record_json[subkey]`` without clobbering it."""
+        """Shallow-merge ``patch`` into ``record_json[subkey]`` without clobbering it.
+
+        Takes the write lock (``BEGIN IMMEDIATE``) before it reads, so no other
+        connection can commit between this method's read and its write.
+        """
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             _merge_record_json_subobject_conn(
                 conn, dispatch_id=dispatch_id, subkey=subkey, patch=patch
             )
