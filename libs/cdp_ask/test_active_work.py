@@ -657,6 +657,51 @@ async def test_active_work_row_registry_projection(
 
 
 @pytest.mark.asyncio
+async def test_active_work_unified_chat_seat_keeps_record_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:44182: a /chat/<uuid> seat must not crash the snapshot (chat_ id has no cse wire)."""
+    from dataclasses import dataclass
+    from pathlib import Path
+
+    @dataclass(frozen=True)
+    class _FakeReg:
+        registration_id: str
+        port: int
+        profile_suffix: str
+        profile: Path
+        cdp_url: str
+        holder: str
+        purpose: str | None = None
+
+    reg = _FakeReg(
+        registration_id="reg-chat",
+        port=9223,
+        profile_suffix="s",
+        profile=Path("/tmp/p"),
+        cdp_url="http://127.0.0.1:9223",
+        holder="holder-a",
+    )
+    chat = "https://claude.ai/chat/0a1b2c3d-1111-2222-3333-444455556666"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    monkeypatch.setattr("claude_bundles.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.chat_url_for_registration",
+        lambda rid: chat if rid == "reg-chat" else None,
+    )
+    store = ExecutionStore()
+    record = await store.create(holder="test", purpose="operator-proxy")
+    await store.set_registration_id(record.execution_id, "reg-chat")
+    snap = await store.active_work_snapshot()
+    row = snap["rows"][0]
+    assert row["chat_url"] == chat
+    assert row["holder"] == "test"
+
+
+@pytest.mark.asyncio
 async def test_active_work_snapshot_projects_parent_thread_from_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -127,7 +127,9 @@ def active_rows(records: Iterable[Any]) -> tuple[list[dict[str, Any]], list[str]
             )
 
             hid = holder_id_from_chat_url(str(chat))
-            if hid:
+            # Unified-chat seats yield ``chat_<uuid>``; only ``cse_`` ids have a
+            # cowork_cse holder wire, so chat seats keep the recorded holder.
+            if hid and hid.startswith("cse_"):
                 holder_value = format_cowork_cse_holder(hid)
         rows.append(
             {
