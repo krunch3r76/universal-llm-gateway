@@ -129,7 +129,7 @@ DIRECTIVE names: conductor role, a root thread (`new_slug` or existing `role:roo
 
 **Transport:** this seat has ulg-code `team_dispatch`. Commission is `team_dispatch(op=generate, seat=cursor-sdk, lane=B, ...)`. The cursor-sdk seat nests its own further dispatches. `cursor_request` is not the wire.
 
-**Reachability:** `contract=conductor` is the admitted commission token on `team_dispatch`. Body prose is the instruction; the token is what admit sees. A non-roaming reasoning model on `mechanical` redirects to `cursor/composer-2.5` (`redirect_mechanical_executor`). `cursor/grok-4.7` is roaming and stays. Use `contract=investigate` when the leg is facts, not edits.
+**Reachability:** `contract=conductor` is the admitted commission token on `team_dispatch`. Body prose is the instruction; the token is what admit sees. Mechanical contracts (`implement`, `mechanical`, `pure-mechanical`) require `workflows.mechanical_implement` (`cursor/composer-2.5`) at GIW admit and Stargate generate; explicit `cursor/grok-4.7` (and other non-composer pins) on those contracts returns 422 `contract_model` / `resolved_model_mismatch` unless the implement-composer waiver trio is present. Use `contract=investigate` when the leg is facts, not edits.
 
 **Model + lane (BINDING):**
 - Omit `model=` resolves `cursor/grok-4.7` (`workflows.auto_judgment.model`). Omitted knobs follow that card. Pin `model=cursor/composer-2.5` when the leg is mechanical implement.

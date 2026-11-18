@@ -136,6 +136,26 @@ async def test_code_contract_mismatch_aborts_before_admit(
 
 
 @pytest.mark.asyncio
+async def test_prepare_omitted_model_implement_uses_mechanical_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from implement_admission.mechanical_executor_gate import mechanical_implement_model
+
+    _patch_prepare_deps(monkeypatch)
+    handle = await prepare_mod.prepare_cursor_sdk_generate(
+        request_id="req-impl-omit",
+        role="cursor-sdk",
+        model=None,
+        subject="s",
+        caller_agent="dispatch",
+        contract="implement",  # type: ignore[arg-type]
+        packet_path=None,
+        message_text="implement body",
+    )
+    assert handle.resolved_model == mechanical_implement_model()
+
+
+@pytest.mark.asyncio
 async def test_matching_composer_pin_is_not_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
