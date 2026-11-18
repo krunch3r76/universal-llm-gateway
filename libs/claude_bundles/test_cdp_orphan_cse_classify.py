@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from claude_bundles import cdp_orphan_cse_classify as classify
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
 
 pytestmark = pytest.mark.offline
 
@@ -196,3 +196,17 @@ def test_orphan_scan_as_dict_surfaces_closable_counts(
     assert payload["reclaim_enabled"] is False
     assert payload["cse_classification"] == "scan_ephemeral"
     assert payload["matched"][0]["cse_targets"][0]["classification"] == "closable"
+
+
+def test_resolve_attach_matches_canonical_index_key() -> None:
+    canonical = canonical_claude_seat_url(_CSE_URL)
+    assert canonical is not None
+    index = {canonical: "reg-chat"}
+    resolution, reg_id = classify.resolve_attach(
+        "https://WWW.claude.ai/cowork/cse_abc123",
+        profile=None,
+        chat_url_index=index,
+        running_registration_ids=set(),
+    )
+    assert resolution == "chat_url"
+    assert reg_id == "reg-chat"

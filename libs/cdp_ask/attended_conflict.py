@@ -7,7 +7,7 @@ from typing import Any
 from claude_bundles import cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import claude_seat_identity_key
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 
 
@@ -21,7 +21,7 @@ def purpose_filtered_url_conflicts() -> list[dict[str, Any]]:
         chat_url = cdp_registry.chat_url_for_registration(lane.registration_id)
         if not chat_url:
             continue
-        norm = normalize_cse_url(chat_url)
+        norm = claude_seat_identity_key(chat_url)
         by_url.setdefault(norm, []).append(
             {
                 "registration_id": lane.registration_id,
@@ -56,14 +56,14 @@ def purpose_filtered_url_conflicts() -> list[dict[str, Any]]:
 
 def shared_url_candidates(chat_url: str) -> list[dict[str, Any]] | None:
     """Return full candidate evidence when a URL maps to multiple mission hosts."""
-    norm = normalize_cse_url(chat_url)
+    norm = claude_seat_identity_key(chat_url)
     matches: list[dict[str, Any]] = []
     for lane in cdp_registry.list_active():
         purpose = (lane.purpose or "").strip()
         if purpose not in OPERATOR_PROXY_MISSION_PURPOSES:
             continue
         bound = cdp_registry.chat_url_for_registration(lane.registration_id)
-        if not bound or normalize_cse_url(bound) != norm:
+        if not bound or claude_seat_identity_key(bound) != norm:
             continue
         matches.append(
             {

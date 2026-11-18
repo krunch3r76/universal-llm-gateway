@@ -23,6 +23,7 @@ from claude_bundles.cdp_registry.driving_seat import (
 )
 from claude_bundles.compose_setup_emit import compose_runner_quota_fields
 from claude_bundles.cowork_output_download import should_attempt_output_download
+from claude_bundles.cse_url import parse_claude_seat_address
 from claude_bundles.cse_wake_retain import registration_has_wake_debt
 from claude_bundles.project_ask import (
     HarvestArchiveError,
@@ -41,13 +42,13 @@ from cortex_store.files_path_normalize import normalize_cortex_files_path
 
 from cdp_ask.models import SubmitProjectAskRequest, classify_stall_stage
 from cdp_ask.overlay_effort_retry import run_with_overlay_retry
-from cdp_ask.project_select import apply_project_select
 from cdp_ask.page_liveness import (
     LadderAdvanceState,
     LadderCallbacks,
     advance_ladder_from_harvest,
     make_harvest_ladder_hook,
 )
+from cdp_ask.project_select import apply_project_select
 from cdp_ask.standing_pins import resolve_cdp_ask_browser_host_row
 from cdp_ask.unverifiable import (
     converse_fail_error,
@@ -58,11 +59,6 @@ from cdp_ask.unverifiable import (
 
 logger = logging.getLogger(__name__)
 
-_CSE_URL_MARKER = "claude.ai/cowork/cse_"
-_CODE_SESSION_URL = re.compile(
-    r"https://claude\.ai/code/session_[A-Za-z0-9]+(?:\?|#|$)",
-    re.I,
-)
 _CLAUDE_CODE_COMPOSE_URL = "https://claude.ai/code"
 
 
@@ -267,8 +263,10 @@ def _persist_session_address(
     raw = (url or "").strip()
     if not raw:
         return
-    if _CSE_URL_MARKER not in raw and not _CODE_SESSION_URL.match(raw):
+    parsed = parse_claude_seat_address(raw)
+    if parsed is None or parsed.kind not in ("unified_chat", "cowork_cse", "code_session"):
         return
+    bind_url = parsed.canonical_url
     from claude_bundles.cdp_registry.models import STATUS_TAB
 
     row = cdp_registry._load_active().get(registration_id)
@@ -277,13 +275,13 @@ def _persist_session_address(
 
         set_tab_chat_url(
             registration_id,
-            chat_url=raw,
+            chat_url=bind_url,
             execution_id=execution_id or None,
         )
         return
     cdp_registry.bind_session_address(
         registration_id,
-        chat_url=raw,
+        chat_url=bind_url,
         execution_id=execution_id or None,
     )
 
@@ -302,14 +300,18 @@ def _latch_streaming_attachment(
     )
 
     raw = (url or "").strip()
-    if not raw or _CSE_URL_MARKER not in raw:
+    if not raw:
         return
-    if has_attachment_observed(registration_id, raw):
+    parsed = parse_claude_seat_address(raw)
+    if parsed is None or parsed.kind not in ("unified_chat", "cowork_cse"):
+        return
+    latch_url = parsed.canonical_url
+    if has_attachment_observed(registration_id, latch_url):
         fold_attachment_journal()
         return
     append_attachment_journal(
         registration_id=registration_id,
-        chat_url=raw,
+        chat_url=latch_url,
         attach_proof="streaming",
         execution_id=execution_id or None,
     )

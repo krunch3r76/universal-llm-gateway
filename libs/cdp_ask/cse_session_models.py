@@ -50,7 +50,7 @@ class RetireBindingRequest(BaseModel):
     registration_id: str | None = None
     chat_url: str | None = None
     reason: str = Field(min_length=1, default="sanctioned_dormant_retire")
-    dry_run: bool = False
+    dry_run: bool = True
     caller_agent: str | None = None
 
     @model_validator(mode="before")

@@ -3499,3 +3499,79 @@ def test_terminal_failure_snapshot_carries_archive_uri_to_bus_body() -> None:
     bus_body = format_cdp_result_body(result)
     assert "- archive_uri:" in bus_body
     assert archive in bus_body
+
+
+def test_absorb_snapshot_latches_unified_chat() -> None:
+    from claude_bundles.cdp_model_endpoint import _ProofCarry
+
+    carry = _ProofCarry()
+    url = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
+    carry.absorb_status_snapshot({"status": "running", "url": url})
+    assert carry.url == url
+
+
+def test_url_bound_fires_once_unified_chat() -> None:
+    from claude_bundles.cdp_model_endpoint import _maybe_invoke_url_bound, _ProofCarry
+
+    carry = _ProofCarry()
+    url = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
+    carry.absorb_status_snapshot({"status": "running", "url": url})
+    fired: list[tuple[str, str | None, int]] = []
+    emitted: set[tuple[str, str]] = set()
+    distinct: list[str] = []
+
+    def _on(url_s: str, reg: str | None, n: int) -> None:
+        fired.append((url_s, reg, n))
+
+    _maybe_invoke_url_bound(
+        proof_carry=carry,
+        snapshot={"registration_id": "reg-1"},
+        execution_id="exec-1",
+        on_url_bound=_on,
+        url_bound_emitted=emitted,
+        distinct_cse_urls=distinct,
+    )
+    _maybe_invoke_url_bound(
+        proof_carry=carry,
+        snapshot={"registration_id": "reg-1"},
+        execution_id="exec-1",
+        on_url_bound=_on,
+        url_bound_emitted=emitted,
+        distinct_cse_urls=distinct,
+    )
+    assert len(fired) == 1
+    assert fired[0][0] == url
+
+
+def test_url_bound_fires_once_across_www_spelling() -> None:
+    from claude_bundles.cdp_model_endpoint import _maybe_invoke_url_bound, _ProofCarry
+
+    carry = _ProofCarry()
+    canon = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
+    variant = f"https://www.claude.ai/chat/{canon.rsplit('/', 1)[-1].upper()}"
+    carry.absorb_status_snapshot({"status": "running", "url": canon})
+    fired: list[tuple[str, str | None, int]] = []
+    emitted: set[tuple[str, str]] = set()
+    distinct: list[str] = []
+
+    def _on(url_s: str, reg: str | None, n: int) -> None:
+        fired.append((url_s, reg, n))
+
+    _maybe_invoke_url_bound(
+        proof_carry=carry,
+        snapshot={},
+        execution_id="exec-www",
+        on_url_bound=_on,
+        url_bound_emitted=emitted,
+        distinct_cse_urls=distinct,
+    )
+    carry.absorb_status_snapshot({"status": "running", "url": variant})
+    _maybe_invoke_url_bound(
+        proof_carry=carry,
+        snapshot={},
+        execution_id="exec-www",
+        on_url_bound=_on,
+        url_bound_emitted=emitted,
+        distinct_cse_urls=distinct,
+    )
+    assert len(fired) == 1

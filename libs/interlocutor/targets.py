@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import urlparse
 
 from chat_harvest.models import ClassifyRefuse, classify_chat_url
 from cursor_bridge.grok_window_bindings import configured_grok_window_displays
@@ -118,10 +117,11 @@ def resolve_grok_window_target(
 def _parse_cowork_url(target: str) -> CoworkUrlTarget | None:
     if "://" not in target:
         return None
-    parsed = urlparse(target.strip())
-    host = (parsed.hostname or "").lower()
-    if host == "claude.ai" and "/cowork/cse_" in (parsed.path or "").lower():
-        return CoworkUrlTarget(url=target.strip())
+    from claude_bundles.cse_url import parse_claude_seat_address
+
+    seat = parse_claude_seat_address(target.strip())
+    if seat is not None and seat.kind in ("unified_chat", "cowork_cse"):
+        return CoworkUrlTarget(url=seat.canonical_url)
     return None
 
 

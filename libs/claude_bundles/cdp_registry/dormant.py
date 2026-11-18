@@ -90,13 +90,13 @@ def list_dormant() -> list[DormantSeat]:
 
 def dormant_for_chat_url(chat_url: str) -> DormantSeat | None:
     """Return the most recent dormant seat bound to *chat_url*, else None."""
-    from claude_bundles.cse_url import normalize_cse_url
+    from claude_bundles.cse_url import claude_seat_identity_key
 
-    target = normalize_cse_url(chat_url or "")
+    target = claude_seat_identity_key(chat_url or "")
     if not target:
         return None
     for seat in list_dormant():
-        if normalize_cse_url(seat.chat_url) == target:
+        if claude_seat_identity_key(seat.chat_url) == target:
             return seat
     return None
 

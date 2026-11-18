@@ -168,6 +168,28 @@ def test_dom_to_harvested_maps_coverage_full(
 
 
 @pytest.mark.asyncio
+async def test_pick_page_unified_chat() -> None:
+    uuid = "2762063d-2966-4859-a3ce-23831c6e0c86"
+    other_uuid = "11111111-1111-4111-8111-111111111111"
+    canonical = f"https://claude.ai/chat/{uuid}"
+    other_chat = MagicMock()
+    other_chat.url = f"https://claude.ai/chat/{other_uuid}"
+    match = MagicMock()
+    match.url = f"https://www.claude.ai/chat/{uuid.upper()}"
+    cowork = MagicMock()
+    cowork.url = "https://claude.ai/cowork/cse_other_tab"
+    ctx = MagicMock()
+    ctx.pages = [other_chat, match, cowork]
+    picked = await pick_page_for_chat_url(ctx, canonical, fallback=None)
+    assert picked is match
+
+    ctx_miss = MagicMock()
+    ctx_miss.pages = [other_chat, cowork]
+    missed = await pick_page_for_chat_url(ctx_miss, canonical, fallback=None)
+    assert missed is None
+
+
+@pytest.mark.asyncio
 async def test_pick_page_for_chat_url_falls_back() -> None:
     fallback = MagicMock()
     ctx = MagicMock()

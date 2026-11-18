@@ -14,7 +14,7 @@ from typing import Any
 from claude_bundles import cdp_orphans, cdp_registry
 from claude_bundles.cdp_orphan_cse_classify import cse_pages_from_list
 from claude_bundles.cse_idle_probe import probe_page_liveness_sync
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import claude_seat_identity_key
 
 from cdp_ask.lane_current_cse_cap import (
     PageProbe,
@@ -49,7 +49,7 @@ def enumerate_live_cse_pages() -> Iterator[tuple[int, str, str | None]]:
             continue
         for page in pages:
             try:
-                url = normalize_cse_url(str(page.get("url") or ""))
+                url = claude_seat_identity_key(str(page.get("url") or ""))
             except Exception:
                 continue
             if not url:
@@ -151,7 +151,7 @@ def _resolve(
     for item in gathered:
         try:
             port, url, ws_url = item
-            url = normalize_cse_url(str(url or ""))
+            url = claude_seat_identity_key(str(url or ""))
         except Exception:
             continue
         if not url:
@@ -170,7 +170,7 @@ def _resolve(
 
     seat = _holder_view(snap, lane, chat_url_for_registration)
     holder_url = (seat or {}).get("chat_url") or None
-    holder_key = normalize_cse_url(holder_url or "")
+    holder_key = claude_seat_identity_key(holder_url or "")
 
     active = list_active()
     seat_rid_key = str((seat or {}).get("registration_id") or "").strip() or None

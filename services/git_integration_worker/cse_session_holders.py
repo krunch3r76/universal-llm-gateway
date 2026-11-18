@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
 from claude_bundles.holder_strings import holder_id_from_chat_url
 from universal_logging import get_logger
 
@@ -26,6 +26,11 @@ _OCCUPANCY_STATES = frozenset({"driving", "dormant"})
 # and still drops a holder the live registry no longer names.
 _STALE_DRIVING_ABSENT_S = 6 * 3600
 _SEAT_STATES = frozenset({"driving", "dormant", "superseded", "released"})
+
+
+def _holder_column_chat_url(raw: str) -> str:
+    """D1 canonical bindable URL for the holder ``chat_url`` column."""
+    return canonical_claude_seat_url(raw) or normalize_cse_url(raw)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS cse_session_holders (
@@ -70,6 +75,7 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
 
 
 def get_holder(conn: sqlite3.Connection, holder_id: str) -> dict[str, Any] | None:
+    """Return the ``cse_session_holders`` row for *holder_id*, or None when absent."""
     row = conn.execute(
         "SELECT * FROM cse_session_holders WHERE holder_id=?",
         (holder_id,),
@@ -80,6 +86,7 @@ def get_holder(conn: sqlite3.Connection, holder_id: str) -> dict[str, Any] | Non
 def get_driving_holder_for_lane(
     conn: sqlite3.Connection, lane_thread_id: str
 ) -> dict[str, Any] | None:
+    """Return the newest driving holder row on *lane_thread_id*, or None when vacant."""
     lane = (lane_thread_id or "").strip()
     if not lane:
         return None
@@ -96,7 +103,10 @@ def resolve_nest_parent(
     conn: sqlite3.Connection, holder_id: str
 ) -> dict[str, Any] | None:
     """Return holder row when valid CSE nest parent; else None."""
-    row = get_holder(conn, holder_id)
+    hid = (holder_id or "").strip()
+    if not hid.startswith("cse_"):
+        return None
+    row = get_holder(conn, hid)
     if row is None:
         return None
     if str(row.get("seat_state") or "") not in _VALID_NEST_PARENT:
@@ -109,7 +119,30 @@ class RemoteUpsert(StrEnum):
 
     OK = "ok"
     LANE_CONFLICT = "lane_conflict"
+    REFUSED = "refused"
     UNAVAILABLE = "unavailable"
+
+
+class HolderProjectionRefusedError(ValueError):
+    """Typed policy refusal when a CSE holder upsert violates GIW ledger invariants.
+
+    Raised by ``upsert_holder`` when the URL is not a valid seat address or the
+    registration is houseless, allowing the admin route to return HTTP 422
+    instead of collapsing policy refusals into HTTP 500 outages.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        holder_id: str | None = None,
+        registration_id: str | None = None,
+    ) -> None:
+        self.reason = reason
+        self.holder_id = holder_id
+        self.registration_id = registration_id
+        super().__init__(message)
 
 
 class HolderLaneConflictError(Exception):
@@ -156,11 +189,16 @@ def upsert_holder(
     holder id) and emits ``cse.holder.lane_conflict`` or the helper's
     ``cse.holder.superseded``.
     """
-    url = normalize_cse_url(chat_url)
+    url = _holder_column_chat_url(chat_url)
     hid = holder_id_from_chat_url(url)
-    if not hid:
-        raise ValueError(f"invalid CSE chat_url: {chat_url!r}")
     reg = (registration_id or "").strip() or None
+    if not hid:
+        raise HolderProjectionRefusedError(
+            f"invalid CSE chat_url: {chat_url!r}",
+            reason="invalid_chat_url",
+            holder_id=None,
+            registration_id=reg,
+        )
     if reg:
         # Best-effort belt-and-braces on io-local registry; authority is cdp_ask on Jupiter.
         try:
@@ -172,10 +210,21 @@ def upsert_holder(
             if isinstance(reg_row, dict) and is_houseless_purpose(
                 reg_row.get("purpose")
             ):
-                raise ValueError(
-                    f"houseless registration must not be persisted in GIW ledger: {reg}"
+                _emit(
+                    "cse.holder.upsert_refused",
+                    {
+                        "holder_id": hid,
+                        "registration_id": reg,
+                        "reason": "houseless_registration",
+                    },
                 )
-        except ValueError:
+                raise HolderProjectionRefusedError(
+                    f"houseless registration must not be persisted in GIW ledger: {reg}",
+                    reason="houseless_registration",
+                    holder_id=hid,
+                    registration_id=reg,
+                )
+        except HolderProjectionRefusedError:
             raise
         except Exception as exc:
             logger.warning(
@@ -456,7 +505,7 @@ def seat_successor_on_lane(
             "holder": None,
             "superseded_holder_ids": [],
         }
-    url = normalize_cse_url(chat_url)
+    url = _holder_column_chat_url(chat_url)
     hid = holder_id_from_chat_url(url)
     existing = get_holder(conn, hid) if hid else None
     if existing is not None:
@@ -530,7 +579,7 @@ def occupy_holder_on_hop(
     - absent row → mint fresh + ``occupy_missed`` (not silent peer eviction)
     - different live peer on another lane → refuse (not upsert-and-evict)
     """
-    url = normalize_cse_url(occupy_target)
+    url = _holder_column_chat_url(occupy_target)
     hid = holder_id_from_chat_url(url)
     if not hid:
         return {
@@ -669,9 +718,10 @@ def reap_stale_driving_holders(
         registry_urls = live_registry_urls()
     if not registry_urls:
         return 0
+    registry_keys = {_holder_column_chat_url(url) for url in registry_urls}
     released = 0
     for holder_id, chat_url in stale:
-        if normalize_cse_url(chat_url) in registry_urls:
+        if _holder_column_chat_url(chat_url) in registry_keys:
             continue
         transition_seat_state(
             conn,
@@ -741,7 +791,7 @@ def release_holder_for_registration(
     reason: str | None = None,
 ) -> dict[str, Any] | None:
     """Transition holder row to ``released`` for a detached registration."""
-    url = normalize_cse_url(chat_url)
+    url = _holder_column_chat_url(chat_url)
     hid = holder_id_from_chat_url(url)
     if not hid:
         return None
@@ -821,6 +871,24 @@ def _lane_conflict_from_http_error(
     return None
 
 
+def _refused_from_http_error(
+    exc: urllib.error.HTTPError,
+) -> dict[str, Any] | None:
+    try:
+        raw = exc.read()
+        payload = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        reason = detail.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            return detail
+    return None
+
+
 def upsert_holder_remote(
     *,
     chat_url: str,
@@ -830,10 +898,10 @@ def upsert_holder_remote(
 ) -> RemoteUpsert:
     """Best-effort HTTP upsert for out-of-process callers (cdp_registry hook).
 
-    One POST to GIW ``/cse-holder/upsert`` with no retry. Transport failure and
-    non-conflict HTTP errors return ``RemoteUpsert.UNAVAILABLE`` (fail-open).
-    HTTP 409 with ``lane_conflict`` returns ``RemoteUpsert.LANE_CONFLICT`` so
-    callers do not treat a live cross-lane refusal as success or as GIW-down.
+    One POST to GIW ``/cse-holder/upsert`` with no retry. Transport failure,
+    5xx, and untyped 4xx return ``RemoteUpsert.UNAVAILABLE`` (fail-open).
+    HTTP 409 with ``lane_conflict`` returns ``RemoteUpsert.LANE_CONFLICT`` and
+    HTTP 422 with a typed ``detail.reason`` returns ``RemoteUpsert.REFUSED``.
     """
     if _remote_holder_write_blocked_under_pytest():
         logger.warning(
@@ -879,6 +947,10 @@ def upsert_holder_remote(
                     conflict.get("requested_lane"),
                 )
                 return RemoteUpsert.LANE_CONFLICT
+        elif exc.code == 422:
+            refused = _refused_from_http_error(exc)
+            if refused is not None:
+                return RemoteUpsert.REFUSED
         logger.debug("cse holder remote upsert fail-open: %s", exc)
         return RemoteUpsert.UNAVAILABLE
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -926,6 +998,7 @@ def resolve_maestro_holder_id_for_lane(lane_thread_id: str | None) -> str | None
 def resolve_holder_by_registration(
     conn: sqlite3.Connection, registration_id: str
 ) -> dict[str, Any] | None:
+    """Return the newest holder row bound to *registration_id*, or None when unknown."""
     reg = (registration_id or "").strip()
     if not reg:
         return None
@@ -938,6 +1011,7 @@ def resolve_holder_by_registration(
 
 
 def lookup_holder_for_owed_wake(holder_id: str) -> dict[str, Any] | None:
+    """Look up a persisted holder row by *holder_id* on the dispatch ledger."""
     hid = (holder_id or "").strip()
     if not hid:
         return None
@@ -947,6 +1021,7 @@ def lookup_holder_for_owed_wake(holder_id: str) -> dict[str, Any] | None:
 
 
 def resolve_superseded_holder_live(registration_id: str) -> dict[str, Any] | None:
+    """Return a driving or dormant holder row matching *registration_id*, else None."""
     with _ledger_conn() as conn:
         ensure_schema(conn)
         row = resolve_holder_by_registration(conn, registration_id)
@@ -959,6 +1034,7 @@ def resolve_superseded_holder_live(registration_id: str) -> dict[str, Any] | Non
 
 
 def lane_thread_uses_bridge_wake(lane_thread_id: str) -> bool:
+    """Return True when *lane_thread_id* routes wakes via Xvfb display push-wake."""
     try:
         from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (  # noqa: E501
             _summoning_thread_uses_xvfb_push_wake,
@@ -1074,6 +1150,7 @@ def _import_cse_session_warm_module():
 
 
 def build_owed_wake_deps():
+    """Assemble ``OwedWakeDeps`` callbacks wired to agent-bus and CSE warm followup."""
     from scripts.model_manager.ui.controller.owed_wake_ledger import OwedWakeDeps
 
     cse_session_warm = _import_cse_session_warm_module()
@@ -1157,6 +1234,7 @@ __all__ = [
     "dispatch_owed_wake_producer1_row",
     "ensure_schema",
     "HolderLaneConflictError",
+    "HolderProjectionRefusedError",
     "get_driving_holder_for_lane",
     "get_holder",
     "lookup_holder_for_owed_wake",

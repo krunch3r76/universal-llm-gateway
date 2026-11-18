@@ -58,6 +58,24 @@ def test_release_dead_chat_url_holders_drops_only_that_url() -> None:
     assert active["orph-2"]["status"] == "orphaned_alive"
 
 
+def test_release_dead_orphan_www_spelling_matches_canonical_query() -> None:
+    """Legacy www orphan row is reaped when queried by canonical seat URL."""
+    canonical = "https://claude.ai/cowork/cse_l2r6Reap"
+    legacy = "https://www.claude.ai/cowork/cse_l2r6Reap"
+    active = {
+        "orph-1": {**_orphan_row(rid="orph-1"), "chat_url": legacy},
+    }
+    reaped = reaper.release_dead_chat_url_holders(
+        active,
+        lambda _port: False,
+        canonical,
+        pid_alive=lambda _pid: False,
+        is_attached=lambda _rid: False,
+    )
+    assert reaped == ["orph-1"]
+    assert active["orph-1"]["status"] == "released"
+
+
 def test_release_dead_chat_url_holders_keeps_live_port() -> None:
     url = "https://claude.ai/cowork/cse_live"
     active = {"orph-1": {**_orphan_row(), "chat_url": url}}

@@ -8,16 +8,22 @@ not the Jupiter registry; the pin is ``REGISTRATION_REGISTRY_SSH_ENV``
 from __future__ import annotations
 
 import contextlib
-import logging
 import time
 from collections.abc import Callable
 from typing import Any
 
+from universal_logging import get_logger
 from universal_protocol.errors import ProtocolError
 
 from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import (
+    BINDABLE_SEAT_KINDS,
+    canonical_claude_seat_url,
+    is_bindable_claude_seat_url,
+    normalize_cse_url,
+    parse_claude_seat_address,
+)
 
 from .attachment_journal import (
     append_attachment_journal,
@@ -35,14 +41,79 @@ from .models import (
     seat_open,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
-_CSE_URL_MARKER = "claude.ai/cowork/cse_"
+
+def holder_projection_applies(row: dict[str, Any]) -> bool:
+    """Return True when *row* projects a GIW holder row (non-houseless purpose)."""
+    from claude_bundles.what_is_running_view import is_houseless_purpose
+
+    return not is_houseless_purpose(row.get("purpose"))
+
+
+def _project_holder(
+    registration_id: str,
+    *,
+    row: dict[str, Any],
+    chat_url: str,
+    execution_id: str | None,
+) -> str:
+    """Project *registration_id* to GIW when applicable; log non-OK outcomes without raising."""
+    if not holder_projection_applies(row):
+        return "not_applicable"
+    from services.git_integration_worker.cse_session_holders import (
+        RemoteUpsert,
+        upsert_holder_remote,
+    )
+
+    try:
+        upsert_result = upsert_holder_remote(
+            chat_url=chat_url,
+            registration_id=registration_id,
+            execution_id=execution_id,
+        )
+    except Exception:
+        logger.exception(
+            "session_address holder upsert failed registration_id=%s",
+            registration_id,
+        )
+        return RemoteUpsert.UNAVAILABLE.value
+    if not isinstance(upsert_result, RemoteUpsert):
+        logger.warning(
+            "session_address holder upsert unexpected_type registration_id=%s type=%s",
+            registration_id,
+            type(upsert_result).__name__,
+        )
+        return RemoteUpsert.UNAVAILABLE.value
+    if upsert_result is RemoteUpsert.LANE_CONFLICT:
+        logger.warning(
+            "session_address holder upsert lane_conflict registration_id=%s",
+            registration_id,
+        )
+    elif upsert_result is RemoteUpsert.UNAVAILABLE:
+        logger.warning(
+            "session_address holder upsert unavailable registration_id=%s",
+            registration_id,
+        )
+    elif upsert_result is RemoteUpsert.REFUSED:
+        from claude_bundles.holder_strings import holder_id_from_chat_url
+
+        reason = (
+            "invalid_chat_url"
+            if not holder_id_from_chat_url(chat_url)
+            else "houseless_registration"
+        )
+        logger.error(
+            "session_address holder upsert refused registration_id=%s reason=%s",
+            registration_id,
+            reason,
+        )
+    return upsert_result.value
 
 
 def attachment_for_chat_url(chat_url: str) -> Registration | None:
     """Return the sole host-listable row for *chat_url*, or None."""
-    norm = normalize_cse_url(chat_url or "")
+    norm = canonical_claude_seat_url(chat_url) or normalize_cse_url(chat_url or "")
     if not norm:
         return None
     active = _store.load_active()
@@ -71,8 +142,10 @@ def backfill_attachment_from_chat_url(
 ) -> dict[str, Any]:
     """Migration helper: journal ``backfill_url_bound`` without seat changes."""
     url = (chat_url or "").strip()
-    if not url or _CSE_URL_MARKER not in url:
-        return {"dry_run": dry_run, "skipped": "not_cse_url"}
+    parsed = parse_claude_seat_address(url)
+    if parsed is None or parsed.kind not in BINDABLE_SEAT_KINDS:
+        return {"dry_run": dry_run, "skipped": "not_seat_address"}
+    url = parsed.canonical_url
     if dry_run:
         return {"dry_run": True, "would_bind": registration_id, "chat_url": url}
     if has_attachment_observed(registration_id, url):
@@ -150,6 +223,8 @@ def bind_session_address(
     execution_id: str | None = None,
     target_id: str | None = None,
     defer_seat_commit: bool = False,
+    bound_by: str | None = None,
+    attach_proof: str | None = None,
 ) -> bool:
     """Persist CSE ``chat_url`` on the registry row (safety property — arc 6885).
 
@@ -161,8 +236,10 @@ def bind_session_address(
     for ``commit_reattach_driving_seat``.
     """
     url = (chat_url or "").strip()
-    if not url or "/cowork/cse_" not in url:
+    parsed = parse_claude_seat_address(url)
+    if parsed is None or parsed.kind not in BINDABLE_SEAT_KINDS:
         return False
+    url = parsed.canonical_url
     bound_row: dict[str, Any] | None = None
     released_rows: list[dict[str, Any]] = []
     with _store.ports_lock():
@@ -172,33 +249,54 @@ def bind_session_address(
             return False
         updated = dict(row)
         prior = str(updated.get("chat_url") or "").strip()
-        if prior == url and (
+        from claude_bundles.cse_url import claude_seat_identity_key
+
+        prior_key = claude_seat_identity_key(prior)
+        if prior_key == url and (
             execution_id is None
             or str(updated.get("execution_id") or "") == str(execution_id)
         ):
+            if prior != url:
+                updated["chat_url"] = url
+                active[registration_id] = updated
+                _store.write_active(active)
             _append_lane_less_episode(
                 url=url,
                 registration_id=registration_id,
                 updated=updated,
                 execution_id=execution_id,
             )
-            if not defer_seat_commit:
-                from services.git_integration_worker.cse_session_holders import (
-                    RemoteUpsert,
-                    upsert_holder_remote,
+            holder_proj = (
+                "deferred"
+                if defer_seat_commit
+                else (
+                    "applies"
+                    if holder_projection_applies(updated)
+                    else "not_applicable"
                 )
-
-                upsert_result = upsert_holder_remote(
+            )
+            if bound_by is not None:
+                _store.append_log(
+                    "session_address_bound",
+                    {
+                        "registration_id": registration_id,
+                        "chat_url": url,
+                        "execution_id": execution_id,
+                        "target_id": target_id,
+                        "defer_seat_commit": defer_seat_commit,
+                        "bound_by": bound_by,
+                        "attach_proof": attach_proof,
+                        "holder_projection": holder_proj,
+                        "idempotent_repair": True,
+                    },
+                )
+            if not defer_seat_commit:
+                _project_holder(
+                    registration_id,
+                    row=updated,
                     chat_url=url,
-                    registration_id=registration_id,
                     execution_id=execution_id,
                 )
-                if upsert_result is RemoteUpsert.LANE_CONFLICT:
-                    logger.warning(
-                        "bind_session_address holder upsert lane_conflict "
-                        "registration_id=%s",
-                        registration_id,
-                    )
             return True
         if prior and row_execution_in_flight(row):
             # A seat driving a live execution is addressed by that execution's
@@ -239,6 +337,16 @@ def bind_session_address(
                         if r.get("registration_id")
                     ],
                 )
+        written_row = active[registration_id]
+        holder_proj = (
+            "deferred"
+            if defer_seat_commit
+            else (
+                "applies"
+                if holder_projection_applies(written_row)
+                else "not_applicable"
+            )
+        )
         _store.append_log(
             "session_address_bound",
             {
@@ -247,32 +355,26 @@ def bind_session_address(
                 "execution_id": execution_id,
                 "target_id": target_id,
                 "defer_seat_commit": defer_seat_commit,
+                "bound_by": bound_by,
+                "attach_proof": attach_proof,
+                "holder_projection": holder_proj,
             },
         )
         _append_lane_less_episode(
             url=url,
             registration_id=registration_id,
-            updated=active[registration_id],
+            updated=written_row,
             execution_id=execution_id,
         )
     if defer_seat_commit:
         return True
     _emit_seat_axis_events(bound_row, released_rows)
-    from services.git_integration_worker.cse_session_holders import (
-        RemoteUpsert,
-        upsert_holder_remote,
-    )
-
-    upsert_result = upsert_holder_remote(
+    _project_holder(
+        registration_id,
+        row=written_row,
         chat_url=url,
-        registration_id=registration_id,
         execution_id=execution_id,
     )
-    if upsert_result is RemoteUpsert.LANE_CONFLICT:
-        logger.warning(
-            "bind_session_address holder upsert lane_conflict registration_id=%s",
-            registration_id,
-        )
     return True
 
 
@@ -287,7 +389,12 @@ def restore_session_address(
     Does not call ``apply_driving_seat_bind`` or ``upsert_holder_remote``.
     """
     rid = (registration_id or "").strip()
-    expected_norm = normalize_cse_url(expected_chat_url or "")
+    from claude_bundles.cse_url import (
+        canonical_claude_seat_url,
+        claude_seat_identity_key,
+    )
+
+    expected_norm = claude_seat_identity_key(expected_chat_url or "")
     if not rid or not expected_norm:
         return "missing"
     with _store.ports_lock():
@@ -296,7 +403,7 @@ def restore_session_address(
         if not isinstance(row, dict):
             return "missing_row"
         current = str(row.get("chat_url") or "").strip()
-        if normalize_cse_url(current) != expected_norm:
+        if claude_seat_identity_key(current) != expected_norm:
             return "rebound"
         if row_execution_in_flight(row):
             return "in_flight"
@@ -305,7 +412,7 @@ def restore_session_address(
         if not isinstance(row, dict):
             return "missing_row"
         current = str(row.get("chat_url") or "").strip()
-        if normalize_cse_url(current) != expected_norm:
+        if claude_seat_identity_key(current) != expected_norm:
             return "rebound"
         updated = dict(row)
         target_restore = (restore_to or "").strip() or None
@@ -315,7 +422,11 @@ def restore_session_address(
             except ProtocolError:
                 target_restore = None
         if target_restore:
-            updated["chat_url"] = target_restore
+            stored_restore = (
+                canonical_claude_seat_url(target_restore)
+                or normalize_cse_url(target_restore)
+            )
+            updated["chat_url"] = stored_restore
             updated["chat_url_bound_at"] = time.time()
         else:
             updated.pop("chat_url", None)
@@ -643,29 +754,12 @@ def commit_reattach_driving_seat(
             ],
         )
     _emit_seat_axis_events(bound_row, released_rows)
-    from services.git_integration_worker.cse_session_holders import (
-        RemoteUpsert,
-        upsert_holder_remote,
+    _project_holder(
+        rid,
+        row=bound_row,
+        chat_url=url,
+        execution_id=execution_id,
     )
-
-    try:
-        upsert_result = upsert_holder_remote(
-            chat_url=url,
-            registration_id=rid,
-            execution_id=execution_id,
-        )
-    except Exception:
-        logger.exception(
-            "commit_reattach_driving_seat holder upsert failed registration_id=%s",
-            rid,
-        )
-    else:
-        if upsert_result is RemoteUpsert.LANE_CONFLICT:
-            logger.warning(
-                "commit_reattach_driving_seat holder upsert lane_conflict "
-                "registration_id=%s",
-                rid,
-            )
     return "committed"
 
 
@@ -726,29 +820,12 @@ def commit_followup_lane_seat(
             ],
         )
     _emit_seat_axis_events(bound_row, released_rows)
-    from services.git_integration_worker.cse_session_holders import (
-        RemoteUpsert,
-        upsert_holder_remote,
+    _project_holder(
+        rid,
+        row=bound_row,
+        chat_url=url,
+        execution_id=execution_id,
     )
-
-    try:
-        upsert_result = upsert_holder_remote(
-            chat_url=url,
-            registration_id=rid,
-            execution_id=execution_id,
-        )
-    except Exception:
-        logger.exception(
-            "commit_followup_lane_seat holder upsert failed registration_id=%s",
-            rid,
-        )
-    else:
-        if upsert_result is RemoteUpsert.LANE_CONFLICT:
-            logger.warning(
-                "commit_followup_lane_seat holder upsert lane_conflict "
-                "registration_id=%s",
-                rid,
-            )
     return "committed"
 
 
@@ -1067,7 +1144,7 @@ def backfill_orphaned_retry_chat_urls(
     """Classify + optionally bind ``chat_url`` for ``orphaned_retry`` rows.
 
     Verdict classes (arc 6885 / census 6893):
-    - ``scrape_bound`` / ``scrape_recoverable``: live ``/cowork/cse_`` on port
+    - ``scrape_bound`` / ``scrape_recoverable``: live unified chat or Cowork session URL on port
     - ``already_bound``: row already carries chat_url
     - ``irreversible_no_url``: Chrome alive or not, no CSE URL on port and none
       recorded — genuine irreversible population unless URL found elsewhere
@@ -1089,14 +1166,19 @@ def backfill_orphaned_retry_chat_urls(
             "prior_chat_url": row.get("chat_url"),
         }
         prior = str(row.get("chat_url") or "").strip()
-        if prior and _CSE_URL_MARKER in prior:
+        if prior and is_bindable_claude_seat_url(prior):
             classes["already_bound"].append(entry)
             continue
         port = row.get("port")
         urls: list[str] = []
         if isinstance(port, int):
             with contextlib.suppress(Exception):
-                urls = [u for u in probe(port) if _CSE_URL_MARKER in str(u)]
+                scraped: list[str] = []
+                for u in probe(port):
+                    canon = canonical_claude_seat_url(str(u))
+                    if canon:
+                        scraped.append(canon)
+                urls = scraped
         if urls:
             entry["scraped_chat_url"] = urls[0]
             if dry_run:

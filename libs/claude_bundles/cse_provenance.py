@@ -22,7 +22,7 @@ from typing import Any, Protocol
 
 from claude_bundles import cdp_registry_store as store
 from claude_bundles import cse_provenance_index as _index
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
 
 HostListablePredicate = Callable[[str], bool]
 
@@ -144,11 +144,9 @@ def append_episode(
     journal (a:36945); a real change — host, lane, state, lineage, correlation,
     reason — still appends with ``supersedes`` pointing at the latest row.
     """
-    normalized = normalize_cse_url(chat_url)
-    if not normalized:
-        raise ValueError("chat_url must be a CSE URL")
-    if "/cowork/cse_" not in normalized:
-        raise ValueError("chat_url must identify a Cowork CSE")
+    canonical = canonical_claude_seat_url(chat_url)
+    if not canonical:
+        raise ValueError("chat_url must be a bindable Claude seat address")
     if lineage_state is None:
         lineage_state = "claimed" if lane_thread else "unresolved"
     if lineage_state == "proven":
@@ -156,10 +154,10 @@ def append_episode(
             raise ValueError("proven episodes require association_id")
     elif association_id is not None:
         raise ValueError("association_id requires lineage_state=proven")
-    superseded = latest_episode(chat_url=normalized)
+    superseded = latest_episode(chat_url=canonical)
     episode = ProvenanceEpisode(
         episode_id=uuid.uuid4().hex,
-        chat_url=normalized,
+        chat_url=canonical,
         registration_id=registration_id,
         cdp_url=cdp_url,
         lane_thread=lane_thread,
@@ -204,17 +202,37 @@ def append_episode(
         cdp_registry_events.emit(
             cdp_registry_events.cdp_provenance_historical(
                 episode_id=superseded.episode_id,
-                chat_url=normalized,
+                chat_url=canonical,
                 reason="rebound_to_new_host",
             )
         )
     if not lane_thread and lineage_state == "unresolved":
-        _emit_unresolved(normalized, reason or "lane_less_bind", correlation_id)
+        _emit_unresolved(canonical, reason or "lane_less_bind", correlation_id)
     return episode
 
 
 def _episode(record: dict[str, Any]) -> ProvenanceEpisode:
     return ProvenanceEpisode(**_legacy_episode_fields(record))
+
+
+def _chat_url_lookup_keys(chat_url: str) -> list[str]:
+    canonical = canonical_claude_seat_url(chat_url)
+    legacy = normalize_cse_url(chat_url)
+    keys: list[str] = []
+
+    def _add(key: str) -> None:
+        if key and key not in keys:
+            keys.append(key)
+
+    if canonical:
+        _add(canonical)
+    _add(legacy)
+    if canonical:
+        if canonical.endswith("/"):
+            _add(canonical.rstrip("/"))
+        else:
+            _add(f"{canonical}/")
+    return keys
 
 
 def episodes_for_chat_url(chat_url: str) -> list[ProvenanceEpisode]:
@@ -223,7 +241,16 @@ def episodes_for_chat_url(chat_url: str) -> list[ProvenanceEpisode]:
     Reads only that URL's rows through the keyed index; earlier hosts for a
     rebound URL stay in the list because episodes are never erased.
     """
-    return [_episode(row) for row in _index.episode_rows("chat_url", chat_url)]
+    out: list[ProvenanceEpisode] = []
+    seen: set[str] = set()
+    for key in _chat_url_lookup_keys(chat_url):
+        for row in _index.episode_rows("chat_url", key):
+            eid = str(row.get("episode_id") or row.get("event_id") or id(row))
+            if eid in seen:
+                continue
+            seen.add(eid)
+            out.append(_episode(row))
+    return out
 
 
 def episodes_for_registration(registration_id: str) -> list[ProvenanceEpisode]:
@@ -248,9 +275,12 @@ def latest_episode(
     ``registration_id``, then ``correlation_id`` — the same order the resolve
     and enrich callers apply. Parses at most one journal row.
     """
-    target = normalize_cse_url(chat_url or "")
-    if target:
-        row = _index.latest_episode_row("chat_url", target)
+    row = None
+    if chat_url:
+        for key in _chat_url_lookup_keys(chat_url):
+            row = _index.latest_episode_row("chat_url", key)
+            if row is not None:
+                break
     elif registration_id:
         row = _index.latest_episode_row("registration_id", registration_id)
     elif correlation_id:

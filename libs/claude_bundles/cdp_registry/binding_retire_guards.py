@@ -6,7 +6,7 @@ from typing import Any
 
 from claude_bundles import cdp_registry_store as store
 from claude_bundles.cse_provenance_retire import open_binding_holder_registration
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import claude_seat_identity_key
 
 from .binding_retire_models import refuse_retire
 from .binding_retire_resolve import fleet_row, local_row
@@ -50,7 +50,7 @@ def require_url_holder(
     chat_url: str,
 ) -> None:
     """Refuse when the URL's open holder registration differs from ``registration_id``."""
-    target = normalize_cse_url(chat_url)
+    target = claude_seat_identity_key(chat_url)
     holder = open_binding_holder_registration(target)
     if holder is not None and holder != registration_id:
         refuse_retire(

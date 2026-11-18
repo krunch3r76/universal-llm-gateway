@@ -150,7 +150,7 @@ async def attach_reopened_tab(
     ``registration_id`` on the outcome is the tab row, so resume does not
     transfer the execution onto the host. A session-id mismatch is a failure.
     """
-    from cdp_ask.execution_resume import _cse_id
+    from cdp_ask.execution_resume import _seat_identities_match
 
     rid = str(record.registration_id or "")
     chat_url = str(row.get("chat_url") or "")
@@ -188,7 +188,9 @@ async def attach_reopened_tab(
         await asyncio.to_thread(mark_tab_reopen_failed, rid)
         return ReattachOutcome(ok=False, error="tab_reopen_failed", registration_id=rid)
     page, pw = selected
-    if _cse_id(str(getattr(page, "url", "") or "")) != _cse_id(chat_url):
+    if not _seat_identities_match(
+        chat_url, str(getattr(page, "url", "") or "")
+    ):
         await _teardown_attempt(page, pw, close_page=True)
         await asyncio.to_thread(mark_tab_reopen_failed, rid)
         return ReattachOutcome(ok=False, error="tab_reopen_failed", registration_id=rid)

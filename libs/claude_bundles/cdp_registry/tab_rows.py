@@ -142,9 +142,9 @@ def live_tab_rows_for_host(
 def inflight_row_for_chat_url(chat_url: str) -> dict[str, Any] | None:
     """Return the in-flight host row for this URL, else an in-flight tab row."""
     from claude_bundles.cdp_registry.execution_state import row_execution_in_flight
-    from claude_bundles.cse_url import normalize_cse_url
+    from claude_bundles.cse_url import claude_seat_identity_key
 
-    target = normalize_cse_url(chat_url or "")
+    target = claude_seat_identity_key(chat_url or "")
     if not target:
         return None
     from .session_address import attachment_for_chat_url
@@ -159,7 +159,7 @@ def inflight_row_for_chat_url(chat_url: str) -> dict[str, Any] | None:
     for row in active.values():
         if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
             continue
-        if normalize_cse_url(str(row.get("chat_url") or "")) != target:
+        if claude_seat_identity_key(str(row.get("chat_url") or "")) != target:
             continue
         if row_execution_in_flight(row):
             return row

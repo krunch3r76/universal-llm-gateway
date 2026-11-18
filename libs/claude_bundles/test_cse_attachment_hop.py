@@ -133,20 +133,20 @@ def test_ac3_ac4_streaming_latch(
 
     import asyncio
 
-    asyncio.get_event_loop().run_until_complete(_run({"url": _CSE, "streaming": False}))
+    asyncio.run(_run({"url": _CSE, "streaming": False}))
     assert (
         not (isolated_registry / "registry.jsonl").exists()
         or "attachment_observed"
         not in (isolated_registry / "registry.jsonl").read_text()
     )
 
-    asyncio.get_event_loop().run_until_complete(_run({"url": _CSE, "streaming": True}))
+    asyncio.run(_run({"url": _CSE, "streaming": True}))
     log = (isolated_registry / "registry.jsonl").read_text()
     assert log.count("attachment_observed") == 1
     active = reg._load_active()[rid]
     assert active.get("attached_at")
 
-    asyncio.get_event_loop().run_until_complete(_run({"url": _CSE, "streaming": True}))
+    asyncio.run(_run({"url": _CSE, "streaming": True}))
     assert (isolated_registry / "registry.jsonl").read_text().count(
         "attachment_observed"
     ) == 1
@@ -169,7 +169,7 @@ def test_ac5_observation_survives_non_authority(
 
     import asyncio
 
-    asyncio.get_event_loop().run_until_complete(_run({"url": _CSE, "streaming": True}))
+    asyncio.run(_run({"url": _CSE, "streaming": True}))
     active = reg._load_active()[rid]
     assert active.get("chat_url")
     assert not active.get("attached_at")
@@ -187,9 +187,11 @@ def test_fold_replay_skips_u_scan_on_historical_attachment_observed(
     from cdp_ask.runner import _latch_streaming_attachment
 
     monkeypatch.setattr(reg, "_kill_listener", lambda _p: None)
+    from services.git_integration_worker.cse_session_holders import RemoteUpsert
+
     monkeypatch.setattr(
         "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
-        lambda **_k: None,
+        lambda **_k: RemoteUpsert.OK,
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cse_session_holders.release_holder_remote",

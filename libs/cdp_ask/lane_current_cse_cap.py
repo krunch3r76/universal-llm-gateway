@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from claude_bundles.cse_idle_probe import in_flight_from_state
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import claude_seat_identity_key
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
 PageProbe = Callable[[int, str], tuple[dict[str, Any] | None, bool]]
@@ -92,7 +92,7 @@ def _holder_view(
         url = str(raw).strip() if raw else None
     if not reg_id and not url:
         return None
-    return {"registration_id": reg_id, "chat_url": normalize_cse_url(url or "") or url}
+    return {"registration_id": reg_id, "chat_url": claude_seat_identity_key(url or "") or url}
 
 
 def _wire_bytes(b: dict[str, Any]) -> int:
@@ -234,7 +234,7 @@ def select_lane_current(
         if page.get("evidence_class") == "live_binding":
             return "current", "in_flight", None, page
         return "ambiguous", None, "stored_association_streaming", None
-    holder_key = normalize_cse_url(holder_url or "")
+    holder_key = claude_seat_identity_key(holder_url or "")
     if any(
         "registry_row" in (page.get("claims") or [])
         and page.get("chat_url") != holder_key
@@ -295,7 +295,7 @@ def index_operator_registrations(
             if not _is_operator_purpose(purpose):
                 continue
             raw_url = chat_url_for_registration(rid)
-            key = normalize_cse_url(str(raw_url or ""))
+            key = claude_seat_identity_key(str(raw_url or ""))
         except Exception:
             continue
         live_lane_seat = getattr(reg, "seat_closed_at", None) is None and (

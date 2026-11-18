@@ -55,6 +55,13 @@ def test_code_surface_error_in_failed_snapshot_is_verifiable_death() -> None:
     assert fields["retain_reason"] is None
 
 
+def test_unified_chat_counts_as_session_url() -> None:
+    chat = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
+    assert is_unverifiable_stall("observer_unverified", None, url=chat) is True
+    fields = transport_miss_fields("timeout", chat)
+    assert fields["extras"].get("chat_url") == chat
+
+
 def test_compose_surface_stall_not_unverifiable_on_cowork_cse_url() -> None:
     err = "code_surface_not_on_code_page"
     assert converse_stall_stage(err, conv_ok=False) == "compose_surface"

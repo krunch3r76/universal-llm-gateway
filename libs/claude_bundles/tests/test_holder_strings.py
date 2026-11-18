@@ -19,6 +19,21 @@ def test_holder_id_from_chat_url() -> None:
     assert holder_id_from_chat_url(_CSE_URL) == _HID
 
 
+_CHAT_UUID = "2762063d-2966-4859-a3ce-23831c6e0c86"
+_CHAT_URL = f"https://claude.ai/chat/{_CHAT_UUID}"
+
+
+def test_chat_holder_id() -> None:
+    assert holder_id_from_chat_url(_CHAT_URL) == f"chat_{_CHAT_UUID}"
+
+
+def test_formatters_refuse_chat_holder() -> None:
+    with pytest.raises(ValueError, match="cse_"):
+        format_cowork_cse_holder(f"chat_{_CHAT_UUID}")
+    with pytest.raises(ValueError, match="cse_"):
+        format_nest_under_cse(f"chat_{_CHAT_UUID}")
+
+
 def test_cowork_cse_round_trip() -> None:
     raw = format_cowork_cse_holder(_HID)
     assert raw == "cowork_cse:cse_abc123"

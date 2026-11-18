@@ -9,6 +9,11 @@ from __future__ import annotations
 import ast
 from typing import Any
 
+from claude_bundles.cse_url import (
+    canonical_claude_seat_url,
+    is_bindable_claude_seat_url,
+)
+
 from cdp_ask.models import StallStage, classify_stall_stage
 
 WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED = "wall_clock_exceeded_abort_unconfirmed"
@@ -36,8 +41,6 @@ DEATH_STALL_STAGES = frozenset(
         "wall_clock_exceeded",
     }
 )
-
-_CSE_URL_MARKER = "claude.ai/cowork/cse_"
 
 # Playwright / CDP wording when the Chrome host went away under a live turn
 # (a:36969: compositor Wayland reset → TargetClosedError in harvest). The
@@ -111,7 +114,7 @@ def is_unverifiable_stall(
 ) -> bool:
     """True when a failed snapshot is observer-unverifiable, not CSE death.
 
-    Requires compose witness (``cse_`` in *url*) after death-stage/token gates.
+    Requires a bindable Claude seat URL (``is_bindable_claude_seat_url``) after death-stage/token gates.
     Explicit ``satellite_execution_id=None`` means pre-submit death (``cdp FAILED``).
     """
     stage = (stall_stage or "").strip()
@@ -124,7 +127,7 @@ def is_unverifiable_stall(
         return False
     if satellite_execution_id is not _UNSET and satellite_execution_id is None:
         return False
-    return _CSE_URL_MARKER in str(url or "")
+    return is_bindable_claude_seat_url(str(url or ""))
 
 
 def converse_fail_error(last_error: str | None) -> str:
@@ -157,8 +160,10 @@ def transport_miss_fields(
     )
     extras: dict[str, Any] = {}
     raw = str(url or "").strip()
-    if raw and _CSE_URL_MARKER in raw:
-        extras["chat_url"] = raw
+    if raw:
+        canon = canonical_claude_seat_url(raw) or raw
+        if is_bindable_claude_seat_url(canon):
+            extras["chat_url"] = canon
     return {
         "stall_stage": "observer_unverified",
         "error": str(error or ""),
@@ -240,8 +245,10 @@ def failed_snapshot_fields(snapshot: dict[str, Any]) -> dict[str, Any]:
             stall = "observer_unverified"
     extras: dict[str, Any] = {}
     raw = str(url or "").strip()
-    if raw and _CSE_URL_MARKER in raw:
-        extras["chat_url"] = raw
+    if raw:
+        canon = canonical_claude_seat_url(raw) or raw
+        if is_bindable_claude_seat_url(canon):
+            extras["chat_url"] = canon
     return {
         "stall_stage": stall,
         "error": error,

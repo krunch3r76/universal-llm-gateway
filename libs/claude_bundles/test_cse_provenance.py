@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+from universal_protocol.errors import ProtocolError
+
 from claude_bundles import cdp_registry_events, cse_provenance
 
 
@@ -602,3 +605,190 @@ def test_resolver_emits_unresolved_when_lane_thread_missing(
     unresolved = [s for s in signals if s[0] == "cdp.provenance.unresolved"]
     assert len(unresolved) == 2
     assert unresolved[-1][1]["reason"] == "lane_lineage_missing"
+
+
+_CHAT_UUID = "2762063d-2966-4859-a3ce-23831c6e0c86"
+_UNIFIED_CHAT = f"https://claude.ai/chat/{_CHAT_UUID}"
+
+
+def test_episode_unified_chat(monkeypatch, tmp_path: Path) -> None:
+    """Unified chat episodes store the lower-case canonical URL (D9)."""
+    _isolate(monkeypatch, tmp_path)
+    episode = cse_provenance.append_episode(
+        chat_url=f"https://claude.ai/chat/{_CHAT_UUID.upper()}",
+        registration_id="reg-unified-ep",
+        cdp_url="http://127.0.0.1:9223",
+    )
+    assert episode.chat_url == _UNIFIED_CHAT
+    assert (
+        cse_provenance.latest_episode(
+            chat_url=f"https://www.claude.ai/chat/{_CHAT_UUID}"
+        )
+        == episode
+    )
+
+
+def test_episode_refuses_non_bindable(monkeypatch, tmp_path: Path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    with pytest.raises(ValueError, match="bindable Claude seat address"):
+        cse_provenance.append_episode(
+            chat_url="https://claude.ai/code/session_abc",
+            registration_id="reg-code",
+            cdp_url="http://127.0.0.1:9223",
+        )
+    with pytest.raises(ValueError, match="bindable Claude seat address"):
+        cse_provenance.append_episode(
+            chat_url=f"https://evil.example/chat/{_CHAT_UUID}",
+            registration_id="reg-evil",
+            cdp_url="http://127.0.0.1:9224",
+        )
+    with pytest.raises(ValueError, match="bindable Claude seat address"):
+        cse_provenance.append_episode(
+            chat_url="junk",
+            registration_id="reg-junk",
+            cdp_url="http://127.0.0.1:9225",
+        )
+
+
+def test_episode_legacy_cowork_key_readable(monkeypatch, tmp_path: Path) -> None:
+    """Episodes keyed under www host remain readable via canonical lookup."""
+    from claude_bundles import cse_provenance_index as prov_index
+
+    _isolate(monkeypatch, tmp_path)
+    prov_index.remove_index()
+    legacy = "https://claude.ai/cowork/cse_legacykey/"
+    canonical = "https://claude.ai/cowork/cse_legacykey"
+    cse_provenance.store.append_log(
+        prov_index.EPISODE_EVENT,
+        {
+            "episode_id": "legacy-unified-key",
+            "chat_url": legacy,
+            "registration_id": "reg-legacy-key",
+            "cdp_url": "http://127.0.0.1:9223",
+            "lane_thread": None,
+            "parent_thread": None,
+            "lane_role": None,
+            "lineage_state": "unresolved",
+            "state": "bound",
+            "evidence_class": "observed",
+            "attribution_source": "cdp-registry",
+            "correlation_id": None,
+            "observed_at": 1.0,
+            "supersedes": None,
+        },
+    )
+    episode = cse_provenance.latest_episode(chat_url=canonical)
+    assert episode is not None
+    assert episode.chat_url == legacy
+
+
+def test_bind_unified_chat_conflict_same_uuid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles import cdp_registry as reg
+    from services.git_integration_worker.cse_session_holders import RemoteUpsert
+
+    root = tmp_path / "cdp-registry"
+    root.mkdir()
+    regs = root / "registrations"
+    regs.mkdir()
+    monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "1")
+    for name, value in {
+        "REGISTRY_DIR": root,
+        "REGISTRY_LOG": root / "registry.jsonl",
+        "ACTIVE_JSON": root / "active.json",
+        "PORTS_LOCK": root / "ports.lock",
+        "REGISTRATIONS_DIR": regs,
+    }.items():
+        monkeypatch.setattr(reg._store, name, value)
+        monkeypatch.setattr(cse_provenance.store, name, value)
+    monkeypatch.setattr(reg, "PORT_RANGE", range(9223, 9230))
+    monkeypatch.setattr(reg._store, "is_seat_authority", lambda: True)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
+        lambda **_kw: RemoteUpsert.OK,
+    )
+    first = reg.register_lane(
+        holder="a",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread="12564",
+        launch_chrome=lambda port, profile: 1,
+        is_listening=lambda _p: False,
+    )
+    second = reg.register_lane(
+        holder="b",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread="12564",
+        launch_chrome=lambda port, profile: 1,
+        is_listening=lambda _p: False,
+    )
+    assert reg.bind_session_address(first.registration_id, chat_url=_UNIFIED_CHAT)
+    with pytest.raises(ProtocolError) as exc:
+        reg.bind_session_address(second.registration_id, chat_url=_UNIFIED_CHAT)
+    assert exc.value.code == "attachment.conflict"
+
+
+def test_attachment_conflict_canonical_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles import cdp_registry as reg
+    from services.git_integration_worker.cse_session_holders import RemoteUpsert
+
+    root = tmp_path / "cdp-registry-canon"
+    root.mkdir()
+    regs = root / "registrations"
+    regs.mkdir()
+    monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "1")
+    for name, value in {
+        "REGISTRY_DIR": root,
+        "REGISTRY_LOG": root / "registry.jsonl",
+        "ACTIVE_JSON": root / "active.json",
+        "PORTS_LOCK": root / "ports.lock",
+        "REGISTRATIONS_DIR": regs,
+    }.items():
+        monkeypatch.setattr(reg._store, name, value)
+        monkeypatch.setattr(cse_provenance.store, name, value)
+    monkeypatch.setattr(reg._store, "is_seat_authority", lambda: True)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
+        lambda **_kw: RemoteUpsert.OK,
+    )
+    reg._store.write_active(
+        {
+            "reg-a": {
+                "registration_id": "reg-a",
+                "port": 9223,
+                "status": "active",
+                "chat_url": "https://www.claude.ai/cowork/cse_canon_key",
+            },
+            "reg-b": {
+                "registration_id": "reg-b",
+                "port": 9224,
+                "status": "active",
+                "chat_url": "",
+            },
+            "reg-c": {
+                "registration_id": "reg-c",
+                "port": 9225,
+                "status": "active",
+                "chat_url": f"https://claude.ai/chat/{_CHAT_UUID.upper()}",
+            },
+            "reg-d": {
+                "registration_id": "reg-d",
+                "port": 9226,
+                "status": "active",
+                "chat_url": "",
+            },
+        }
+    )
+    with pytest.raises(ProtocolError) as exc_cowork:
+        reg.bind_session_address(
+            "reg-b", chat_url="https://claude.ai/cowork/cse_canon_key"
+        )
+    assert exc_cowork.value.code == "attachment.conflict"
+
+    with pytest.raises(ProtocolError) as exc_chat:
+        reg.bind_session_address("reg-d", chat_url=_UNIFIED_CHAT)
+    assert exc_chat.value.code == "attachment.conflict"

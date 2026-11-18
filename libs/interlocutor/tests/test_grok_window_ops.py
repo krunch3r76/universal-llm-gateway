@@ -6,9 +6,26 @@ from unittest.mock import patch
 
 import pytest
 from interlocutor.facade import execute_list, execute_retire, execute_spawn
-from interlocutor.targets import resolve_grok_window_target, resolve_target
+from interlocutor.targets import (
+    CoworkUrlTarget,
+    resolve_grok_window_target,
+    resolve_target,
+)
 
 pytestmark = pytest.mark.offline
+
+
+def test_resolve_www_unified_chat_seat_url() -> None:
+    url = (
+        "https://www.claude.ai/chat/"
+        "2762063d-2966-4859-a3ce-23831c6e0c86"
+    )
+    resolved = resolve_target(url)
+    assert isinstance(resolved, CoworkUrlTarget)
+    assert resolved.url == (
+        "https://claude.ai/chat/"
+        "2762063d-2966-4859-a3ce-23831c6e0c86"
+    )
 
 
 def test_resolve_bare_display_9() -> None:

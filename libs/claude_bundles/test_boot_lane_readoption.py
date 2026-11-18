@@ -15,7 +15,7 @@ from claude_bundles.boot_lane_readoption import (
     rehearsal_boot_readoption_plan,
 )
 from claude_bundles.cdp_lane import profile_for
-from claude_bundles.cdp_orphans import LivePort
+from claude_bundles.cdp_orphans import LivePort, live_port_from_listing
 
 
 def _row(
@@ -273,6 +273,135 @@ def test_rehearsal_does_not_mutate_registry(
     plan = rehearsal_boot_readoption_plan(assume_empty_store=True)
     assert len(plan.would_adopt) == 1
     assert writes == []
+
+
+def test_unified_seat_adopted_active_unmocked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Blank-purpose unified seat adopts active via real listing + boot readoption."""
+    from claude_bundles import cdp_registry_store as store
+
+    root = tmp_path / "cdp-registry"
+    root.mkdir()
+    regs = root / "registrations"
+    regs.mkdir()
+    for name, value in {
+        "REGISTRY_DIR": root,
+        "REGISTRY_LOG": root / "registry.jsonl",
+        "ACTIVE_JSON": root / "active.json",
+        "PORTS_LOCK": root / "ports.lock",
+        "REGISTRATIONS_DIR": regs,
+    }.items():
+        monkeypatch.setattr(store, name, value)
+
+    uuid = "2762063d-2966-4859-a3ce-23831c6e0c86"
+    unified = f"https://claude.ai/chat/{uuid}"
+    www_upper = f"https://www.claude.ai/chat/{uuid.upper()}"
+    profile_1 = profile_for("reg-abc12345")
+    profile_2 = profile_for("reg-def67890")
+    store.write_active(
+        {
+            "unified-rid": {
+                "registration_id": "unified-rid",
+                "status": "active",
+                "port": 9246,
+                "profile_suffix": "reg-abc12345",
+                "profile": str(profile_1),
+                "chat_url": unified,
+                "purpose": "",
+            },
+            "new-only-rid": {
+                "registration_id": "new-only-rid",
+                "status": "active",
+                "port": 9247,
+                "profile_suffix": "reg-def67890",
+                "profile": str(profile_2),
+                "chat_url": unified,
+                "purpose": "",
+            },
+        }
+    )
+
+    live_match = live_port_from_listing(
+        9246,
+        [{"type": "page", "url": www_upper}],
+        profile=profile_1,
+    )
+    live_new_only = live_port_from_listing(
+        9247,
+        [{"type": "page", "url": "https://claude.ai/new"}],
+        profile=profile_2,
+    )
+    plan = plan_boot_lane_readoption(
+        store.load_active(),
+        [live_match, live_new_only],
+        running_registration_ids=frozenset(),
+        wake_debt=frozenset(),
+        is_listening=lambda p: p in {9246, 9247},
+    )
+    by_rid = {str(item["registration_id"]): item for item in plan.would_adopt}
+    assert by_rid["unified-rid"]["cse_affinity"] == "bound_present"
+    assert by_rid["new-only-rid"]["cse_affinity"] == "none"
+
+    adopted, orphaned = apply_boot_readoption_plan(plan)
+    assert set(adopted) == {"unified-rid", "new-only-rid"}
+    assert orphaned == []
+    reloaded = store.load_active()
+    assert reloaded["unified-rid"]["status"] == "active"
+    assert reloaded["new-only-rid"]["status"] != "active"
+    assert reloaded["new-only-rid"]["status"] == ADOPT_STATUS
+
+
+def test_houseless_unified_seat_adopts_retained(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D11 qualification: houseless unified seats adopt as retained, not active."""
+    from claude_bundles import cdp_registry_store as store
+
+    root = tmp_path / "cdp-registry-hl"
+    root.mkdir()
+    regs = root / "registrations"
+    regs.mkdir()
+    for name, value in {
+        "REGISTRY_DIR": root,
+        "REGISTRY_LOG": root / "registry.jsonl",
+        "ACTIVE_JSON": root / "active.json",
+        "PORTS_LOCK": root / "ports.lock",
+        "REGISTRATIONS_DIR": regs,
+    }.items():
+        monkeypatch.setattr(store, name, value)
+
+    uuid = "2762063d-2966-4859-a3ce-23831c6e0c86"
+    unified = f"https://claude.ai/chat/{uuid}"
+    profile = profile_for("reg-hl123456")
+    store.write_active(
+        {
+            "houseless-rid": {
+                "registration_id": "houseless-rid",
+                "status": "active",
+                "port": 9248,
+                "profile_suffix": "reg-hl123456",
+                "profile": str(profile),
+                "chat_url": unified,
+                "purpose": "houseless",
+            }
+        }
+    )
+    live = live_port_from_listing(
+        9248,
+        [{"type": "page", "url": f"https://www.claude.ai/chat/{uuid.upper()}"}],
+        profile=profile,
+    )
+    plan = plan_boot_lane_readoption(
+        store.load_active(),
+        [live],
+        running_registration_ids=frozenset(),
+        wake_debt=frozenset(),
+        is_listening=lambda p: p == 9248,
+    )
+    assert plan.would_adopt[0]["cse_affinity"] == "bound_present"
+    apply_boot_readoption_plan(plan)
+    assert store.load_active()["houseless-rid"]["status"] == ADOPT_STATUS
 
 
 def test_thin_execution_record_not_created_by_apply(

@@ -28,6 +28,17 @@ def test_persist_session_address_skips_new(monkeypatch: pytest.MonkeyPatch) -> N
     assert binds == ["https://claude.ai/cowork/cse_abc"]
 
 
+def test_persist_unified_chat_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    binds: list[str] = []
+    monkeypatch.setattr(
+        "cdp_ask.runner.cdp_registry.bind_session_address",
+        lambda _rid, chat_url, execution_id=None: binds.append(chat_url) or True,
+    )
+    chat = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
+    _persist_session_address("reg-1", chat, execution_id="e1")
+    assert binds == [chat]
+
+
 def _fail_result(*, url: str, error: str) -> ProjectAskResult:
     return ProjectAskResult(
         ok=False,

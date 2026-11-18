@@ -61,7 +61,7 @@ def host_accepts_borrow_bind(
     a shared Chrome. Read *active* under the ports lock; this function does
     not take it.
     """
-    from claude_bundles.cse_url import normalize_cse_url
+    from claude_bundles.cse_url import claude_seat_identity_key
 
     from .tab_rows import tab_rows_for_host
 
@@ -70,12 +70,12 @@ def host_accepts_borrow_bind(
         return True
     if str(row.get("purpose") or "").strip() == "tab_host":
         return False
-    target = normalize_cse_url(chat_url or "")
+    target = claude_seat_identity_key(chat_url or "")
     for tab in tab_rows_for_host(active, host_id):
         tid = str(tab.get("target_id") or "").strip()
         if not tid:
             continue
-        if normalize_cse_url(str(tab.get("chat_url") or "")) == target:
+        if claude_seat_identity_key(str(tab.get("chat_url") or "")) == target:
             return False
     return True
 

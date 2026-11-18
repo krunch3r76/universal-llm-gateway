@@ -45,6 +45,16 @@ def _suppress_orphan_scan_log(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cdp_orphans.cdp_registry, "log_orphan_scan", lambda _scan: None)
 
 
+def test_unique_cse_urls_dedupes_www_spelling() -> None:
+    urls = (
+        "https://www.claude.ai/cowork/cse_canonkey",
+        "https://claude.ai/cowork/cse_canonkey",
+    )
+    assert cdp_orphans._unique_cse_urls(urls) == (
+        "https://claude.ai/cowork/cse_canonkey",
+    )
+
+
 def _patch_proc_cmdline(
     monkeypatch: pytest.MonkeyPatch, pid: int, cmdline: bytes
 ) -> None:

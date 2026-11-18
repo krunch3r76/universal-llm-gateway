@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url, normalize_cse_url
 
 from services.git_integration_worker.cse_session_holders import (
     boot_reconcile,
@@ -28,10 +28,35 @@ from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatc
 _CSE_URL = "https://claude.ai/cowork/cse_testholder1"
 
 
+@pytest.fixture(autouse=True)
+def _redirect_background_uds_publishers(
+    _events_sink_default_off_live: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    for mod_name in (
+        "agent_bus_store.events.publisher",
+        "libs.agent_bus_store.events.publisher",
+        "cortex_store.event_publisher",
+        "libs.cortex_store.event_publisher",
+        "mcp_events",
+    ):
+        mod = sys.modules.get(mod_name)
+        pub = getattr(mod, "_publisher", None) if mod is not None else None
+        if pub is not None and hasattr(pub, "_sock_path"):
+            monkeypatch.setattr(pub, "_sock_path", _events_sink_default_off_live)
+    from services.git_integration_worker.tests.events_sink_hermetic import (
+        live_connect_attempts,
+    )
+
+    live_connect_attempts.clear()
+
+
 @pytest.fixture()
 def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CursorDispatchLedger:
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    CursorDispatchLedger._instance = None
+    monkeypatch.setattr(CursorDispatchLedger, "_instance", None)
     return CursorDispatchLedger.instance()
 
 
@@ -196,7 +221,7 @@ def test_ledger_init_survives_boot_reconcile_registry_error(
     from claude_bundles.cdp_registry_store import RegistryStoreError
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    CursorDispatchLedger._instance = None
+    monkeypatch.setattr(CursorDispatchLedger, "_instance", None)
     with patch(
         "claude_bundles.cdp_registry.session_address.list_active",
         side_effect=RegistryStoreError("corrupt test registry"),
@@ -423,6 +448,10 @@ def test_close_owed_wake_on_lane_activity_closes_open_row(
 def test_upsert_holder_refuses_houseless_registry_row(
     ledger: CursorDispatchLedger, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from services.git_integration_worker.cse_session_holders import (
+        HolderProjectionRefusedError,
+    )
+
     reg = "583b411df34247f9a48bc044b6518be3"
     url = "https://claude.ai/cowork/cse_01HouselessMailbox"
     monkeypatch.setattr(
@@ -431,8 +460,10 @@ def test_upsert_holder_refuses_houseless_registry_row(
     )
     with ledger._connect() as conn:
         ensure_schema(conn)
-        with pytest.raises(ValueError, match="houseless"):
+        with pytest.raises(HolderProjectionRefusedError, match="houseless") as exc_info:
             upsert_holder(conn, chat_url=url, registration_id=reg)
+    assert exc_info.value.reason == "houseless_registration"
+    assert exc_info.value.registration_id == reg
 
 
 def test_boot_reconcile_skips_houseless_registry_adopt(
@@ -476,3 +507,67 @@ def test_boot_reconcile_skips_houseless_registry_adopt(
             summary = boot_reconcile(conn)
     assert summary["adopted"] == 0
     assert adopt_calls == []
+
+
+_CHAT = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
+_CHAT_WWW = f"https://www.claude.ai/chat/{_CHAT.split('/')[-1].upper()}"
+
+
+def test_resolve_nest_parent_refuses_chat_holder_id(
+    ledger: CursorDispatchLedger,
+) -> None:
+    """Unified-chat holder ids are not CSE nest parents."""
+    hid = "chat_2762063d-2966-4859-a3ce-23831c6e0c86"
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        upsert_holder(conn, chat_url=_CHAT, registration_id="reg-chat", lane_thread_id="55")
+        assert resolve_nest_parent(conn, hid) is None
+        assert resolve_nest_parent(conn, "cse_testholder1") is None
+
+
+def test_upsert_stores_canonical_chat_url_column(
+    ledger: CursorDispatchLedger,
+) -> None:
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        row = upsert_holder(conn, chat_url=_CHAT_WWW, registration_id="reg-v")
+        fetched = get_holder(conn, str(row["holder_id"]))
+    assert fetched is not None
+    assert fetched["chat_url"] == canonical_claude_seat_url(_CHAT_WWW)
+
+
+def test_reap_registry_www_spelling_matches_canonical_column(
+    ledger: CursorDispatchLedger,
+) -> None:
+    live_url = "https://claude.ai/cowork/cse_livecanon"
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        live = upsert_holder(conn, chat_url=live_url, lane_thread_id="77")
+        _backdate(conn, str(live["holder_id"]))
+        released = reap_stale_driving_holders(
+            conn,
+            registry_urls={f"https://www.claude.ai/cowork/{live_url.rsplit('/', 1)[-1]}"},
+        )
+        live_row = get_holder(conn, str(live["holder_id"]))
+    assert released == 0
+    assert live_row is not None and live_row["seat_state"] == "driving"
+
+
+def test_upsert_unified_chat_one_row_per_uuid(ledger: CursorDispatchLedger) -> None:
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        first = upsert_holder(
+            conn,
+            chat_url=_CHAT,
+            registration_id="reg-1",
+            execution_id="exec-1",
+        )
+        second = upsert_holder(
+            conn,
+            chat_url=_CHAT,
+            registration_id="reg-2",
+            execution_id="exec-2",
+        )
+    hid = "chat_2762063d-2966-4859-a3ce-23831c6e0c86"
+    assert first["holder_id"] == hid
+    assert second["holder_id"] == hid

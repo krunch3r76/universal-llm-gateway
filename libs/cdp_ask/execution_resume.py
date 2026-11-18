@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import re
 import time
 from typing import Any
 
@@ -144,7 +143,6 @@ def _body_of(response: Any) -> str:
     return _body_from_harvest(response)
 
 
-_CSE_ID = re.compile(r"/cowork/(cse_[A-Za-z0-9]+)")
 # ExecutionPollResponse.harvest_provenance literal; the CSE harvester's own
 # labels (cse-dom, metadata_only) are DOM-level and read as "chat" to a poller.
 _POLL_PROVENANCE = {"output-file", "cortex-uri", "chat", "chat-large", "artifact-card"}
@@ -155,10 +153,23 @@ def _poll_provenance(content_provenance: str | None) -> str:
     return value if value in _POLL_PROVENANCE else "chat"
 
 
-def _cse_id(url: str) -> str:
-    """Session identity of a Cowork URL — the only part the attach must match."""
-    match = _CSE_ID.search(url or "")
-    return match.group(1) if match else ""
+def _seat_identity(url: str) -> tuple[str, str] | None:
+    """(kind, primary_id) from D1; None when the URL is not a parseable seat address."""
+    from claude_bundles.cse_url import parse_claude_seat_address
+
+    parsed = parse_claude_seat_address(url or "")
+    if parsed is None:
+        return None
+    return (parsed.kind, parsed.primary_id)
+
+
+def _seat_identities_match(expected: str, attached: str) -> bool:
+    """True only when both sides parse and share the same (kind, primary_id)."""
+    a = _seat_identity(expected)
+    b = _seat_identity(attached)
+    if a is None or b is None:
+        return False
+    return a == b
 
 
 async def resume_execution(
@@ -218,7 +229,7 @@ async def resume_execution(
         return
 
     attached_url = str(getattr(outcome.page, "url", "") or "")
-    if _cse_id(attached_url) != _cse_id(chat_url):
+    if not _seat_identities_match(chat_url, attached_url):
         # The relaunched host showed another session (restored tab / redirect):
         # harvesting it would archive foreign content under this execution.
         with contextlib.suppress(Exception):

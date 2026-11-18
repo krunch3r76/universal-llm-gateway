@@ -18,7 +18,6 @@ import httpx
 from cdp_ask.client import CdpAskClient, CdpAskClientError, project_ask_base_url
 from cdp_ask.models import SubmitProjectAskRequest
 from cdp_ask.unverifiable import (
-    _CSE_URL_MARKER,
     WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED,
     failed_snapshot_fields,
     transport_miss_fields,
@@ -38,6 +37,7 @@ from claude_bundles.cdp_pre_paste_retry import (
 from claude_bundles.cdp_progress_trace import ProgressTrace
 from claude_bundles.cdp_progress_trace import fingerprint as progress_fingerprint
 from claude_bundles.chat_model_match import normalize_picker_request
+from claude_bundles.cse_url import is_bindable_claude_seat_url
 from claude_bundles.overload_only_harvest import (
     _ERROR_BANNER_BODY_RE,
     _ERROR_BANNER_ONLY_MAX_LEN,
@@ -243,7 +243,7 @@ class _ProofCarry:
         if "status" not in snapshot:
             return
         snap_url = str(snapshot.get("url") or "")
-        if _CSE_URL_MARKER in snap_url:
+        if is_bindable_claude_seat_url(snap_url):
             self.url = snap_url
         reg = snapshot.get("registration_id")
         if reg is not None:
@@ -291,9 +291,12 @@ def _maybe_invoke_url_bound(
     if on_url_bound is None:
         return
     url = proof_carry.url
-    if not url or _CSE_URL_MARKER not in url:
+    if not url or not is_bindable_claude_seat_url(url):
         return
-    key = (execution_id, url)
+    from claude_bundles.cse_url import claude_seat_identity_key
+
+    canon = claude_seat_identity_key(url)
+    key = (execution_id, canon)
     if key in url_bound_emitted:
         return
     url_bound_emitted.add(key)

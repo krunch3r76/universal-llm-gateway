@@ -220,6 +220,7 @@ async def cse_holder_upsert(req: CseHolderUpsertRequest) -> dict[str, object]:
     """
     from services.git_integration_worker.cse_session_holders import (
         HolderLaneConflictError,
+        HolderProjectionRefusedError,
         upsert_holder,
     )
 
@@ -242,6 +243,15 @@ async def cse_holder_upsert(req: CseHolderUpsertRequest) -> dict[str, object]:
                     "holder_id": exc.holder_id,
                     "current_lane": exc.current_lane,
                     "requested_lane": exc.requested_lane,
+                },
+            ) from exc
+        except HolderProjectionRefusedError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "reason": exc.reason,
+                    "holder_id": exc.holder_id,
+                    "registration_id": exc.registration_id,
                 },
             ) from exc
         conn.commit()

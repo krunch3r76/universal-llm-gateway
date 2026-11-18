@@ -2,7 +2,7 @@
 
 Participates in store-allocated ordering (SQLite AUTOINCREMENT ``id``) and
 derived-current reads via ``MAX(id)`` per ``thread_id``. Append only — never
-mutate a current-holder pointer. Identity is the Cowork session address
+mutate a current-holder pointer. Identity is the unified chat or Cowork session address
 (``cse_chat_url``); ``cse_registration_id`` is last-known Chrome host bind.
 """
 
@@ -10,13 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import canonical_claude_seat_url
 from universal_logging import get_logger
 
 from ..events.cse_bound import emit_cse_bound
 from .connection import connect, write_connect
-
-_CSE_PATH_MARKER = "/cowork/cse_"
 
 # Mint path on cdp.generate.seated. Not a relay agent name. A later
 # non-mint associate must not replace the latest mint URL with a different
@@ -33,11 +31,8 @@ def _normalize_registration_id(raw: str | None) -> str | None:
 
 
 def normalize_cse_bind_url(raw: str | None) -> str | None:
-    """Return a bindable Cowork URL, or None when the value is not a session address."""
-    url = normalize_cse_url(raw or "")
-    if not url or _CSE_PATH_MARKER not in url:
-        return None
-    return url
+    """Return a bindable Cowork or unified chat URL, or None when not a seat address."""
+    return canonical_claude_seat_url(raw)
 
 
 def _prior_row(conn, *, thread_id: str) -> Any | None:
@@ -122,6 +117,7 @@ def associate_cse(
     cse_registration_id: str | None = None,
     bound_by: str | None = None,
     evidence: str | None = None,
+    holder_projection: bool = True,
 ) -> dict[str, Any] | None:
     """Append one CSE association when the URL is new or the attach host changed.
 
@@ -170,38 +166,40 @@ def associate_cse(
             ):
                 return None
             if prior_url == url and prior_reg == registration_id:
-                from services.git_integration_worker.cse_session_holders import (
-                    RemoteUpsert,
-                    upsert_holder_remote,
-                )
-
-                upsert_result = upsert_holder_remote(
-                    chat_url=url,
-                    registration_id=registration_id,
-                    lane_thread_id=thread_id,
-                )
-                if upsert_result is RemoteUpsert.LANE_CONFLICT:
-                    logger.warning(
-                        "associate_cse holder upsert lane_conflict thread_id=%s",
-                        thread_id,
+                if holder_projection:
+                    from services.git_integration_worker.cse_session_holders import (
+                        RemoteUpsert,
+                        upsert_holder_remote,
                     )
+
+                    upsert_result = upsert_holder_remote(
+                        chat_url=url,
+                        registration_id=registration_id,
+                        lane_thread_id=thread_id,
+                    )
+                    if upsert_result is RemoteUpsert.LANE_CONFLICT:
+                        logger.warning(
+                            "associate_cse holder upsert lane_conflict thread_id=%s",
+                            thread_id,
+                        )
                 return None
         prior_id = int(prior["id"]) if prior is not None else None
-        from services.git_integration_worker.cse_session_holders import (
-            RemoteUpsert,
-            upsert_holder_remote,
-        )
-
-        upsert_result = upsert_holder_remote(
-            chat_url=url,
-            registration_id=registration_id,
-            lane_thread_id=thread_id,
-        )
-        if upsert_result is RemoteUpsert.LANE_CONFLICT:
-            logger.warning(
-                "associate_cse holder upsert lane_conflict thread_id=%s",
-                thread_id,
+        if holder_projection:
+            from services.git_integration_worker.cse_session_holders import (
+                RemoteUpsert,
+                upsert_holder_remote,
             )
+
+            upsert_result = upsert_holder_remote(
+                chat_url=url,
+                registration_id=registration_id,
+                lane_thread_id=thread_id,
+            )
+            if upsert_result is RemoteUpsert.LANE_CONFLICT:
+                logger.warning(
+                    "associate_cse holder upsert lane_conflict thread_id=%s",
+                    thread_id,
+                )
         cur = conn.execute(
             "INSERT INTO thread_cse_associations "
             "(thread_id, cse_chat_url, cse_registration_id, bound_by, evidence) "

@@ -11,7 +11,7 @@ from typing import Any
 
 from claude_bundles import cdp_lane
 from claude_bundles import cdp_registry_events as _events
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import claude_seat_identity_key
 
 _DEFAULT_ORPHANED_ALIVE_TTL_S = 1800.0  # 30 min — exceeds warm-reattach window
 
@@ -190,7 +190,7 @@ def release_dead_chat_url_holders(
     must not keep ``attachment.conflict`` raised for a later bind. Live rows
     and other URLs stay. Mutates *active*; caller writes it.
     """
-    norm = normalize_cse_url(chat_url or "")
+    norm = claude_seat_identity_key(chat_url or "")
     if not norm:
         return []
     subset = {
@@ -198,7 +198,7 @@ def release_dead_chat_url_holders(
         for rid, row in active.items()
         if isinstance(row, dict)
         and row.get("status") == "orphaned_alive"
-        and normalize_cse_url(str(row.get("chat_url") or "")) == norm
+        and claude_seat_identity_key(str(row.get("chat_url") or "")) == norm
     }
     if not subset:
         return []

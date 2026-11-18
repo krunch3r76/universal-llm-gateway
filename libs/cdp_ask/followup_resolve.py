@@ -18,7 +18,10 @@ from claude_bundles import cdp_registry
 from claude_bundles.cdp_registry.session_address import attachment_for_chat_url
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import (
+    canonical_claude_seat_url,
+    claude_seat_identity_key,
+)
 from playwright.async_api import async_playwright
 
 from cdp_ask.execution_store import ExecutionStore
@@ -48,7 +51,7 @@ from cdp_ask.operator_seat_resolve import resolve_operator_seat
 
 
 async def scan_lane_cse_urls(reg: cdp_registry.Registration) -> list[str]:
-    """List normalized ``/cowork/cse_`` page URLs currently open on one attached lane."""
+    """List normalized Cowork or unified-chat seat URLs open on one attached lane."""
     pw = await async_playwright().start()
     try:
         browser = await pw.chromium.connect_over_cdp(reg.cdp_url)
@@ -58,8 +61,9 @@ async def scan_lane_cse_urls(reg: cdp_registry.Registration) -> list[str]:
         urls: list[str] = []
         for page in ctx.pages:
             url = page.url or ""
-            if "/cowork/cse_" in url:
-                urls.append(normalize_cse_url(url))
+            canon = canonical_claude_seat_url(url)
+            if canon:
+                urls.append(claude_seat_identity_key(url))
         return urls
     finally:
         await pw.stop()
@@ -179,7 +183,7 @@ async def discover_candidates(
                 urls = await scan_lane_cse_urls(lane)
             except Exception:
                 return [], resolution_path or "chat_url", execution_id
-            if normalize_cse_url(chat_url) in urls:
+            if claude_seat_identity_key(chat_url) in urls:
                 return [chosen], "chat_url", execution_id
             return [], resolution_path or "chat_url", execution_id
 
@@ -206,7 +210,7 @@ async def discover_candidates(
         except Exception:
             continue
         for url in urls:
-            if chat_url and normalize_cse_url(chat_url) != url:
+            if chat_url and claude_seat_identity_key(chat_url) != url:
                 continue
             if req.purpose and lane.purpose != req.purpose:
                 continue
@@ -272,7 +276,9 @@ def stale_registration_id_conflict(
     if execution_id:
         return False
     stored = cdp_registry.chat_url_for_registration(registration_id)
-    if stored and normalize_cse_url(chat_url) != normalize_cse_url(stored):
+    if stored and claude_seat_identity_key(chat_url) != claude_seat_identity_key(
+        stored
+    ):
         return False
     matches = _registry_pairs_for_chat_url(chat_url, cdp_url=cdp_url)
     if len(matches) != 1:
@@ -288,7 +294,7 @@ def registration_chat_identity_mismatch(req: FollowupProjectAskRequest) -> bool:
     stored = cdp_registry.chat_url_for_registration(registration_id)
     if not stored:
         return False
-    return normalize_cse_url(chat_url) != normalize_cse_url(stored)
+    return claude_seat_identity_key(chat_url) != claude_seat_identity_key(stored)
 
 
 def _lane_current_chat_url(body: dict | None) -> str | None:
@@ -331,7 +337,8 @@ def _in_flight_off_holder(lane_body: dict) -> list[str]:
             )
         )
         and page.get("chat_url")
-        and page.get("chat_url") != holder_url
+        and claude_seat_identity_key(page.get("chat_url") or "")
+        != claude_seat_identity_key(holder_url)
     ]
 
 
@@ -410,8 +417,8 @@ def _dormant_misbound_holder_carve_out(
         return False
     if row_execution_in_flight(holder) is not None:
         return False
-    req_url = normalize_cse_url(str(req.chat_url or ""))
-    holder_url = normalize_cse_url(str(holder.get("chat_url") or ""))
+    req_url = claude_seat_identity_key(str(req.chat_url or ""))
+    holder_url = claude_seat_identity_key(str(holder.get("chat_url") or ""))
     if not req_url or not holder_url or holder_url == req_url:
         return False
     if isinstance(lane_pin, dict):
@@ -593,7 +600,8 @@ def _lane_seat_followup_gate(
             if (
                 lane_body.get("basis") == "in_flight"
                 and chat_url
-                and chat_url != holder_url
+                and claude_seat_identity_key(chat_url)
+                != claude_seat_identity_key(holder_url)
             ):
                 claims = current.get("claims") if isinstance(current, dict) else None
                 if not isinstance(claims, list) or "registry_row" not in claims:

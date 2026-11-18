@@ -11,7 +11,7 @@ import contextlib
 import uuid
 
 from claude_bundles import cdp_registry
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import claude_seat_identity_key
 from claude_bundles.nested_cdp_prompt_gate import NestedCdpPromptGateError
 from claude_bundles.project_ask_conversation import send_followup_paste_half
 
@@ -249,7 +249,7 @@ def _skip_borrow_restore_for_inflight_paste(outcome: ReattachOutcome) -> bool:
     if not lane_in_flight(reg_id):
         return False
     held = (_lane_targets.get(reg_id) or "").strip()
-    return normalize_cse_url(held) == normalize_cse_url(bound)
+    return claude_seat_identity_key(held) == claude_seat_identity_key(bound)
 
 
 def _registry_row_for_registration(registration_id: str) -> dict | None:
@@ -640,7 +640,7 @@ async def execute_followup(
             return resp
 
         page, pw = found
-        if normalize_cse_url(page.url or "") != normalize_cse_url(target.chat_url):
+        if claude_seat_identity_key(page.url or "") != claude_seat_identity_key(target.chat_url):
             resp = fail_followup(
                 "lane_not_attached",
                 detail=lane_not_attached_detail(),

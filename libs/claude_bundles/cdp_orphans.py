@@ -22,11 +22,13 @@ from claude_bundles.cdp_orphan_cse_classify import (
     cse_pages_from_list,
 )
 from claude_bundles.cdp_reclaim_refuse import guard_cse_reclaim
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import (
+    canonical_claude_seat_url,
+    is_bindable_claude_seat_url,
+    normalize_cse_url,
+)
 
 LIVENESS_AUTHORITY_ATTACHMENT_ONLY = "attachment_only"
-
-_CSE_URL_MARKER = "claude.ai/cowork/cse_"
 _REG_PROFILE_PREFIX = "claude-ai-chrome-profile-reg-"
 _PROBE_TIMEOUT_S = 1.5
 
@@ -168,13 +170,39 @@ def _unique_cse_urls(page_urls: tuple[str, ...]) -> tuple[str, ...]:
     seen: set[str] = set()
     out: list[str] = []
     for url in page_urls:
-        if _CSE_URL_MARKER not in url:
+        if not is_bindable_claude_seat_url(url):
             continue
-        normalized = normalize_cse_url(url)
+        normalized = canonical_claude_seat_url(url) or normalize_cse_url(url)
         if normalized and normalized not in seen:
             seen.add(normalized)
             out.append(normalized)
     return tuple(out)
+
+
+def live_port_from_listing(
+    port: int,
+    page_list: Any,
+    *,
+    profile: Path | None = None,
+) -> LivePort:
+    """Build a ``LivePort`` snapshot from a CDP ``/json/list`` target payload.
+
+    Filters qualifying bindable Claude seat pages via ``cse_pages_from_list``,
+    deduplicates normalized session URLs, and derives ``has_live_cse`` without
+    performing network or ``/proc`` I/O.
+    """
+    page_urls = _page_urls_from_list(page_list)
+    cse_pages = cse_pages_from_list(page_list)
+    cse_page_urls = tuple(str(page.get("url") or "") for page in cse_pages)
+    cse_urls = _unique_cse_urls(cse_page_urls)
+    return LivePort(
+        port=port,
+        profile=profile,
+        page_urls=page_urls,
+        has_live_cse=bool(cse_urls),
+        cse_urls=cse_urls,
+        cse_target_count=len(cse_page_urls),
+    )
 
 
 def probe_live_ports(port_range: range | None = None) -> list[LivePort]:
@@ -186,23 +214,9 @@ def probe_live_ports(port_range: range | None = None) -> list[LivePort]:
         if version is None:
             continue
         page_list = _fetch_json(f"http://127.0.0.1:{port}/json/list")
-        page_urls = _page_urls_from_list(page_list)
-        cse_pages = cse_pages_from_list(page_list)
-        cse_page_urls = tuple(str(page.get("url") or "") for page in cse_pages)
-        cse_urls = _unique_cse_urls(cse_page_urls)
         pid = _pid_listening_on(port)
         profile = _profile_from_pid(pid) if pid is not None else None
-        has_live_cse = bool(cse_urls)
-        out.append(
-            LivePort(
-                port=port,
-                profile=profile,
-                page_urls=page_urls,
-                has_live_cse=has_live_cse,
-                cse_urls=cse_urls,
-                cse_target_count=len(cse_page_urls),
-            )
-        )
+        out.append(live_port_from_listing(port, page_list, profile=profile))
     return out
 
 
@@ -430,6 +444,7 @@ __all__ = [
     "find_orphans",
     "is_primary_profile",
     "list_surface_payload",
+    "live_port_from_listing",
     "orphan_as_dict",
     "orphan_scan_as_dict",
     "probe_live_ports",

@@ -7065,6 +7065,56 @@ def test_resolve_cse_wake_target_live_registration_uses_giw_row() -> None:
     assert holder["seat_state"] == "driving"
 
 
+def test_cse_wake_unified_chat_houseless_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.houseless_resolve import (
+        clear_houseless_resolve_memo,
+        resolve_houseless_target,
+    )
+
+    from bus_watch.endpoint_wake_dispatcher import resolve_cse_wake_target
+
+    reg_id = "reg-unified-houseless-wake"
+    chat = "https://claude.ai/chat/2762063d-2966-4859-a3ce-23831c6e0c86"
+
+    def _provenance_ok(
+        registration_id: str, **_kwargs: object
+    ) -> tuple[dict[str, object], bool]:
+        return (
+            {
+                "registration_id": registration_id,
+                "purpose": "houseless",
+                "status": "active",
+                "seat_open": False,
+                "chat_url": chat,
+            },
+            False,
+        )
+
+    monkeypatch.setattr(
+        "cdp_ask.houseless_resolve._provenance_payload",
+        _provenance_ok,
+    )
+    clear_houseless_resolve_memo()
+    assert resolve_houseless_target(reg_id).ok is True
+    monkeypatch.setattr(
+        "bus_watch.endpoint_wake_dispatcher.resolve_houseless_target",
+        resolve_houseless_target,
+    )
+    sub = {"surface": "cse", "agent_id": reg_id, "thread_scope": "22760"}
+
+    class Store:
+        def holder_by_registration(self, registration_id: str) -> dict | None:
+            raise AssertionError("GIW lookup must not run when resolver ok")
+
+    target = resolve_cse_wake_target(Store(), sub, wake_thread="22760")  # type: ignore[arg-type]
+    assert target is not None
+    _lane, holder = target
+    assert holder["seat_state"] == "houseless"
+    assert holder["registration_id"] == reg_id
+
+
 def test_resolve_cse_wake_target_houseless_provenance_route_no_episode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

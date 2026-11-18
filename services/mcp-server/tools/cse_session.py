@@ -1,7 +1,7 @@
 """MCP cse_session tool — thin httpx relay to the Jupiter CDP-ask satellite.
 
-Ops: provenance, harvest, paste, followup, resolve_attended (read), detach,
-retire_binding (write on satellite). paste ≠ followup — different routes.
+Ops: provenance, harvest, paste, followup, bind_address, resolve_attended (read),
+detach, retire_binding (write on satellite). paste ≠ followup — different routes.
 No claude_bundles or cdp_ask imports — relay only per [universal:mcp].
 """
 
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 _CSE_RELAY_FAILURE = "mcp.cse_session.relay.failed"
+_DRY_RUN_DEFAULT_BY_OP = {"bind_address": True, "retire_binding": True}
 
 
 def register_cse_session_tool(mcp: FastMCP) -> None:
@@ -33,6 +34,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
             "resolve_attended",
             "detach",
             "retire_binding",
+            "bind_address",
         ],
         reason: str | None = None,
         chat_url: str | None = None,
@@ -63,14 +65,15 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
         min_receipt: Literal[
             "dom_paste", "dom_committed", "human_visible"
         ] = "dom_paste",
-        dry_run: bool = False,
+        dry_run: bool | None = None,
         caller_agent: str | None = None,
     ) -> dict[str, Any]:
         """CSE provenance, harvest, hop-pair paste, warm followup, attended resolve.
 
         ``retire_binding`` = sanctioned dormant URL-binding retire on the
         satellite registry (``/v1/cse-session/retire-binding``); pass
-        ``dry_run=true`` for a read-only resolve preview.
+        ``dry_run=true`` for a read-only resolve preview. Omitted ``dry_run``
+        previews; pass ``dry_run=false`` to retire live.
 
         ``paste`` = hop-pair / grant authorized paste (``/v1/cse-session/paste``).
         ``followup`` = warm wake into a retained or dormant Cowork CSE
@@ -85,6 +88,10 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
         operator-visible. New CDP consults use ``team_dispatch(model=cdp/…)``.
         IF6 submit is CLI. See agent_skill:claude-ai-cdp-navigation.
         """
+        def _resolved_dry_run(op: str) -> bool:
+            if dry_run is not None:
+                return bool(dry_run)
+            return _DRY_RUN_DEFAULT_BY_OP.get(op, False)
         if op == "provenance":
             params = {
                 k: v
@@ -167,6 +174,40 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
             )
             return result
 
+        if op == "bind_address":
+            if not registration_id or not chat_url:
+                return {
+                    "ok": False,
+                    "code": "identity_required",
+                    "error": "bind_address requires registration_id and chat_url",
+                }
+            bind_dry_run = _resolved_dry_run("bind_address")
+            body = {
+                k: v
+                for k, v in {
+                    "registration_id": registration_id,
+                    "chat_url": chat_url,
+                    "parent_thread": parent_thread,
+                    "reason": (reason or "repair_bind_address").strip(),
+                    "caller_agent": caller_agent,
+                }.items()
+                if v is not None and v != ""
+            }
+            body["dry_run"] = bind_dry_run
+            result = _relay(
+                "POST",
+                "/v1/cse-session/bind-address",
+                json_body=body,
+                failure_signal=_CSE_RELAY_FAILURE,
+                error_prefix="cse-session",
+            )
+            record(
+                "mcp.cse_session.bind_address",
+                registration_id=result.get("registration_id"),
+                dry_run=result.get("dry_run"),
+            )
+            return result
+
         if op == "retire_binding":
             if not registration_id and not chat_url:
                 return {
@@ -174,17 +215,18 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                     "code": "identity_required",
                     "error": "retire_binding requires registration_id and/or chat_url",
                 }
+            retire_dry_run = _resolved_dry_run("retire_binding")
             body = {
                 k: v
                 for k, v in {
                     "registration_id": registration_id,
                     "chat_url": chat_url,
                     "reason": (reason or "sanctioned_dormant_retire").strip(),
-                    "dry_run": dry_run,
                     "caller_agent": caller_agent,
                 }.items()
-                if v is not None and v is not False
+                if v is not None and v != ""
             }
+            body["dry_run"] = retire_dry_run
             result = _relay(
                 "POST",
                 "/v1/cse-session/retire-binding",

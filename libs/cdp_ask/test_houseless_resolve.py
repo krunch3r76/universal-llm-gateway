@@ -105,6 +105,135 @@ def test_resolve_houseless_fresh_memo_bypasses_scan_cache() -> None:
     assert fresh.ok is True
 
 
+_UUID = "2762063d-2966-4859-a3ce-23831c6e0c86"
+_UNIFIED = f"https://claude.ai/chat/{_UUID}"
+_REG_HOUSELESS = "reg-houseless-unified"
+
+
+class _RegistryProvenanceClient:
+    """HTTP client stub that mirrors post-bind Jupiter provenance fields."""
+
+    def __init__(self, registration_id: str) -> None:
+        self.registration_id = registration_id
+
+    def _request(self, method: str, path: str) -> dict:
+        from claude_bundles import cdp_registry_store as store
+
+        row = store.load_active().get(self.registration_id)
+        if not isinstance(row, dict):
+            return {}
+        chat_url = str(row.get("chat_url") or "").strip()
+        return {
+            "registration_id": self.registration_id,
+            "purpose": row.get("purpose"),
+            "status": row.get("status"),
+            "seat_open": bool(row.get("seat_open")),
+            "chat_url": chat_url,
+        }
+
+
+def test_bind_unified_chat_resolves_houseless_unmocked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import json
+
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles import cdp_registry_store as store
+    from claude_bundles import cdp_registry_store as store_mod
+    from claude_bundles import cse_provenance
+    from claude_bundles.cdp_registry import session_address
+
+    from services.git_integration_worker import cse_session_holders
+    from services.git_integration_worker.cse_session_holders import (
+        RemoteUpsert,
+        ensure_schema,
+        upsert_holder,
+    )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    root = tmp_path / "cdp-registry"
+    root.mkdir()
+    regs = root / "registrations"
+    regs.mkdir()
+    paths = {
+        "REGISTRY_DIR": root,
+        "REGISTRY_LOG": root / "registry.jsonl",
+        "ACTIVE_JSON": root / "active.json",
+        "SESSIONS_JSON": root / "sessions.json",
+        "SESSION_TRANSITIONS_JSONL": root / "session_transitions.jsonl",
+        "PORTS_LOCK": root / "ports.lock",
+        "REGISTRATIONS_DIR": regs,
+    }
+    for name, value in paths.items():
+        monkeypatch.setattr(store, name, value)
+        monkeypatch.setattr(cse_provenance.store, name, value)
+        monkeypatch.setattr(store_mod, name, value)
+    store.ensure_dirs()
+    monkeypatch.setattr(reg._store, "is_seat_authority", lambda: True)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "holder-data"))
+    monkeypatch.setattr(CursorDispatchLedger, "_instance", None)
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+
+    holder_calls: list[dict[str, object]] = []
+
+    def _counting_holder_upsert(**kw: object) -> RemoteUpsert:
+        holder_calls.append(dict(kw))
+        with ledger._connect() as conn:
+            ensure_schema(conn)
+            upsert_holder(conn, **dict(kw))  # type: ignore[arg-type]
+        return RemoteUpsert.OK
+
+    monkeypatch.setattr(
+        cse_session_holders,
+        "upsert_holder_remote",
+        _counting_holder_upsert,
+    )
+    store.write_active(
+        {
+            _REG_HOUSELESS: {
+                "registration_id": _REG_HOUSELESS,
+                "port": 9233,
+                "status": "active",
+                "purpose": "houseless",
+                "seat_open": False,
+                "chat_url": "",
+            }
+        }
+    )
+    assert session_address.bind_session_address(_REG_HOUSELESS, chat_url=_UNIFIED)
+    row = store.load_active()[_REG_HOUSELESS]
+    assert row["chat_url"] == _UNIFIED
+    episode = cse_provenance.latest_episode(registration_id=_REG_HOUSELESS)
+    assert episode is not None
+    assert episode.chat_url == _UNIFIED
+    res = resolve_houseless_target(
+        _REG_HOUSELESS,
+        client=_RegistryProvenanceClient(_REG_HOUSELESS),
+    )
+    assert res.ok is True
+    assert res.chat_url == _UNIFIED
+    assert res.reason != "no_chat_url"
+
+    bound_logs = [
+        json.loads(line)
+        for line in store.REGISTRY_LOG.read_text(encoding="utf-8").splitlines()
+        if json.loads(line).get("event") == "session_address_bound"
+        and json.loads(line).get("registration_id") == _REG_HOUSELESS
+    ]
+    assert len(bound_logs) == 1
+    assert bound_logs[0].get("holder_projection") == "not_applicable"
+    assert holder_calls == []
+    with ledger._connect() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) AS n FROM cse_session_holders"
+        ).fetchone()["n"]
+    assert count == 0
+
+
 def test_resolve_houseless_memoizes_per_registration() -> None:
     from cdp_ask.houseless_resolve import clear_houseless_resolve_memo
 

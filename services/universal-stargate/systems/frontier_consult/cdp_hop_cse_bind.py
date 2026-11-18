@@ -285,6 +285,7 @@ def _associate_houseless_first_seated_cse(
             cse_registration_id=registration_id,
             bound_by=HOUSELESS_FIRST_SEATED_BOUND_BY,
             evidence="cdp.generate.seated",
+            holder_projection=False,
         )
     except Exception as exc:  # noqa: BLE001 — seated bind must not fail the poll
         logger.warning(
@@ -371,6 +372,7 @@ def associate_hop_seated_cse(
         HOP_SEATED_BOUND_BY,
         associate_cse,
     )
+    from claude_bundles.what_is_running_view import is_houseless_purpose
 
     try:
         bound = associate_cse(
@@ -379,6 +381,7 @@ def associate_hop_seated_cse(
             cse_registration_id=registration_id,
             bound_by=HOP_SEATED_BOUND_BY,
             evidence="cdp.generate.seated",
+            holder_projection=not is_houseless_purpose(purpose),
         )
     except Exception as exc:  # noqa: BLE001 — seated stamp must not fail the poll
         logger.warning(

@@ -8,7 +8,7 @@ from claude_bundles.cse_provenance import (
     episodes_for_chat_url,
     latest_episode,
 )
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import claude_seat_identity_key
 
 BINDING_RETIRED_STATES = frozenset({"retired", "unbound"})
 
@@ -20,7 +20,7 @@ def binding_closed_by_episode(episode: ProvenanceEpisode) -> bool:
 
 def latest_binding_closed(*, chat_url: str | None = None) -> bool:
     """True when the newest journal episode for the URL is a retire/unbound row."""
-    target = normalize_cse_url(chat_url or "")
+    target = claude_seat_identity_key(chat_url or "")
     if not target:
         return False
     latest = latest_episode(chat_url=target)
@@ -32,7 +32,7 @@ def per_registration_latest_episodes(
 ) -> dict[str, ProvenanceEpisode]:
     """Latest journal row per ``registration_id`` for one URL (append order)."""
     by_reg: dict[str, ProvenanceEpisode] = {}
-    target = normalize_cse_url(chat_url)
+    target = claude_seat_identity_key(chat_url)
     if not target:
         return {}
     for episode in episodes_for_chat_url(target):

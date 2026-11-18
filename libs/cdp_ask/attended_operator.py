@@ -16,7 +16,10 @@ from urllib.parse import urlparse
 from claude_bundles import cdp_orphans, cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
-from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.cse_url import (
+    claude_seat_identity_key,
+    is_bindable_claude_seat_url,
+)
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 
 from cdp_ask.attended_conflict import (
@@ -27,9 +30,6 @@ from cdp_ask.attended_dormant import candidate_dict as dormant_candidate_dict
 from cdp_ask.attended_dormant import dormant_candidates
 
 _SOURCE = "cse-session-registry"
-_CSE_MARKER = "/cowork/cse_"
-
-
 @dataclass(frozen=True)
 class AttendedCandidate:
     """One registry-registered mission-purpose lane with bound chat_url."""
@@ -196,7 +196,7 @@ def _mission_candidates() -> tuple[list[AttendedCandidate], int]:
 def _probe_liveness(cdp_url: str, chat_url: str) -> LivenessProbe:
     """Return liveness for *chat_url* on the registered *cdp_url* port only."""
     checked_at = time.time()
-    target_norm = normalize_cse_url(chat_url)
+    target_norm = claude_seat_identity_key(chat_url)
     port = _port_from_cdp_url(cdp_url)
     if port is None:
         return LivenessProbe(live=False, checked_at=checked_at)
@@ -206,7 +206,7 @@ def _probe_liveness(cdp_url: str, chat_url: str) -> LivenessProbe:
             continue
         page_urls = live.page_urls
         for url in page_urls:
-            if normalize_cse_url(url) == target_norm:
+            if claude_seat_identity_key(url) == target_norm:
                 return LivenessProbe(live=True, checked_at=checked_at)
         return LivenessProbe(
             live=False,
@@ -224,18 +224,18 @@ def build_shadow_urls(
     """Diagnostic: same ``cse_`` URL on ports other than registered candidate ports."""
     registered_ports = {_port_from_cdp_url(c.cdp_url) for c in candidates}
     registered_ports.discard(None)
-    registered_chat_urls = {normalize_cse_url(c.chat_url) for c in candidates}
+    registered_chat_urls = {claude_seat_identity_key(c.chat_url) for c in candidates}
 
     ports = live_ports if live_ports is not None else cdp_orphans.probe_live_ports()
     by_url: dict[str, set[int]] = {}
     for live in ports:
         for url in live.page_urls:
-            if _CSE_MARKER not in url:
+            if not is_bindable_claude_seat_url(url):
                 continue
-            norm = normalize_cse_url(url)
+            norm = claude_seat_identity_key(url)
             if norm in registered_chat_urls and live.port not in registered_ports:
                 by_url.setdefault(norm, set()).add(live.port)
-            elif norm not in registered_chat_urls and _CSE_MARKER in url:
+            elif norm not in registered_chat_urls and is_bindable_claude_seat_url(url):
                 if live.port not in registered_ports:
                     by_url.setdefault(norm, set()).add(live.port)
 
@@ -296,9 +296,9 @@ def _conflict_for_url(
     chat_url: str,
     conflicts: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    target = normalize_cse_url(chat_url)
+    target = claude_seat_identity_key(chat_url)
     for entry in conflicts:
-        if normalize_cse_url(entry.get("chat_url") or "") == target:
+        if claude_seat_identity_key(entry.get("chat_url") or "") == target:
             return entry
     return None
 
