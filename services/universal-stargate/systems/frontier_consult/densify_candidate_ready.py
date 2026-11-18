@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 
@@ -10,9 +11,15 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .admission import FrontierEndpointError
+from .densify_review_frame import (
+    DEFAULT_NEGATIVE_SPACE as _DEFAULT_NEGATIVE_SPACE,
+)
+from .densify_review_frame import (
+    build_densify_review_prompt,
+    densify_review_nonce,
+    resolve_densify_artifact,
+)
 from .densify_triage import (
-    COMPOSER_DRAFT_SENTINEL,
-    REASONING_TRACE_SENTINEL,
     VALID_DRAFT_ADEQUACY,
     build_generate_review_envelope,
     is_default_on_density,
@@ -114,24 +121,6 @@ def _validate_candidate_body(
                 status_code=422,
                 code="review_opt_out_non_default_on",
             )
-
-
-def _load_artifact_body(uri: str, inline: str | None) -> str:
-    if inline is not None:
-        return inline
-    return f"{COMPOSER_DRAFT_SENTINEL}\n# staged draft from {uri}"
-
-
-def _load_trace_body(uri: str, inline: str | None) -> str:
-    if inline is not None:
-        return inline
-    return f"{REASONING_TRACE_SENTINEL}\n# reasoning trace from {uri}"
-
-
-_DEFAULT_NEGATIVE_SPACE = (
-    "Per new/changed param or branch: where invalid + does the "
-    "spec reject it there with a test?"
-)
 
 
 def build_reviewer_prompt(
@@ -246,13 +235,30 @@ async def handle_densify_candidate_ready(
     )
 
     if should_spawn:
-        draft_body = _load_artifact_body(body.staged_draft_uri, body.staged_draft_body)
-        trace_body = _load_trace_body(
-            body.reasoning_trace_uri, body.reasoning_trace_body
+        draft_body = (
+            body.staged_draft_body
+            if body.staged_draft_body is not None
+            else await asyncio.to_thread(
+                resolve_densify_artifact,
+                body.staged_draft_uri,
+                field="staged_draft_uri",
+                request_id=request_id,
+            )
         )
-        reviewer_prompt = build_reviewer_prompt(
-            staged_draft_body=draft_body,
-            reasoning_trace_body=trace_body,
+        trace_body = (
+            body.reasoning_trace_body
+            if body.reasoning_trace_body is not None
+            else await asyncio.to_thread(
+                resolve_densify_artifact,
+                body.reasoning_trace_uri,
+                field="reasoning_trace_uri",
+                request_id=request_id,
+            )
+        )
+        reviewer_prompt = build_densify_review_prompt(
+            draft_body=draft_body,
+            trace_body=trace_body,
+            nonce=densify_review_nonce(request_id),
         )
         spawn_result = await spawn_densify_reviewer_child(
             request_id=request_id,
