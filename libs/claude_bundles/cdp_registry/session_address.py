@@ -260,12 +260,20 @@ def bind_session_address(
                 updated["chat_url"] = url
                 active[registration_id] = updated
                 _store.write_active(active)
-            _append_lane_less_episode(
-                url=url,
+            from .birth_claim import proven_tail_owns_binding
+
+            if not proven_tail_owns_binding(
+                updated,
+                chat_url=url,
                 registration_id=registration_id,
-                updated=updated,
                 execution_id=execution_id,
-            )
+            ):
+                _append_lane_less_episode(
+                    url=url,
+                    registration_id=registration_id,
+                    updated=updated,
+                    execution_id=execution_id,
+                )
             holder_proj = (
                 "deferred"
                 if defer_seat_commit

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_bundles import cdp_registry
+from claude_bundles.cdp_registry.birth_claim import record_hop_birth_claim
 from claude_bundles.cdp_registry.driving_seat import (
     ensure_driving_operator_seat,
     launch_or_defer,
@@ -291,8 +292,9 @@ def _latch_streaming_attachment(
     url: str | None,
     *,
     execution_id: str = "",
+    record_claim: Callable[..., str] = record_hop_birth_claim,
 ) -> None:
-    """Append ``attachment_observed`` on first streaming sample, then fold."""
+    """Record the hop birth claim, then append ``attachment_observed`` and fold."""
     from claude_bundles.cdp_registry.attachment_journal import (
         append_attachment_journal,
         fold_attachment_journal,
@@ -309,6 +311,23 @@ def _latch_streaming_attachment(
     if has_attachment_observed(registration_id, latch_url):
         fold_attachment_journal()
         return
+    try:
+        record_claim(registration_id, chat_url=latch_url, execution_id=execution_id)
+    except Exception:  # noqa: BLE001 — the URL is published even when the claim fails
+        logger.warning(
+            "hop birth claim failed registration_id=%s execution_id=%s",
+            registration_id,
+            execution_id,
+            exc_info=True,
+        )
+        from claude_bundles import cdp_registry_events
+        cdp_registry_events.emit(
+            cdp_registry_events.cdp_provenance_unresolved(
+                chat_url=latch_url,
+                reason="birth_claim_failed",
+                correlation_id=execution_id or None,
+            )
+        )
     append_attachment_journal(
         registration_id=registration_id,
         chat_url=latch_url,

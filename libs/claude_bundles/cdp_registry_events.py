@@ -66,7 +66,11 @@ def cdp_provenance_bound(
 def cdp_provenance_unresolved(
     *, chat_url: str | None, reason: str, correlation_id: str | None = None
 ) -> Event:
-    """Report a CSE identity that lacks sufficient evidence for a unique join."""
+    """Report a CSE identity that lacks sufficient evidence for a unique join.
+
+    ``reason="birth_claim_failed"`` comes from the cdp_ask streaming latch: the
+    hop birth-claim writer raised and the URL was published with no claim episode.
+    """
     return Event(
         signal="cdp.provenance.unresolved",
         role="observation",
