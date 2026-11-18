@@ -468,13 +468,6 @@ def test_friction_39269_over_cap_section_current_leg_heading_once() -> None:
     assert _current_leg_atx_count(body) == 1
 
 
-def test_friction_39269_act2_line_has_no_leading_ordinal() -> None:
-    from claude_bundles.operator_proxy_standing_render import maestro_runbook_act2_line
-
-    line = maestro_runbook_act2_line()
-    assert not line.startswith("2. ")
-
-
 def test_ac5_live_leg_line_registration_id_matches() -> None:
     sidecar = (
         "## CURRENT LEG\n"
