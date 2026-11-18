@@ -10,7 +10,7 @@ from cursor_bridge.bridge_spawn_relay import relay_spawn_house, relay_spawn_tab
 pytestmark = pytest.mark.offline
 
 
-@pytest.mark.parametrize("gui_host", [":9", ":10", "9", "10", "jupiter"])
+@pytest.mark.parametrize("gui_host", [":9", ":10", "9", "10"])
 def test_relay_spawn_tab_unknown_gui_host(gui_host: str) -> None:
     out = relay_spawn_tab(gui_host=gui_host, prompt="go", model="composer")
     assert out["ok"] is False

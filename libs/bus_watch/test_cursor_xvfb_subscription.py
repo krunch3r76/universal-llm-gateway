@@ -53,12 +53,31 @@ def test_detect_cursor_gui_host_explicit_orion() -> None:
     assert detect_cursor_gui_host(explicit_gui_host="orion-node") == "orion-node"
 
 
-def test_detect_cursor_gui_host_ssh_connection(
+def test_detect_cursor_gui_host_ssh_connection_orion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SSH_CONNECTION", "127.0.0.1 22 127.0.0.1 54321")
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.50 22 10.81.0.166 22")
     monkeypatch.delenv("DISPLAY", raising=False)
     assert detect_cursor_gui_host() == "orion-node"
+
+
+def test_detect_cursor_gui_host_ssh_connection_jupiter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.50 22 10.0.0.76 22")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    assert detect_cursor_gui_host() == "jupiter"
+
+
+def test_detect_cursor_gui_host_cursor_jupiter_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "CURSOR_DATA_DIR",
+        "/home/io/.gateway/cursor-jupiter",
+    )
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    assert detect_cursor_gui_host() == "jupiter"
 
 
 def test_detect_cursor_gui_host_display_eight(

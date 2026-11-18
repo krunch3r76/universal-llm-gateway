@@ -63,6 +63,7 @@ def test_is_cursor_xvfb_host(host: str) -> None:
 
 def test_cursor_debug_url_for_orion_and_eight() -> None:
     assert cursor_debug_url_for_gui_host("orion-node") == "http://127.0.0.1:19338"
+    assert cursor_debug_url_for_gui_host("jupiter") == "http://127.0.0.1:19339"
     assert cursor_debug_url_for_gui_host(":8") == "http://127.0.0.1:9338"
     assert (
         normalize_target("orion-node", "cursor")["origin"] == "http://127.0.0.1:19338"

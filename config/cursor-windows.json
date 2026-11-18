@@ -23,6 +23,18 @@
         "127.0.0.1:19338",
         "http://127.0.0.1:19338"
       ]
+    },
+    "jupiter": {
+      "gui_host": "jupiter",
+      "cdp_origin": "http://127.0.0.1:19339",
+      "subscription_display": "jupiter",
+      "local_cdp_port": 19338,
+      "hub_tunnel_local_port": 19339,
+      "aliases": [
+        "jupiter",
+        "127.0.0.1:19339",
+        "http://127.0.0.1:19339"
+      ]
     }
   }
 }

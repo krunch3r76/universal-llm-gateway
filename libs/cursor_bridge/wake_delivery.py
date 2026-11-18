@@ -57,6 +57,7 @@ from cursor_bridge.grok_window_bindings import cdp_port_for_display
 _CURSOR_TARGETS: dict[tuple[str, str], str] = {
     ("cursor", "8"): "http://127.0.0.1:9338",
     ("cursor", "orion-node"): "http://127.0.0.1:19338",
+    ("cursor", "jupiter"): "http://127.0.0.1:19339",
 }
 _WINDOW_TITLE = {"cursor": "Cursor Agents", "grok": "Grok Bot"}
 _GROK_COMPOSER_SELECTOR = '[aria-label="Prompt"][contenteditable="true"]'

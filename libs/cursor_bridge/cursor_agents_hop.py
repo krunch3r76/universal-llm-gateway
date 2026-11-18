@@ -1,4 +1,4 @@
-"""Headless CDP hop that opens a Cursor Agents tab on Xvfb (:8) or orion-node.
+"""Headless CDP hop that opens a Cursor Agents tab on Glass (:8, orion-node, jupiter).
 
 ``fire_ide_hop`` calls ``launch_cursor_agents_tab``. A createComposer
 fallback whose submit race is won by the timer is an unconfirmed submit:

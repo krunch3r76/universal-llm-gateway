@@ -25,8 +25,9 @@ def test_is_cursor_xvfb_host_configured_aliases(host: str) -> None:
     assert is_cursor_xvfb_host(host) is True
 
 
-def test_is_cursor_xvfb_host_jupiter_negative() -> None:
-    assert is_cursor_xvfb_host("jupiter") is False
+def test_is_cursor_xvfb_host_jupiter_registered() -> None:
+    assert is_cursor_xvfb_host("jupiter") is True
+    assert is_cursor_xvfb_host("http://127.0.0.1:19339") is True
 
 
 @pytest.mark.parametrize("host", [None, ""])

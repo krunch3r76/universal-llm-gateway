@@ -162,7 +162,7 @@ def resolve_cursor_tab_whereami(
         "subscription_display": subscription_display,
         "transcript_id": tid or None,
         "surface": surface,
-        "ssh_client": gui_host == "orion-node",
+        "ssh_client": gui_host in {"orion-node", "jupiter"},
         "ssh_client_derivation": "derived",
         "layout": layout,
         "basis": basis,

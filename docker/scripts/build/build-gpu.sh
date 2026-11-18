@@ -78,6 +78,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=docker/scripts/build/gpu-build-signal-cleanup.sh
+source "${SCRIPT_DIR}/gpu-build-signal-cleanup.sh"
+ulg_arm_local_gpu_build_trap
+
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 BUILD_SCRIPT="${PROJECT_ROOT}/libs/inference_djinn/scripts/build/python_builders/llama_cpp/build_llama_cpp.py"
 
@@ -96,7 +100,7 @@ GPU_ARCH="${GPU_ARCH:-multi}"
 # Default: vLLM enabled (set to false for faster builds during development)
 ENABLE_VLLM="${ENABLE_VLLM:-true}"
 # Default: Build vLLM from source for optimal performance
-# Provides latest PyTorch 2.11 nightly with CUDA 13.0 optimizations
+# Uses PyTorch cu130 nightly (TORCH_NIGHTLY_DATE=latest or YYYYMMDD)
 # Critical for Blackwell GB300: FlashAttention v3, FP8, improved CUDA graphs
 # Set to false for faster deployment with pre-built wheel (uses older PyTorch 2.9)
 VLLM_FROM_SOURCE="${VLLM_FROM_SOURCE:-true}"
@@ -119,21 +123,18 @@ ENABLE_LLAMA_CPP_PYTHON="${ENABLE_LLAMA_CPP_PYTHON:-false}"
 # Default: Build native llama-server for native integration
 ENABLE_LLAMA_SERVER="${ENABLE_LLAMA_SERVER:-true}"
 # Default: Use latest llama.cpp main branch
-LLAMA_SERVER_VERSION="${LLAMA_SERVER_VERSION:-b8369}"
+LLAMA_SERVER_VERSION="${LLAMA_SERVER_VERSION:-b12400}"
 
 # Default: Use latest vLLM release tag (empty = latest release)
 # Override: --vllm-version=<hash/tag> for specific version
 # Example: --vllm-version=v0.12.0 (release tag)
 # Example: --vllm-version=abc123def (commit hash)
 # Example: --vllm-version=main (bleeding edge)
-VLLM_VERSION="${VLLM_VERSION:-}"
+VLLM_VERSION="${VLLM_VERSION:-v0.34.0}"
 
-# Default: Pin PyTorch nightly to known-working version (avoids broken nightly deps).
-# The Dockerfile falls back to the latest cu130 nightly automatically if this
-# pin is removed from the index.
-# Set to "latest" to always pull the newest nightly (may fail if deps are broken).
-# Format: YYYYMMDD (e.g., 20260315)
-TORCH_NIGHTLY_DATE="${TORCH_NIGHTLY_DATE:-20260315}"
+# PyTorch cu130 nightly: "latest" or YYYYMMDD (Dockerfile tries 2.16.x then 2.11.x dev+date).
+# Default latest — dated pins expire when wheels drop off the nightly index.
+TORCH_NIGHTLY_DATE="${TORCH_NIGHTLY_DATE:-latest}"
 
 # Source cache-busting: empty = rely on Docker's content checksum (default).
 # Set to any value (e.g. timestamp) to force re-COPY of libs/ + services/.
@@ -319,10 +320,10 @@ while [[ $# -gt 0 ]]; do
             echo "  VLLM_MAX_JOBS=8 (source build parallelism)"
             echo "  ENABLE_LLAMA_CPP_PYTHON=true|false (default: false)"
             echo "  LLAMA_CPP_PYTHON_VERSION=hash/tag (default: empty = latest)"
-            echo "  VLLM_VERSION=hash/tag (default: empty = latest release)"
-            echo "  TORCH_NIGHTLY_DATE=YYYYMMDD|latest (default: 20260315)"
+            echo "  VLLM_VERSION=hash/tag (default: v0.34.0)"
+            echo "  TORCH_NIGHTLY_DATE=YYYYMMDD|latest (default: latest)"
             echo "  ENABLE_LLAMA_SERVER=true|false (default: true)"
-            echo "  LLAMA_SERVER_VERSION=ref (default: b8369)"
+            echo "  LLAMA_SERVER_VERSION=ref (default: b12400)"
             echo "  IMAGE_NAME=universal-llm-gateway"
             echo "  IMAGE_TAG=gpu"
             exit 1
@@ -359,6 +360,8 @@ _build_vllm_args() {
     # Add GPU arch if specified
     if [[ -n "${_VLLM_GPU_OVERRIDE:-}" ]]; then
         gpu_flag="--gpu-arch=${_VLLM_GPU_OVERRIDE}"
+    elif [[ -n "${GPU_ARCH}" && "${GPU_ARCH}" != "multi" ]]; then
+        gpu_flag="--gpu-arch=${GPU_ARCH}"
     elif [[ "${GPU_ARCH}" == "multi" ]]; then
         # Multi-arch build: use --gpu-generic for vLLM
         gpu_flag="--gpu-generic"
@@ -384,6 +387,22 @@ if [[ -n "${VLLM_EXTRA_FLAGS:-}" ]]; then
     VLLM_BUILD_ARGS="${VLLM_BUILD_ARGS} ${VLLM_EXTRA_FLAGS}"
 fi
 
+_print_torch_nightly_summary() {
+    local indent="${1:-  }"
+    if [[ "${ENABLE_VLLM}" != "true" ]]; then
+        return
+    fi
+    if [[ "${VLLM_FROM_SOURCE}" == "true" ]]; then
+        if [[ "${TORCH_NIGHTLY_DATE}" == "latest" ]]; then
+            echo "${indent}PyTorch nightly: latest (cu130 index — floating pin, not a dated wheel)"
+        else
+            echo "${indent}PyTorch nightly: pin ${TORCH_NIGHTLY_DATE} (cu130; Dockerfile tries 2.16.x then 2.11.x dev+date)"
+        fi
+    else
+        echo "${indent}PyTorch: from vLLM pre-built wheel (not separate nightly install)"
+    fi
+}
+
 echo "Building GPU-enabled Docker image..."
 echo "  Image: ${IMAGE_NAME}:${IMAGE_TAG}"
 echo "  CUDA Version: ${CUDA_VERSION}"
@@ -397,6 +416,7 @@ if [[ "${ENABLE_VLLM}" == "true" ]]; then
     else
         echo "  vLLM Method: PRE-BUILT WHEEL (CUDA 13.0, fast deployment)"
     fi
+    _print_torch_nightly_summary "  "
 fi
 echo "  llama-cpp-python: ${ENABLE_LLAMA_CPP_PYTHON}"
 if [[ "${ENABLE_LLAMA_CPP_PYTHON}" == "true" ]]; then
@@ -558,7 +578,20 @@ BASE_BUILD_CMD=(
     -t gateway-base:runtime
     .
 )
-"${BASE_BUILD_CMD[@]}" >> "${BUILD_LOG}" 2>&1
+
+ulg_run_buildx_logged() {
+    local -a cmd=("$@")
+    "${cmd[@]}" >> "${BUILD_LOG}" 2>&1
+    local rc=$?
+    if (( rc != 0 )); then
+        ulg_disarm_gpu_build_trap
+        echo "❌ docker buildx failed (exit ${rc}). Log: ${BUILD_LOG}" >&2
+        tail -25 "${BUILD_LOG}" >&2 || true
+        exit "${rc}"
+    fi
+}
+
+ulg_run_buildx_logged "${BASE_BUILD_CMD[@]}"
 
 if [[ "${OBFUSCATE}" == "true" ]]; then
     echo ""
@@ -605,15 +638,22 @@ if [[ "${OBFUSCATE}" == "true" ]]; then
         -t "${IMAGE_NAME}:${IMAGE_TAG}"
         "${BUILD_CONTEXT}"
     )
-    "${OBFUSCATED_BUILD_CMD[@]}" >> "${BUILD_LOG}" 2>&1
+    ulg_run_buildx_logged "${OBFUSCATED_BUILD_CMD[@]}"
     
     DEPLOYMENT_TYPE="obfuscated"
 else
     # Non-obfuscated: tag base as final image
+    if ! docker image inspect gateway-base:runtime >/dev/null 2>&1; then
+        ulg_disarm_gpu_build_trap
+        echo "❌ gateway-base:runtime missing after buildx — refusing to tag ${IMAGE_NAME}:${IMAGE_TAG}" >&2
+        exit 1
+    fi
     docker tag gateway-base:runtime "${IMAGE_NAME}:${IMAGE_TAG}"
     
     DEPLOYMENT_TYPE="readable"
 fi
+
+ulg_disarm_gpu_build_trap
 
 echo ""
 echo "✅ Build complete!"
@@ -636,6 +676,7 @@ if [[ "${ENABLE_VLLM}" == "true" ]]; then
     else
         echo "  - vLLM Method: PRE-BUILT WHEEL (CUDA 13.0, fast deployment)"
     fi
+    _print_torch_nightly_summary "  - "
 fi
 echo "  - llama-cpp-python: ${ENABLE_LLAMA_CPP_PYTHON}"
 if [[ "${ENABLE_LLAMA_CPP_PYTHON}" == "true" ]] && [ -n "${LLAMA_CPP_PYTHON_VERSION}" ]; then
@@ -659,7 +700,6 @@ fi
 if [[ "${ENABLE_VLLM}" == "true" ]]; then
     echo "  - vLLM 0.11.2+ (safetensors/HuggingFace models)"
 fi
-echo "  - PyTorch nightly with CUDA 13.0"
 echo ""
 echo "Performance (hybrid GPU+CPU inference):"
 case "${CPU_OPTIMIZATION}" in

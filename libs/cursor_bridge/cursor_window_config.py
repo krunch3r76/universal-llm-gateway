@@ -57,6 +57,8 @@ def subscription_display_for_gui_host(gui_host: str | None) -> str:
     key = str(gui_host or "").strip().lstrip(":").lower()
     if key == "orion-node":
         return "orion-node"
+    if key == "jupiter":
+        return "jupiter"
     return "8"
 
 
@@ -71,6 +73,8 @@ def normalize_gui_host(gui_host: str | None) -> str:
     key = str(gui_host or "").strip().lstrip(":").lower()
     if key == "orion-node":
         return "orion-node"
+    if key == "jupiter":
+        return "jupiter"
     return ":8"
 
 

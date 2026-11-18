@@ -20,7 +20,11 @@ pytestmark = pytest.mark.offline
 
 @pytest.mark.parametrize(
     "gui_host,expected_origin",
-    [(":8", "http://127.0.0.1:9338"), ("orion-node", "http://127.0.0.1:19338")],
+    [
+        (":8", "http://127.0.0.1:9338"),
+        ("orion-node", "http://127.0.0.1:19338"),
+        ("jupiter", "http://127.0.0.1:19339"),
+    ],
 )
 def test_spawn_tab_calls_launch_with_debug_url(
     gui_host: str, expected_origin: str
@@ -259,7 +263,8 @@ def test_bridge_op_matches_canonical_yaml_ops() -> None:
 
 
 @pytest.mark.parametrize(
-    "gui_host,expected_display", [(":8", "8"), ("orion-node", "orion-node")]
+    "gui_host,expected_display",
+    [(":8", "8"), ("orion-node", "orion-node"), ("jupiter", "jupiter")],
 )
 def test_wake_tab_pastes_via_glass_services(
     gui_host: str, expected_display: str
@@ -311,7 +316,11 @@ def test_relay_rename_tab_writes_no_ledger_row(tmp_path) -> None:
 
 @pytest.mark.parametrize(
     "gui_host,expected_origin",
-    [(":8", "http://127.0.0.1:9338"), ("orion-node", "http://127.0.0.1:19338")],
+    [
+        (":8", "http://127.0.0.1:9338"),
+        ("orion-node", "http://127.0.0.1:19338"),
+        ("jupiter", "http://127.0.0.1:19339"),
+    ],
 )
 def test_rename_tab_calls_sidebar_rename(gui_host: str, expected_origin: str) -> None:
     with patch(
@@ -337,7 +346,11 @@ def test_rename_tab_requires_agent_id_and_title() -> None:
 
 @pytest.mark.parametrize(
     "gui_host,expected_origin",
-    [(":8", "http://127.0.0.1:9338"), ("orion-node", "http://127.0.0.1:19338")],
+    [
+        (":8", "http://127.0.0.1:9338"),
+        ("orion-node", "http://127.0.0.1:19338"),
+        ("jupiter", "http://127.0.0.1:19339"),
+    ],
 )
 def test_prune_sidebar_calls_predecessor_prune(
     gui_host: str, expected_origin: str

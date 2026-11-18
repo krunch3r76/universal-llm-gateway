@@ -190,18 +190,48 @@ def _normalize_gui_host(gui_host: str | None) -> str:
     return normalize_gui_host(gui_host)
 
 
-def gui_host_from_process_env() -> str | None:
-    vscode_agent = os.environ.get("VSCODE_AGENT_FOLDER", "")
-    ripgrep = os.environ.get("CURSOR_RIPGREP_PATH", "")
-    if ".cursor-server" in vscode_agent or ".cursor-server" in ripgrep:
-        return "orion-node"
-    if os.environ.get("SSH_CONNECTION", "").strip():
-        return "orion-node"
-    if os.environ.get("DISPLAY", "").strip() == ":8":
-        return ":8"
+def _glass_host_from_cursor_data_dir() -> str | None:
     cursor_data = os.environ.get("CURSOR_DATA_DIR", "")
+    if "cursor-jupiter" in cursor_data:
+        return "jupiter"
+    if "cursor-orion" in cursor_data:
+        return "orion-node"
     if "cursor-io" in cursor_data:
         return ":8"
+    return None
+
+
+def _glass_host_from_ssh_connection() -> str | None:
+    """Map ``SSH_CONNECTION`` remote host to fleet Glass labels when unambiguous."""
+    conn = os.environ.get("SSH_CONNECTION", "").strip()
+    if not conn:
+        return None
+    parts = conn.split()
+    if len(parts) < 3:
+        return None
+    remote = parts[2].strip().lower()
+    if remote in {"10.0.0.76", "jupiter"}:
+        return "jupiter"
+    if remote in {"10.81.0.166", "orion-node", "orion"}:
+        return "orion-node"
+    return None
+
+
+def gui_host_from_process_env() -> str | None:
+    explicit = os.environ.get("CURSOR_GLASS_GUI_HOST", "").strip()
+    if explicit:
+        from host_predicates.cursor_hosts import is_cursor_xvfb_host
+
+        if is_cursor_xvfb_host(explicit):
+            return _normalize_gui_host(explicit)
+    from_data = _glass_host_from_cursor_data_dir()
+    if from_data:
+        return from_data
+    if os.environ.get("DISPLAY", "").strip() == ":8":
+        return ":8"
+    ssh_host = _glass_host_from_ssh_connection()
+    if ssh_host:
+        return ssh_host
     return None
 
 
@@ -211,7 +241,7 @@ def detect_cursor_gui_host(
     root_id: str | None = None,
     explicit_gui_host: str | None = None,
 ) -> str | None:
-    """Resolve ``orion-node`` vs ``:8`` for wake subscription and CDP probes."""
+    """Resolve Glass ``gui_host`` for wake subscription and CDP probes."""
     from host_predicates.cursor_hosts import is_cursor_xvfb_host
 
     from bus_watch.cursor_tab_whereami import resolve_cursor_tab_whereami

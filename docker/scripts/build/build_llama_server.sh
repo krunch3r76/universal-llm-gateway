@@ -124,6 +124,7 @@ fi
 # Build with CMake
 mkdir -p build && cd build
 
+# Headless gateway image: no Web UI bundle (LLAMA_USE_PREBUILT_UI downloads HF assets in CI).
 # Match cmake_config.py get_cmake_args() CUDA flags (lines 364-368)
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
@@ -138,6 +139,9 @@ cmake .. \
     -DGGML_OPENMP=ON \
     -DGGML_BLAS=OFF \
     -DBUILD_SHARED_LIBS=OFF \
+    -DLLAMA_BUILD_UI=OFF \
+    -DLLAMA_USE_PREBUILT_UI=OFF \
+    -DLLAMA_BUILD_HTML=OFF \
     -G Ninja
 
 cmake --build . --config Release --target llama-server -j"$(nproc)"

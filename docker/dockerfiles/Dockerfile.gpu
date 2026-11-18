@@ -120,7 +120,7 @@ ARG VLLM_MAX_JOBS=8
 # Pin nightly to known-working date. Update when newer nightly verified.
 # If PyTorch prunes this date from the cu130 index, the install step
 # falls back to the latest available nightly automatically.
-ARG TORCH_NIGHTLY_DATE=20260315
+ARG TORCH_NIGHTLY_DATE=latest
 
 # Output to separate directory — merged with llama packages in runtime stage.
 # Avoids file conflicts between independently-built dependency trees.
@@ -141,13 +141,19 @@ RUN if [ "${ENABLE_VLLM}" = "true" ] && [ "${VLLM_FROM_SOURCE}" = "true" ]; then
     install_latest_torch; \
     else \
     echo "   Preferred pin: ${TORCH_NIGHTLY_DATE}" && \
-    if python3.12 -m pip install --no-cache-dir --target=/build/vllm-packages \
-    "torch==2.11.0.dev${TORCH_NIGHTLY_DATE}+cu130" \
-    "torchvision==0.25.0.dev${TORCH_NIGHTLY_DATE}+cu130" \
-    "torchaudio==2.11.0.dev${TORCH_NIGHTLY_DATE}+cu130" \
+    install_dated_torch() { \
+    local d="$1" ver="$2" tv="$3" ta="$4"; \
+    python3.12 -m pip install --no-cache-dir --target=/build/vllm-packages \
+    "torch==${ver}.dev${d}+cu130" \
+    "torchvision==${tv}.dev${d}+cu130" \
+    "torchaudio==${ta}.dev${d}+cu130" \
     --index-url https://download.pytorch.org/whl/nightly/cu130 \
-    --break-system-packages; then \
-    echo "   Installed pinned nightly ${TORCH_NIGHTLY_DATE}"; \
+    --break-system-packages; \
+    }; \
+    if install_dated_torch "${TORCH_NIGHTLY_DATE}" "2.16.0" "0.30.0" "2.16.0"; then \
+    echo "   Installed pinned nightly ${TORCH_NIGHTLY_DATE} (2.16.x)"; \
+    elif install_dated_torch "${TORCH_NIGHTLY_DATE}" "2.11.0" "0.25.0" "2.11.0"; then \
+    echo "   Installed pinned nightly ${TORCH_NIGHTLY_DATE} (2.11.x)"; \
     else \
     echo "⚠️  Pinned nightly ${TORCH_NIGHTLY_DATE} unavailable; falling back to latest cu130 nightly" && \
     rm -rf /build/vllm-packages/* && \
@@ -203,7 +209,7 @@ RUN if [ "${ENABLE_VLLM}" = "true" ] && [ "${VLLM_FROM_SOURCE}" = "true" ]; then
     echo "🚀 Building vLLM from source (${VLLM_BUILD_ARGS}, ${VLLM_MAX_JOBS} jobs)" && \
     python3.12 -m pip install --no-cache-dir --target=/build/vllm-packages psutil --break-system-packages && \
     python3.12 -m pip install --no-cache-dir \
-    "cmake>=3.26.1" ninja "setuptools>=77.0.3,<81.0.0" "setuptools-scm>=8.0" wheel jinja2 \
+    "cmake>=3.26.1" ninja "setuptools>=77.0.3,<81.0.0" "setuptools-scm>=8.0" setuptools-rust wheel jinja2 \
     --break-system-packages && \
     export PYTHONPATH=/build/vllm-packages:${PYTHONPATH} && \
     export MAX_JOBS=${VLLM_MAX_JOBS} && \
@@ -304,7 +310,7 @@ FROM base-builder AS llama-server-builder
 ARG CPU_OPTIMIZATION=avx2
 ARG GPU_ARCH=multi
 ARG ENABLE_LLAMA_SERVER=true
-ARG LLAMA_SERVER_VERSION=b8369
+ARG LLAMA_SERVER_VERSION=b12400
 
 COPY docker/scripts/build/build_llama_server.sh /build/
 
@@ -527,8 +533,8 @@ ARG GPU_ARCH=multi
 ARG CUDA_VERSION=13.0.0
 ARG VLLM_VERSION=
 ARG VLLM_FROM_SOURCE=true
-ARG TORCH_NIGHTLY_DATE=20260315
-ARG LLAMA_SERVER_VERSION=b8369
+ARG TORCH_NIGHTLY_DATE=latest
+ARG LLAMA_SERVER_VERSION=b12400
 ARG LLAMA_CPP_PYTHON_VERSION=
 ARG BUILD_TIMESTAMP=
 

@@ -58,6 +58,8 @@ def row_for_gui_host(
         return idx.get(":8") or idx.get("8")
     if lowered == "orion-node":
         return idx.get("orion-node")
+    if lowered == "jupiter":
+        return idx.get("jupiter")
     return None
 
 

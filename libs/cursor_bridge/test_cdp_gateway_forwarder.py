@@ -124,6 +124,7 @@ def test_off_bridge_probe_does_not_open_cdp_ports(
         ("172.18.0.1", 9340),
         ("172.18.0.1", 9344),
         ("172.18.0.1", 19338),
+        ("172.18.0.1", 19339),
     )
     assert bind_targets(frozenset({"172.18.0.5", "10.0.0.67"})) == ()
     monkeypatch.setattr(
@@ -133,6 +134,9 @@ def test_off_bridge_probe_does_not_open_cdp_ports(
     assert normalize_target("8", "cursor")["origin"] == "http://127.0.0.1:9338"
     assert normalize_target("orion-node", "cursor")["origin"] == (
         "http://127.0.0.1:19338"
+    )
+    assert normalize_target("jupiter", "cursor")["origin"] == (
+        "http://127.0.0.1:19339"
     )
     assert cdp_origin_for_gui_host(":8") == "http://127.0.0.1:9338"
 
@@ -148,6 +152,10 @@ def test_bridge_client_rewrites_orion_cdp(
         "http://172.18.0.1:19338"
     )
     assert cdp_origin_for_gui_host("orion-node") == "http://172.18.0.1:19338"
+    assert normalize_target("jupiter", "cursor")["origin"] == (
+        "http://172.18.0.1:19339"
+    )
+    assert cdp_origin_for_gui_host("jupiter") == "http://172.18.0.1:19339"
 
 
 def test_bridge_client_rewrites_grok_display_ten_cdp(
@@ -202,6 +210,7 @@ def test_open_listeners_binds_gateway_only() -> None:
         ("172.18.0.1", 9340),
         ("172.18.0.1", 9344),
         ("172.18.0.1", 19338),
+        ("172.18.0.1", 19339),
     ]
     assert all(sock.listening == 16 for sock in listeners)
     assert "0.0.0.0" not in {
@@ -218,23 +227,26 @@ def test_bind_failure_on_one_port_keeps_other_listeners() -> None:
         return sock
 
     listeners = open_listeners(frozenset({"172.18.0.1"}), socket_factory=factory)
-    assert len(created) == 5
+    assert len(created) == 6
     assert created[1].bound is None
     assert created[1].closed is True
     assert created[0].closed is False
     assert created[2].closed is False
     assert created[3].closed is False
     assert created[4].closed is False
+    assert created[5].closed is False
     assert [sock.bound for sock in listeners] == [
         ("172.18.0.1", 9338),
         ("172.18.0.1", 9340),
         ("172.18.0.1", 9344),
         ("172.18.0.1", 19338),
+        ("172.18.0.1", 19339),
     ]
     assert listeners[0] is created[0]
     assert listeners[1] is created[2]
     assert listeners[2] is created[3]
     assert listeners[3] is created[4]
+    assert listeners[4] is created[5]
 
 
 def test_main_gateway_absent_parks_without_exit(
@@ -274,6 +286,7 @@ def test_main_gateway_local_all_binds_fail_exits_nonzero(
         and "9339" in caplog.text
         and "9344" in caplog.text
         and "19338" in caplog.text
+        and "19339" in caplog.text
     )
     assert "is not local" not in caplog.text
 
@@ -297,7 +310,8 @@ def test_main_partial_bind_logs_only_bound_ports(
     assert len(info_lines) == 1
     assert "9338" in info_lines[0]
     assert "19338" in info_lines[0]
-    assert "9339" not in info_lines[0]
+    assert "19339" in info_lines[0]
+    assert ",9339" not in info_lines[0]
 
 
 def test_allowed_peers_only_mcp_server_container() -> None:

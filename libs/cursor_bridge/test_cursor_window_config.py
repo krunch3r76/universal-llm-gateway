@@ -23,6 +23,7 @@ def test_cursor_windows_config_tracked_and_loads() -> None:
     assert cfg["schema_version"] == 1
     assert ":8" in cfg["windows"]
     assert "orion-node" in cfg["windows"]
+    assert "jupiter" in cfg["windows"]
 
 
 @pytest.mark.parametrize(
@@ -35,6 +36,8 @@ def test_cursor_windows_config_tracked_and_loads() -> None:
         "http://127.0.0.1:9338",
         "orion-node",
         "http://127.0.0.1:19338",
+        "jupiter",
+        "http://127.0.0.1:19339",
     ],
 )
 def test_configured_hosts_match_prior_behavior(host: str) -> None:
@@ -45,7 +48,6 @@ def test_configured_hosts_match_prior_behavior(host: str) -> None:
     "host",
     [
         *sorted(all_gui_host_aliases()),
-        "jupiter",
         None,
         "",
     ],
@@ -56,6 +58,7 @@ def test_is_cursor_xvfb_host_matches_configured_glass_host(host: str | None) -> 
 
 def test_cdp_origins_from_config() -> None:
     assert cursor_debug_url_for_gui_host("orion-node") == "http://127.0.0.1:19338"
+    assert cursor_debug_url_for_gui_host("jupiter") == "http://127.0.0.1:19339"
     assert cursor_debug_url_for_gui_host(":8") == "http://127.0.0.1:9338"
 
 
@@ -68,6 +71,7 @@ def test_cdp_origin_bridge_client_rewrites_display_8(
     )
     assert cursor_debug_url_for_gui_host(":8") == "http://172.18.0.1:9338"
     assert cursor_debug_url_for_gui_host("orion-node") == "http://172.18.0.1:19338"
+    assert cursor_debug_url_for_gui_host("jupiter") == "http://172.18.0.1:19339"
 
 
 def test_cdp_origin_host_gateway_stays_loopback(
@@ -82,10 +86,11 @@ def test_cdp_origin_host_gateway_stays_loopback(
 
 def test_subscription_display_from_config() -> None:
     assert subscription_display_for_gui_host("orion-node") == "orion-node"
+    assert subscription_display_for_gui_host("jupiter") == "jupiter"
     assert subscription_display_for_gui_host(":8") == "8"
 
 
-@pytest.mark.parametrize("host", [":9", ":10", "jupiter"])
+@pytest.mark.parametrize("host", [":9", ":10"])
 def test_unknown_gui_host_error_refuses_grok_displays(host: str) -> None:
     out = unknown_gui_host_error(host)
     assert out["ok"] is False

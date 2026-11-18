@@ -24,6 +24,11 @@ _DEFAULT_VSCDB_BINDINGS: tuple[tuple[str, str], ...] = (
     ),
     ("/home/io/.gateway/cursor-io/User/globalStorage/state.vscdb", ":8"),
     ("/home/io/.gateway/cursor-orion/User/globalStorage/state.vscdb", "orion-node"),
+    (
+        str(Path.home() / ".gateway/cursor-jupiter/User/globalStorage/state.vscdb"),
+        "jupiter",
+    ),
+    ("/home/io/.gateway/cursor-jupiter/User/globalStorage/state.vscdb", "jupiter"),
     ("/home/mcp/.gateway/cursor-io/User/globalStorage/state.vscdb", ":8"),
 )
 

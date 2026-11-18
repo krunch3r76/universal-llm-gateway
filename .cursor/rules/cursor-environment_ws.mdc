@@ -137,15 +137,15 @@ MCP tools are reached via `CallMcpTool` against the configured servers
 - `tmp/`: ephemeral; never committed; never referenced from durable
   knowledge (rules, cortex notes, journal entries).
 
-## Two Cursor Glass Environments (orion-node vs :8)
+## Cursor Glass environments (:8, orion-node, jupiter)
 
-Two Cursor Glass instances share `io`'s workspace but run on different displays
-and CDP debug ports:
+Three registered Glass targets; CDP origins are **on io** (tunnel or local):
 
-| Environment | Display / `gui_host` | CDP origin | Typical use |
+| Environment | `gui_host` | CDP origin on **io** | Typical use |
 |---|---|---|---|
-| **orion-node** | `orion-node` (`/endpoint-subscriptions` `display="orion-node"`) | `http://127.0.0.1:19338` | Remote-SSH desktop Glass on orion-node |
-| **:8 Xvfb** | `8` or `:8` (`display="8"`) | `http://127.0.0.1:9338` | Headless Glass on `io` (Xvfb `:8`) |
+| **:8 Xvfb** | `:8` / `display="8"` | `http://127.0.0.1:9338` | Headless Glass on `io` |
+| **orion-node** | `orion-node` | `http://127.0.0.1:19338` | Attended Glass on orion-node (local **19338**) |
+| **jupiter** | `jupiter` | `http://127.0.0.1:19339` | Attended COSMIC Glass on jupiter (local **19338** → hub **19339**) |
 
 Both use the same Glass CDP helpers (`libs/cursor_bridge/glass_services_js.py`,
 `cursor_agents_hop.py`, `wake_delivery.py`): hop/spawn via
@@ -155,8 +155,7 @@ rename via `renameComposer`, sidebar prune via archive CDP. The
 configured.
 
 **MCP `cursor_bridge` direct Glass ops** (in addition to legacy agent-bus
-`open_tab` / `send_msg` / `status`): pass `gui_host=":8"` (default) or
-`gui_host="orion-node"`.
+`open_tab` / `send_msg` / `status`): pass `gui_host=":8"` (default), `gui_host="orion-node"`, or `gui_host="jupiter"`.
 
 | op | Required params | Effect |
 |---|---|---|
