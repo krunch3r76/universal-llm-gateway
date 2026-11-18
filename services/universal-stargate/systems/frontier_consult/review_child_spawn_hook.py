@@ -346,9 +346,12 @@ async def _dispatch_review_child(
 
     if prompt_turn_number is None:
         logger.warning(
-            "review_child spawn fail-closed: missing frozen_turn pin "
-            "thread=%s",
+            "review_child spawn fail-closed: missing frozen_turn pin thread=%s",
             delivery_thread,
+        )
+        abandon_spawn_state(
+            parent_execution_id=parent_execution_id,
+            reason="missing_frozen_turn_pin",
         )
         return {}
 
@@ -452,8 +455,7 @@ async def spawn_generate_lane_review_child(
     delivery_thread = ctx.dispatch_thread_id or ctx.parent_dispatch_thread_id
     if not delivery_thread:
         logger.warning(
-            "review_child spawn fail-closed: no coord dispatch_thread_id "
-            "(worker=%s)",
+            "review_child spawn fail-closed: no coord dispatch_thread_id (worker=%s)",
             parent_thread_id,
         )
         return {}
@@ -549,9 +551,7 @@ async def _attempt_spawn_for_completion(
         return False
 
     try:
-        reviewer = select_independent_reviewer(
-            ctx.resolved_model, ctx.resolved_effort
-        )
+        reviewer = select_independent_reviewer(ctx.resolved_model, ctx.resolved_effort)
     except ReviewDefaultLoadError as exc:
         if exc.kind not in _loader_error_logged:
             logger.error(
