@@ -47,7 +47,8 @@ Prose parameters (`planner`, `wake`, `skip_confer`) are not `{{slots}}`; the tem
 ## Procedure
 
 1. **Parse** parameters and defaults; infer `slug` when absent. Echo resolved values in ≤8 lines.
-2. **Template** — substitute slots and prose flags, then follow the template only:
+2. **Rename this tab** — once `slug` is resolved, rename the tab that runs the legs with Cursor's `rename_chat`: title `lean-ladder {slug}`; when the run has a bus thread id `{n}` (after § Wake registration, or the first worker thread when `wake=none`), rename once more to `{n} {slug}`. Invoking `/lean-ladder` is the rename ask: do not wait to be asked again. `rename_chat` unavailable or failed ⇒ say so once and continue; no retry loop. With `planner=glass:<n>` the spawned tab renames itself, not the spawning seat.
+3. **Template** — substitute slots and prose flags, then follow the template only:
    - § Preflight (before any dispatch)
    - § Retrieval gate (seat duty, before each authored artifact) for each artifact you author
    - § Wake registration (every Cursor planner; before any dispatch) — subsection `planner=here` or `planner=glass:<n>`
@@ -56,8 +57,8 @@ Prose parameters (`planner`, `wake`, `skip_confer`) are not `{{slots}}`; the tem
    - § Legs (run in order; one bounded step each) including optional § Leg 2b — Optional plan review (`cursor/grok-4.7`)
    - § Selective reading of closeouts (md tooling only) for harvests
    - § Completion (quote, do not narrate)
-3. **`planner=glass:<n>`** — the spawning seat runs preflight, retrieval for the spawn prompt, and wake registration only; the spawned tab runs all legs through completion (see § Wake registration / `planner=glass:<n>` step 6).
-4. **`planner=here`** — this tab runs all legs through completion.
+4. **`planner=glass:<n>`** — the spawning seat runs preflight, retrieval for the spawn prompt, and wake registration only; the spawned tab runs all legs through completion (see § Wake registration / `planner=glass:<n>` step 6).
+5. **`planner=here`** — this tab runs all legs through completion.
 
 ## Template section index
 
