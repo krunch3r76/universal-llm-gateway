@@ -54,7 +54,7 @@ def _patch_prepare_deps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             {
                 "aligned_knobs": None,
                 "warnings_as_dicts": lambda self: [],
-                "knob_resolution_as_dicts": lambda self: [],
+                "knob_resolution_as_dicts": lambda self: {},
             },
         )(),
     )
@@ -138,7 +138,7 @@ async def test_handle_roundtrip_preserves_fingerprint_fields() -> None:
         claimed_via_atomic=False,
         admitted=True,
         alignment_warnings=(),
-        knob_resolution=(),
+        knob_resolution={},
     )
     restored = handle_from_dict(handle_to_dict(handle))
     assert restored == handle
