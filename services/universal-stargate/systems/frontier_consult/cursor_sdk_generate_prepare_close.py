@@ -217,7 +217,7 @@ async def complete_cursor_sdk_generate_prepare(
         claimed_via_atomic=claimed_via_atomic,
         admitted=admitted,
         alignment_warnings=tuple(alignment.warnings_as_dicts()),
-        knob_resolution=tuple(alignment.knob_resolution_as_dicts()),
+        knob_resolution=dict(alignment.knob_resolution_as_dicts()),
         nest_under=nest_under,
         topic=handle_topic,
         lane=lane,

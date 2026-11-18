@@ -135,7 +135,7 @@ def _sdk_admit_envelope(
     )
     if handle.auto_review_defaulted:
         result["auto_review_defaulted"] = True
-    result["knob_resolution"] = list(handle.knob_resolution)
+    result["knob_resolution"] = dict(handle.knob_resolution)
     if queued:
         result["status"] = "queued"
     result["dispatch_id"] = handle.dispatch_id
