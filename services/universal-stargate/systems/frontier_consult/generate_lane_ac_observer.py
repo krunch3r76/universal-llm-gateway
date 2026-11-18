@@ -366,6 +366,7 @@ def build_generate_lane_reviewer_prompt(
     parent_instruction: str | None = None,
     parent_instruction_bind: str | None = None,
     token_factory: Callable[[], str] | None = None,
+    caller_inventory_block: str | None = None,
 ) -> str:
     """Build generate-lane reviewer prompt with surface-specific rubric."""
     from .densify_candidate_ready import build_reviewer_prompt
@@ -377,7 +378,10 @@ def build_generate_lane_reviewer_prompt(
         negative_space=NEGATIVE_SPACE_BY_SURFACE[surface],
     )
     footer = FOOTER_BY_SURFACE[surface]
-    base = f"{prompt}\n\n{footer}"
+    if caller_inventory_block:
+        base = f"{prompt}\n\n{caller_inventory_block}\n\n{footer}"
+    else:
+        base = f"{prompt}\n\n{footer}"
     if parent_instruction is None or not parent_instruction.strip():
         return base
     factory = token_factory or _default_fence_token

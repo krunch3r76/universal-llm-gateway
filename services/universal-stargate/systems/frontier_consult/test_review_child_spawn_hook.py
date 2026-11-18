@@ -2228,3 +2228,185 @@ async def test_leg_c_gate_refused_prompt_abandons_once(
     assert meta["abandon_reason"] == "review_prompt_gate_refused"
     assert captured == []
     assert published.count("frontier.review_child.prompt_bind") == 1
+
+
+_CALLER_INVENTORY_PACKET = """
+<scope>
+Files expected: - `libs/claude_bundles/holder_strings.py`
+</scope>
+<task_guidance>
+Change the holder string formatter.
+</task_guidance>
+"""
+
+
+@pytest.mark.asyncio
+async def test_caller_inventory_source_prompt_carries_block() -> None:
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+        AsyncMock(return_value=_CALLER_INVENTORY_PACKET),
+    ):
+        build = await _build_generate_lane_review_prompt(
+            request_id="req-ci",
+            parent_dispatch_thread_id="thread:ci",
+            prompt_turn_number=3,
+            prompt_bind_mode="frozen_turn",
+        )
+    assert build is not None
+    prompt = build.prompt
+    assert '<caller_inventory data_only="true" status="complete"' in prompt
+    site_line = (
+        "libs/cdp_ask/work_projection.py:124 imports format_cowork_cse_holder, "
+        "holder_id_from_chat_url from claude_bundles.holder_strings "
+        "[outside files_expected]"
+    )
+    assert site_line in prompt
+    assert "Caller inventory: machine-generated from the repository." in prompt
+    token, _bind, _sha, _chars, _fenced = _extract_fenced_instruction(prompt)
+    assert prompt.index(f"{token}>>> END PARENT_INSTRUCTION") < prompt.rindex(
+        "<caller_inventory"
+    )
+    assert prompt.rindex("<caller_inventory") < prompt.index(
+        FOOTER_BY_SURFACE["source"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_caller_inventory_sidecar_no_block() -> None:
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+        AsyncMock(return_value=_SIDECAR_PACKET),
+    ):
+        build = await _build_generate_lane_review_prompt(
+            request_id="req-ci-sidecar",
+            parent_dispatch_thread_id="thread:ci-sidecar",
+            prompt_turn_number=2,
+            prompt_bind_mode="frozen_turn",
+        )
+    assert build is not None
+    assert "<caller_inventory" not in build.prompt
+
+
+@pytest.mark.asyncio
+async def test_caller_inventory_not_computed_without_lib_path() -> None:
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+        AsyncMock(return_value=_SOURCE_PACKET),
+    ):
+        build = await _build_generate_lane_review_prompt(
+            request_id="req-ci-nc",
+            parent_dispatch_thread_id="thread:ci-nc",
+            prompt_turn_number=2,
+            prompt_bind_mode="frozen_turn",
+        )
+    assert build is not None
+    assert (
+        'status="not_computed" reason="no_lib_paths_in_files_expected"' in build.prompt
+    )
+
+
+@pytest.mark.asyncio
+async def test_caller_inventory_frontmatter_list() -> None:
+    packet = (
+        "---\nfiles_expected:\n  - libs/claude_bundles/holder_strings.py\n---\n"
+        "<scope>\nNo files here.\n</scope>\n"
+        "<task_guidance>\nChange holder.\n</task_guidance>\n"
+    )
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+        AsyncMock(return_value=packet),
+    ):
+        build = await _build_generate_lane_review_prompt(
+            request_id="req-ci-fm",
+            parent_dispatch_thread_id="thread:ci-fm",
+            prompt_turn_number=2,
+            prompt_bind_mode="frozen_turn",
+        )
+    assert build is not None
+    assert "libs/cdp_ask/work_projection.py:124" in build.prompt
+
+
+@pytest.mark.asyncio
+async def test_caller_inventory_bullet_after_declaration() -> None:
+    packet = (
+        "<scope>\nFiles expected:\n"
+        "- `libs/claude_bundles/holder_strings.py`\n"
+        "</scope>\n<task_guidance>\nChange holder.\n</task_guidance>\n"
+    )
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+        AsyncMock(return_value=packet),
+    ):
+        build = await _build_generate_lane_review_prompt(
+            request_id="req-ci-bullet",
+            parent_dispatch_thread_id="thread:ci-bullet",
+            prompt_turn_number=2,
+            prompt_bind_mode="frozen_turn",
+        )
+    assert build is not None
+    assert "libs/cdp_ask/work_projection.py:124" in build.prompt
+
+
+@pytest.mark.asyncio
+async def test_caller_inventory_mention_does_not_widen() -> None:
+    packet = _CALLER_INVENTORY_PACKET.replace(
+        "</task_guidance>",
+        "do not edit `libs/cdp_ask/work_projection.py`\n</task_guidance>",
+    )
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+        AsyncMock(return_value=packet),
+    ):
+        build = await _build_generate_lane_review_prompt(
+            request_id="req-ci-mention",
+            parent_dispatch_thread_id="thread:ci-mention",
+            prompt_turn_number=2,
+            prompt_bind_mode="frozen_turn",
+        )
+    assert build is not None
+    assert 'modules="1"' in build.prompt
+    assert "libs/cdp_ask/work_projection.py:124" in build.prompt
+
+
+@pytest.mark.asyncio
+async def test_caller_inventory_passes_dispatch_checks() -> None:
+    from claude_bundles.cdp_review_prompt_gate import enforce_review_prompt_gate
+    from systems.frontier_consult.dispatch_thread_context import (
+        reject_unresolved_placeholders,
+    )
+
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+        AsyncMock(return_value=_CALLER_INVENTORY_PACKET),
+    ):
+        build = await _build_generate_lane_review_prompt(
+            request_id="req-ci-gate",
+            parent_dispatch_thread_id="thread:ci",
+            prompt_turn_number=3,
+            prompt_bind_mode="frozen_turn",
+        )
+    assert build is not None
+    prompt = build.prompt
+    enforce_review_prompt_gate(
+        contract="code-review",
+        prompt_text=prompt,
+        dispatch_thread_id="thread:ci",
+    )
+    reject_unresolved_placeholders(
+        request_id="req-ci",
+        text=_REVIEWER_EMPTY_SCOPE_PREFIX + prompt,
+        field="prompt",
+    )
+
+
+@pytest.mark.asyncio
+async def test_caller_inventory_absent_without_parent_instruction() -> None:
+    build = await _build_generate_lane_review_prompt(
+        request_id="req-ci-absent",
+        parent_dispatch_thread_id="thread:ci-absent",
+        prompt_turn_number=None,
+        prompt_bind_mode="explicit_inline",
+        frozen_instruction_text=None,
+    )
+    assert build is not None
+    assert "<caller_inventory" not in build.prompt

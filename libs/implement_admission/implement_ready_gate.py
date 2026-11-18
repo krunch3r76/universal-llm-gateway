@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from implement_admission.consult_provenance_record import load_todo_consult_provenance
+from implement_admission.consumer_import_verify import repo_root
 from implement_admission.dense_spec_schema import dense_spec_hash_uri
 from implement_admission.density_triage_gate import check_requested_bool
 from implement_admission.doc_validate_attestation import (
@@ -24,6 +25,10 @@ from implement_admission.doc_validate_attestation import (
     doc_validate_attestation_tokens,
     evaluate_doc_validate_attestation,
     extract_doc_validate_attestation,
+)
+from implement_admission.domain_change_caller_gate import (
+    CALLER_INVENTORY_UNAVAILABLE,
+    evaluate_domain_change_caller_admit,
 )
 from implement_admission.implement_ready import evaluate_implement_ready
 from implement_admission.implement_ready_gate6_resolve import resolve_gate6_ratification
@@ -192,6 +197,21 @@ def require_implement_ready(
             field="source_ref",
             reason=verdict.reason or verdict.code or "implement_not_ready",
             code=verdict.code or "implement_not_ready",
+        )
+
+    caller_verdict = evaluate_domain_change_caller_admit(
+        todo_id=ref.canonical_ref,
+        files_expected=files_expected,
+        attributes=attrs,
+        repo_root=repo_root(),
+    )
+    if not caller_verdict.admitted:
+        code = caller_verdict.code or CALLER_INVENTORY_UNAVAILABLE
+        raise ImplementReadyGateError(
+            request_id=request_id,
+            field="source_ref",
+            reason=caller_verdict.reason or code,
+            code=code,
         )
 
     if triage == "judgment_required" and dense_spec_text is not None:
