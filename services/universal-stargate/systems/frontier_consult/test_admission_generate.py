@@ -247,16 +247,17 @@ def test_omit_model_by_job() -> None:
     _, _, _, conductor = resolve_auto_seat_generate_target(
         "cursor-sdk", model=None, request_id="req-cond", job="conductor"
     )
-    _, _, _, pinned = resolve_auto_seat_generate_target(
-        "cursor-sdk",
-        model="cursor/grok-4.7",
-        request_id="req-pin",
-        job="implement",
-    )
     assert implement == "cursor/composer-2.5"
     assert mechanical == "cursor/composer-2.5"
-    assert conductor == "cursor/grok-4.7"
-    assert pinned == "cursor/grok-4.7"
+    assert conductor == "cursor/composer-2.5"
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        resolve_auto_seat_generate_target(
+            "cursor-sdk",
+            model="cursor/grok-4.7",
+            request_id="req-pin",
+            job="implement",
+        )
+    assert exc_info.value.code == "resolved_model_mismatch"
 
 
 def test_explicit_composer_with_conductor_packet_kind() -> None:

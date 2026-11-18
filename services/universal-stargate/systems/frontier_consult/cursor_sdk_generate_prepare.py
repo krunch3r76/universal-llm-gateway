@@ -214,8 +214,7 @@ async def prepare_cursor_sdk_generate(
         is_cursor_model_denied,
         is_cursor_sdk_model_admitted,
     )
-    from implement_admission.routing import load_route_policy
-    from implement_admission.workflow_registry import load_auto_judgment_default_model
+    from implement_admission.workflow_registry import resolve_omit_model
 
     from .admission import FrontierEndpointError
 
@@ -224,7 +223,7 @@ async def prepare_cursor_sdk_generate(
     if raw_model:
         resolved_model = raw_model
     else:
-        resolved_model = load_auto_judgment_default_model(load_route_policy())
+        resolved_model, _omit_wf = resolve_omit_model(contract=effective_contract)
     if resolved_model == "auto":
         resolved_model = "cursor/auto"
     if not resolved_model:

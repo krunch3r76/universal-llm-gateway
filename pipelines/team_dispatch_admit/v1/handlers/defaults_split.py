@@ -13,11 +13,8 @@ from cursor_capabilities import (
     is_cursor_sdk_model_admitted,
 )
 from implement_admission.routing import load_route_policy
-from implement_admission.workflow_registry import (
-    MECHANICAL_WORKFLOW,
-    load_auto_judgment_default_model,
-    load_workflow_registry,
-)
+from implement_admission.mechanical_executor_gate import refuse_stargate_mechanical_executor
+from implement_admission.workflow_registry import resolve_omit_model
 from model_id import ModelId
 
 from ._envelope import Backend, is_cdp_model, is_cursor_substrate_model, reject_envelope
@@ -115,19 +112,8 @@ def _select_backend(
     return "frontier"
 
 
-def _omit_model(*, job: str | None) -> tuple[str, str]:
-    registry = load_workflow_registry()
-    key = (job or "").strip().lower()
-    if key in {"implement", "mechanical"}:
-        binding = registry.workflows.get(MECHANICAL_WORKFLOW)
-        if binding is None or not binding.model:
-            raise ValueError("sdk_generate_model_invalid")
-        return binding.model, MECHANICAL_WORKFLOW
-    wf = registry.workflow_for_contract(key) if key else None
-    if wf is not None:
-        return wf.model, wf.slug
-    policy = load_route_policy()
-    return load_auto_judgment_default_model(policy), "auto_judgment"
+def _omit_model(*, job: str | None, contract: str | None = None) -> tuple[str, str]:
+    return resolve_omit_model(job=job, contract=contract)
 
 
 def _resolve_sdk_target(
@@ -179,6 +165,17 @@ def _resolve_sdk_target(
         workflow = _omit_model(job=job)[1]
     else:
         workflow = _omit_model(job=job)[1]
+    try:
+        refuse_stargate_mechanical_executor(
+            job=job,
+            contract=None,
+            requested_model=model,
+            resolved_model=resolved,
+        )
+    except ValueError as exc:
+        if str(exc) == "mechanical_executor_refused":
+            raise ValueError("mechanical_executor_refused") from exc
+        raise
     return to_agent, family, platform, resolved, workflow
 
 
@@ -217,6 +214,17 @@ def _seat_field_error(exc: ValueError) -> dict[str, Any]:
                 "(cursor_sdk_other_models_pool=deny)"
             ),
             details={"pool": "other_models"},
+        )
+    if code == "mechanical_executor_refused":
+        return reject_envelope(
+            status_code=422,
+            code="resolved_model_mismatch",
+            field="model",
+            reason=(
+                "mechanical implement job refused: explicit model must match "
+                "workflows.mechanical_implement"
+            ),
+            details={"retryable": False},
         )
     if code in {"sdk_generate_model_invalid", "sdk_generate_model_invalid_explicit"}:
         explicit = code.endswith("_explicit")

@@ -31,6 +31,7 @@ AUTO_OMIT_CONTRACTS: frozenset[str] = frozenset(CANONICAL_CONTRACTS) | {
 MECHANICAL_WORKFLOW = "mechanical_implement"
 CHECK_REVIEW_WORKFLOW = "check_review"
 AUTO_JUDGMENT_WORKFLOW = "auto_judgment"
+_MECHANICAL_OMIT_KEYS = frozenset({"implement", "mechanical", "pure-mechanical"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,6 +384,26 @@ def load_workflow_registry(path: Path | None = None) -> WorkflowRegistry:
     """Load and parse the workflow registry from disk (process-cached)."""
     policy_path = path or default_policy_path()
     return parse_workflow_registry(load_route_policy(policy_path))
+
+
+def resolve_omit_model(
+    *,
+    contract: str | None = None,
+    job: str | None = None,
+) -> tuple[str, str]:
+    """Return ``(model, workflow_slug)`` for omitted ``model`` on generate/admit."""
+    registry = load_workflow_registry()
+    key = (job or contract or "").strip().lower()
+    if key in _MECHANICAL_OMIT_KEYS:
+        binding = registry.workflows.get(MECHANICAL_WORKFLOW)
+        if binding is None or not binding.model:
+            raise ValueError("sdk_generate_model_invalid")
+        return binding.model, MECHANICAL_WORKFLOW
+    wf = registry.workflow_for_contract(key) if key else None
+    if wf is not None:
+        return wf.model, wf.slug
+    policy = load_route_policy()
+    return load_auto_judgment_default_model(policy), AUTO_JUDGMENT_WORKFLOW
 
 
 def load_auto_judgment_default_model(policy: dict[str, Any]) -> str:

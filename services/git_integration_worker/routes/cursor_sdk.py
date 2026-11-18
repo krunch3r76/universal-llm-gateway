@@ -4317,6 +4317,52 @@ async def admit_cursor_dispatch(
         else None
     )
     contract = sdk_contract_or_missing(req.handoff_contract, inferred_contract)
+    from implement_admission.mechanical_executor_gate import (
+        evaluate_mechanical_executor_gate,
+        mechanical_executor_gate_applies,
+        primary_mechanical_contract_signal,
+    )
+    from services.git_integration_worker.cursor_sdk_model_ban import (
+        _parent_resolved_model,
+    )
+
+    operator_contract = getattr(req, "operator_contract", None)
+    gate_applies = mechanical_executor_gate_applies(
+        handoff_contract=req.handoff_contract,
+        operator_contract=operator_contract,
+        inferred_contract=inferred_contract,
+    )
+    mech_contract = primary_mechanical_contract_signal(
+        handoff_contract=req.handoff_contract,
+        operator_contract=operator_contract,
+        inferred_contract=inferred_contract,
+    )
+    parent_model = (
+        _parent_resolved_model(str(req.resume_of).strip()) if req.resume_of else None
+    )
+    mech_verdict = evaluate_mechanical_executor_gate(
+        gate_applies=gate_applies,
+        effective_contract=mech_contract,
+        wire_model=str(req.model or ""),
+        resolved_bare_model=config.model_id,
+        ban_override=req.ban_override,
+        ban_override_reason=req.ban_override_reason,
+        model_ban_override_event_id=req.model_ban_override_event_id,
+        resume_of=str(req.resume_of).strip() if req.resume_of else None,
+        parent_resolved_model=parent_model,
+    )
+    if not mech_verdict.allowed:
+        return _reject_pre_admission(
+            req,
+            worker_error_code=str(mech_verdict.code or "MECHANICAL_EXECUTOR_MODEL_REFUSED"),
+            failure_layer="validation",
+            http_status=int(mech_verdict.http_status or 422),
+            detail_summary=str(mech_verdict.reason or "mechanical executor model refused"),
+            invalid_fields=["model", "handoff_contract"],
+            retryable=False,
+            validation_stage=str(mech_verdict.validation_stage or "contract_model"),
+            extra_data=mech_verdict.details,
+        )
     pool_refusal = _conductor_pool_refusal(
         req, contract=contract, packet_text=packet_text
     )

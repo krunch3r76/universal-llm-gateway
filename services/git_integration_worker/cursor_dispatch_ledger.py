@@ -412,9 +412,12 @@ def _now() -> str:
 def resolve_cursor_sdk_dispatch_ledger_path() -> Path:
     """Production dispatch ledger path — immune to per-dispatch ``HOME`` overlays.
 
-    ``CURSOR_SDK_DISPATCH_LEDGER`` (exported by GIW into bridge argv) wins when
-    set. Otherwise ``DATA_DIR`` or ``operator_real_home()/.gateway`` — never
-    ``Path.home()``, which follows a swapped dispatch HOME into a shadow DB.
+    Resolution order (first hit wins):
+
+    1. ``CURSOR_SDK_DISPATCH_LEDGER`` — GIW exports this into cursor-sdk bridge argv.
+    2. ``$DATA_DIR/cursor-sdk-dispatch.db`` when ``DATA_DIR`` is set.
+    3. ``operator_real_home()/.gateway/cursor-sdk-dispatch.db`` (never ``Path.home()``,
+       which follows a per-dispatch HOME overlay into a shadow DB).
     """
     pinned = os.environ.get(CURSOR_SDK_DISPATCH_LEDGER_ENV, "").strip()
     if pinned:
