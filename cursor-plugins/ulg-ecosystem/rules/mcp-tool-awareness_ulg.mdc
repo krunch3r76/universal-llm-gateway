@@ -39,11 +39,9 @@ CallMcpTool(server="vortex-code", toolName="agent_bus", arguments={
   "arguments": "{\"thread\": \"111\", \"last\": 3, \"compact\": true}"
 })
 ```
-## fs — Markdown Ops (workspaces only)
+## fs — Markdown Ops (PRIMARY)
 
-For large markdown files under **`sandbox="workspaces"`**, prefer section-level access
-over full reads. **`md_*` is not available on `sandbox="cortex"`** — use `fs(op="read")`
-for cortex paths; a denied `md_*` on cortex means **op_not_permitted**, not path_absent.
+For large markdown files, prefer section-level access over full reads:
 
 | Op | Purpose | Extra args |
 |---|---|---|
@@ -56,6 +54,9 @@ for cortex paths; a denied `md_*` on cortex means **op_not_permitted**, not path
 | `find` | Filename/glob locate (workspaces only) | `path` (repo scope), `content` (pattern) |
 | `read` | Full file read | `path` (repo-relative refs auto-resolve) |
 | `write` | Write/overwrite file | `path`, `content` |
+
+
+Default `span=own_body` on section writes; `expected_sha256` CAS on pre-image; `md_create` create-only.
 
 ## Sandbox Routing
 
@@ -73,12 +74,12 @@ for cortex paths; a denied `md_*` on cortex means **op_not_permitted**, not path
 **Do NOT full-`Read` `mcps/**/tools/*.json` to learn an op/param.** A descriptor is one
 giant `description` blob (cortex.json ≈ 15.7k chars); one read pulls ~40 ops' worth of
 prose. Cached descriptors can also be STALE (e.g. `team_dispatch.json` lacks `handoff`/
-`contract`/`source_ref` the server ships) — **live `mcp_get_tools`/catalog is authoritative**.
+`contract`/`source_ref` the server ships) — **live `mcp_get_tools`/GetDynamicTools is authoritative for what it lists**, not for absence: overflow tools on `user-vortex-code` require `tool_search` first (`presence-discipline` P3.3).
 
 Order (stop at the first that answers):
 1. **Rule / SOT** — `cortex-essentials`, `handoff-dispatchers`+`dispatch-workflow`, `fs`/this rule, `agent-bus-discipline`, `tool-reference` §rag.
 2. **`mcp_get_tools` / grep** the targeted field (`Grep -C 3-5`) — never full-read for one field.
-3. **Cached descriptor — with a freshness check** (cross-check the live catalog before trusting an absence).
+3. **Before an absence report** — zero matches in GetDynamicTools or the primary catalog do not prove a tool missing: run `tool_search(query="<name>")` on `user-vortex-code`; on a hit, use the `dispatch_template`. Name the search runs in the report (P3.3). Cross-check cached descriptors only if still unresolved.
 4. **Full read — once per novel tool per session**, and note why.
 
 Full discipline + "already covered" map: `mcp-descriptor-read-discipline.mdc`.
