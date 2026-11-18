@@ -41,18 +41,6 @@ _SUBJECT_RE = re.compile(
 _TURN_REF_RE = re.compile(r"#(\d+)")
 _LANE_ID_RE = re.compile(r"(\d{5})")
 
-GOVERNING_RULE: dict[str, str] = {
-    "REQUEST": (
-        "R5: no PICKUP|<work_key> within 10 min ⇒ ask a live Impresario house to recover "
-        "the peer"
-    ),
-    "PICKUP": (
-        "R3: read DONE / FAILED / QUESTION and nothing in between; answer QUESTION "
-        "with RULING|<work_key>"
-    ),
-    "PLAN": ("R4: review the plan and post ACK or PARK before the implement leg"),
-}
-
 _REQUEST_CLOSE = frozenset({"DONE", "FAILED", "CANCEL", "WITHDRAW"})
 _PICKUP_CLOSE = frozenset({"DONE", "FAILED"})
 _PLAN_CLOSE = frozenset({"ACK", "PARK", "CANCEL"})
@@ -729,11 +717,9 @@ def render_live_leg(
         )
     item_lines: list[str] = []
     for item in leg.items:
-        rule = GOVERNING_RULE.get(item.verb, "")
         kind_part = f"{item.kind}|" if item.kind else ""
         item_lines.append(
-            f"- lane {item.lane} #{item.turn} {item.verb}|{kind_part}{item.key} — "
-            f"{rule}"
+            f"- lane {item.lane} #{item.turn} {item.verb}|{kind_part}{item.key}"
         )
     error_lines: list[str] = []
     for lane in leg.lanes_queried:
@@ -766,7 +752,6 @@ def render_live_leg(
 
 
 __all__ = [
-    "GOVERNING_RULE",
     "LaneFoldState",
     "LiveLeg",
     "MaestroRosterLoad",

@@ -7,7 +7,6 @@ from typing import Any
 import pytest
 
 from claude_bundles.operator_proxy_live_leg import (
-    GOVERNING_RULE,
     fetch_turns_to_closure,
     fold_lane,
     house_lanes,
@@ -52,7 +51,10 @@ def _standing_handoff_fixture() -> str:
         heading = (
             f"## CURRENT LEG {n} — HOP HANDOFF" if n >= 170 else f"## LEG {n} — CURRENT"
         )
-        lines.append(f"{heading}\nSENTINEL-LEG-{n}\n")
+        if n == 184:
+            lines.append(f"{heading}\nSENTINEL-LEG-184 · hop boundary #40\n")
+        else:
+            lines.append(f"{heading}\nSENTINEL-LEG-{n}\n")
         if n == 181:
             lines.append("open sidecar-only ML1 todo:ml1\n")
     return "\n".join(lines)
@@ -108,15 +110,18 @@ def test_computed_hop_rendering() -> None:
         calls.append((lane, None))
         if lane == "15857":
             raise RuntimeError("simulated bus down")
+        if lane == "12286":
+            return data.get("15722", [])
         return data.get(lane, [])
 
     out = ensure_operator_proxy_mission_prompt(
         "thread_id: 12286\n",
         standing_handoff_text=_standing_handoff_fixture(),
-        roster_text=_ROSTER,
+        roster_text="",
         fetch_turns=fetch_turns,
     )
 
+    assert calls == [("12286", None)]
     assert "SENTINEL-LEG-184" in out
     for n in range(119, 184):
         assert f"SENTINEL-LEG-{n}" not in out
@@ -125,25 +130,14 @@ def test_computed_hop_rendering() -> None:
     assert "todo:maestro-computed-hop" in out
     assert "decision:house-kinds-unify" in out
     assert "todo:maestro-seat-pipelines" in out
-    assert "todo:ml1" in out or "[hop_budget_exceeded live_leg" in out
     assert "decision:maestro-hop-model-fable" not in out
     assert "recover-maestro-houses" not in out
-
-    for verb in ("REQUEST", "PLAN"):
-        if verb in GOVERNING_RULE:
-            assert GOVERNING_RULE[verb].split(":")[0] in out
-    # The PICKUP row is the one the live-leg cap cuts. The key stays; the
-    # governing-rule sentence is dropped whole rather than sliced (friction:39828).
-    assert "R3:" not in out
-
-    assert "live leg unavailable for 15857" in out
-    assert "consolidated section not found" not in out
-
-    assert len(calls) == 10
+    live_block = out.split("## Live leg", 1)[1].split("## Pointers", 1)[0]
+    assert " — " not in live_block
 
     assert out.rindex("## Hard refusals") > out.index("## Hop request (data)")
     refusals = out.split("## Hard refusals", 1)[1]
-    assert refusals.count("\n- ") >= 11
+    assert refusals.count("\n- ") == 12
 
     twice = ensure_operator_proxy_mission_prompt(out)
     assert twice.rstrip("\n") == out.rstrip("\n")
@@ -159,7 +153,6 @@ def test_amendment_3_landed_does_not_mint_open_item() -> None:
     items, _ = fold_lane("12286", turns)
     verbs = {item.verb for item in items if item.key == "todo:restart-me"}
     assert verbs == {"PICKUP"}
-    assert "LANDED" not in GOVERNING_RULE
 
 
 def test_cancel_matches_work_key_before_turn_ref() -> None:

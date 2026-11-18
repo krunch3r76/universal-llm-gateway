@@ -47,7 +47,6 @@ _ARCHIVED_PREV_RE = re.compile(
     re.MULTILINE | re.IGNORECASE,
 )
 _POLL_HINT_RE = re.compile(r"poll_hint\s+(\{.*\})", re.DOTALL)
-_K_BULLET_RE = re.compile(r"\bK(\d+)\b")
 _LEG_NUM_RE = re.compile(r"\bLEG\s+(\d+)\b")
 
 
@@ -1062,36 +1061,21 @@ def render_checkpoint_block(
 
 def render_pointers_block(
     *,
+    lane: str,
     checkpoint_preamble: str,
-    rules_text: str,
     max_bytes: int | None = None,
 ) -> str:
+    """One standing-handoff pointer line for the arriving-seat form."""
     leg_nums = [
         int(m.group(1)) for m in _LEG_NUM_RE.finditer(checkpoint_preamble or "")
     ]
-    k_ids = sorted({int(m.group(1)) for m in _K_BULLET_RE.finditer(rules_text or "")})
-    leg_part = (
-        f"LEG {min(leg_nums)}…{max(leg_nums)}" if leg_nums else "prior LEG blocks"
-    )
-    k_part = f"K{min(k_ids)}–K{max(k_ids)}" if k_ids else "K-row rulings"
+    if leg_nums:
+        leg_scope = f"prior LEG blocks: LEG {min(leg_nums)}…{max(leg_nums)}"
+    else:
+        leg_scope = "prior LEG blocks"
+    uri = standing_handoff_uri(lane)
     block = (
-        f"- Prior LEG blocks ({leg_part}): "
-        f"`cortex://notes/system/threads/<lane>-standing-handoff.md` and the house "
-        "lanes listed above — still-open work is re-derived into the live leg; "
-        "closed legs have no pending act.\n"
-        f"- K-row rulings ({k_part}): runbook Appendix § Rulings (K-rows) — current "
-        "binds are restated in step 5 R lines and in the hard refusals (K22 "
-        "opus-5.5-extra, no fable).\n"
-        "- Conductor trajectories (2026-09-30): runbook Appendix § Conductor "
-        "trajectories — C1 routes conductor lanes to the Impresario house; "
-        "`contract=conductor` is inline in hard refusals.\n"
-        "- Journal entries: `cortex://notes/system/maestro/journal.md` — narrative; "
-        "first act 4 reads its head.\n"
-        "- Roster detail (bots, hop history): "
-        "`cortex://notes/system/operational/maestro-sidekick-roster.md` — lane ids "
-        "used at render are named in the running-now line.\n"
-        "- Wake/send_later text: runbook step 8 — one-shot wakes only; the refusal "
-        "against re-arming send_later stays inline."
+        f"- Standing handoff ({leg_scope}): `{uri}` — closed legs have no pending act."
     )
     if max_bytes is None:
         return block
@@ -1110,43 +1094,20 @@ def runbook_refuse_steps_bytes(body: str | None) -> int | None:
 
 
 def first_act_call1_line(*, lane: str, checkpoint_block: str) -> str:
-    """Act-2 call-1 wording: handoff fs read only when the checkpoint flags budget."""
+    """Act 2 line for the arriving-seat hop template."""
     ck = checkpoint_block or ""
-    needs_handoff_read = not (
-        "handoff sha256 " in ck and "[budget_exceeded" not in ck
-    )
-    call2 = (
-        'Call 2: `fs(op="md_read", section="Trigger")` on cortex `maestro-loop.md`; '
-        "quote `read_sha256` from that md_read. On trigger only, `md_read` the "
-        "other four skills from their SKILL bodies — not at arrival."
-    )
-    if needs_handoff_read:
-        call1 = (
-            f'Call 1: cortex `fs(op="read")` on `{lane}-house-rules.md` and '
-            f'`{lane}-standing-handoff.md`; quote each file\'s `read_sha256` from that read.'
-        )
-    else:
-        call1 = (
-            f'Call 1: cortex `fs(op="read")` on `{lane}-house-rules.md` and quote its '
-            f'`read_sha256` from that read; quote the standing handoff `read_sha256` from '
-            f"the `handoff sha256` line in the rendered checkpoint above "
-            f'(do not `fs(op="read")` `{lane}-standing-handoff.md`).'
-        )
-    return f"{call1} {call2}"
-
-
-def maestro_runbook_act2_line() -> str:
-    """Act-2 body for the hop template (ordinal ``2.`` lives on the template line)."""
-    body, _err = load_maestro_runbook()
-    size = runbook_refuse_steps_bytes(body)
-    if size is None:
+    in_budget = "handoff sha256 " in ck and "[budget_exceeded" not in ck
+    if in_budget:
         return (
-            "`md_read` cortex://notes/runbooks/maestro-loop.md sections "
-            "§ Refuse and § Steps only (size unknown)."
+            "Read the house rules as the pointer above says and quote that "
+            "`read_sha256`; take the standing handoff's `read_sha256` from the "
+            "`handoff sha256` line in the rendered checkpoint above (do not "
+            f'`fs(op="read")` `{lane}-standing-handoff.md`).'
         )
     return (
-        "`md_read` cortex://notes/runbooks/maestro-loop.md sections "
-        f"§ Refuse and § Steps only (runbook {size} bytes)."
+        "Read the house rules as the pointer above says and quote that "
+        f"`read_sha256`; read `{lane}-standing-handoff.md` whole (`md_list`, "
+        'then `md_read`) and quote its `read_sha256`.'
     )
 
 
@@ -1314,7 +1275,6 @@ __all__ = [
     "hop_boundary_turn_from_header",
     "hop_house_rules_pointer",
     "inflight_section_from_sidecar",
-    "maestro_runbook_act2_line",
     "measure_checkpoint_budget_bytes",
     "measure_preamble_bytes",
     "parse_inflight_rows",

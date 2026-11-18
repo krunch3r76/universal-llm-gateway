@@ -561,11 +561,11 @@ def resolve_followup_prompt(req: object) -> str:
 def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
     """Load prompt text from inline body, cortex URI, or checkout-relative path.
 
-    When ``purpose`` is an operator-proxy mission tag, ensure CDP skill chips,
-    the this-hop status card, and the Opus-operator / Fable-advisor seat-map
-    briefing (``claude_bundles.operator_proxy_mission``). Loads the standing
-    handoff sidecar when the prompt names a thread id so hop-status fields
-    are filled from observed sidecar text rather than left unspecified.
+    When ``purpose`` is an operator-proxy mission tag, ensure the hop prompt
+    (``claude_bundles.operator_proxy_mission``), skill delivery, and the
+    standing handoff the prompt names. Loads the sidecar when the prompt names
+    a thread id so hop fields are filled from observed text rather than left
+    unspecified.
     """
     if req.prompt_text and req.prompt_text.strip():
         text = req.prompt_text.strip()
@@ -589,8 +589,7 @@ def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
 
     if purpose_implies_mission(req.purpose, text):
         from claude_bundles.cdp_model_endpoint_staging import ephemeral_uri_prefix
-        from claude_bundles.operator_proxy_mission import HOP_SUCCESSOR_TITLE
-        from claude_bundles.sealed_cdp_prefix import peel_delivery_prefix
+        from claude_bundles.operator_proxy_mission import is_rendered_hop_prompt
 
         exec_id = resolve_stargate_execution_id(req)
         uri = (req.prompt_uri or "").strip()
@@ -599,9 +598,7 @@ def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
             owned = ephemeral_uri_prefix(exec_id).rstrip("/") + "/"
             if uri.startswith(owned) or uri.rstrip("/") == owned.rstrip("/"):
                 skip_ensure = True
-        if not skip_ensure and peel_delivery_prefix(text).lstrip().startswith(
-            HOP_SUCCESSOR_TITLE
-        ):
+        if not skip_ensure and is_rendered_hop_prompt(text):
             skip_ensure = True
         if not skip_ensure:
             text = ensure_operator_proxy_mission_prompt(

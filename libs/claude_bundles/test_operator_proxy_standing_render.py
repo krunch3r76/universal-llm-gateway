@@ -600,7 +600,9 @@ def test_hop_house_rules_pointer_uses_suffixed_16416_heading() -> None:
 
 
 def test_friction_39828_mission_pointer_and_running_now_sha() -> None:
-    """Missing house-rules file is not a required read; lane overflow keeps sha."""
+    """Default hop keeps handoff sha on running-now line one and lane on line two."""
+    import hashlib
+
     from claude_bundles.operator_proxy_mission import (
         ensure_operator_proxy_mission_prompt,
     )
@@ -608,8 +610,6 @@ def test_friction_39828_mission_pointer_and_running_now_sha() -> None:
     sidecar = (
         "## HOUSE RULES\n- K1 the rules live in this handoff\n\n## CURRENT LEG\nLEG 1\n"
     )
-    rows = [f"| {i} | Bot | {10000 + i} | box | live |" for i in range(1, 30)]
-    roster = "| N | Display name | Lane | Mailbox | State |\n" + "\n".join(rows)
 
     def _exists(path: str) -> bool:
         return not str(path).endswith("16416-house-rules.md")
@@ -617,7 +617,7 @@ def test_friction_39828_mission_pointer_and_running_now_sha() -> None:
     out = ensure_operator_proxy_mission_prompt(
         "thread_id: 16416\n",
         standing_handoff_text=sidecar,
-        roster_text=roster,
+        roster_text="",
         fetch_turns=lambda _lane: [],
         journal_text="",
         register_text="",
@@ -627,16 +627,14 @@ def test_friction_39828_mission_pointer_and_running_now_sha() -> None:
     assert 'section="HOUSE RULES"' in rules
     assert "16416-standing-handoff.md" in rules
     assert 'path="cortex://notes/system/threads/16416-house-rules.md"' not in rules
-    running = out.split("## What is running now", 1)[1].split("\n\n", 1)[0]
-    assert "handoff sha256 " in running
-    assert "[hop_budget_exceeded running_now " in running
-    sha_line = running.splitlines()[0]
-    assert "handoff sha256 " in sha_line
-    assert "on lanes" not in sha_line
-    for line in running.splitlines():
-        if line.startswith("[hop_budget_exceeded "):
-            continue
-        assert not line.endswith(" h")
+    digest = hashlib.sha256(sidecar.encode()).hexdigest()
+    running_lines = out[out.index("## What is running now") :].splitlines()
+    assert (
+        running_lines[0]
+        == f"## What is running now; handoff sha256 {digest}"
+    )
+    assert running_lines[1] == "on lane 16416"
+    assert "[hop_budget_exceeded running_now" not in out
 
 
 def test_friction_39828_suffixed_heading_and_probe_oserror() -> None:
