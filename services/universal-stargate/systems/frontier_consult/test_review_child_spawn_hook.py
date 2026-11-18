@@ -422,6 +422,7 @@ async def test_a24105_spawn_body_thread_is_coord() -> None:
     from systems.frontier_consult.review_child_spawn_hook import (
         spawn_generate_lane_review_child,
     )
+
     captured: list[object] = []
 
     async def _capture(body: object, _resp: object) -> dict[str, str]:
@@ -1306,12 +1307,11 @@ async def test_ac_b6_cdp_body_passes_identity_validators() -> None:
         )
         assert body.work_key == expected_wk
         assert require_cdp_caller_agent(body, request_id="req-b6") == "cursor-sdk-lane"
-        assert require_cdp_review_work_key(
-            body, "code-review", request_id="req-b6"
-        ) is None
         assert (
-            validate_work_key_if_supplied(body, request_id="req-b6") == expected_wk
+            require_cdp_review_work_key(body, "code-review", request_id="req-b6")
+            is None
         )
+        assert validate_work_key_if_supplied(body, request_id="req-b6") == expected_wk
 
 
 @pytest.mark.asyncio
@@ -1329,6 +1329,7 @@ async def test_ac_b8_abandon_when_caller_missing(
     from systems.frontier_consult.review_child_spawn_hook import (
         _attempt_spawn_for_completion,
     )
+
     write_admission_context(
         execution_id=exec_id,
         auto_review_child=True,
@@ -1377,6 +1378,60 @@ async def test_ac_b8_abandon_when_caller_missing(
     assert state is not None
     assert state.state == "final"
     assert state.review_child_execution_id is None
+
+
+@pytest.mark.asyncio
+async def test_b_fix_r2_missing_frozen_turn_abandon_stops_reconcile() -> None:
+    import json
+
+    from systems.frontier_consult.review_child_spawn_hook import (
+        reconcile_pending_spawns,
+    )
+
+    exec_id = "exec-b-fix-r2"
+    write_admission_context(
+        execution_id=exec_id,
+        auto_review_child=True,
+        op="generate",
+        role="cursor-sdk",
+        resolved_model="openai/gpt-5.5",
+        parent_dispatch_thread_id="thread:coord",
+        dispatch_thread_id="thread:coord",
+        caller_agent="cursor-sdk-lane",
+        work_key="todo:wk",
+        prompt_turn_number=None,
+        prompt_bind_mode="explicit_external",
+    )
+    try_claim_spawn_pending(
+        parent_execution_id=exec_id,
+        parent_dispatch_thread_id="thread:coord",
+        parent_thread_id="thread:worker",
+        reviewer_model="cdp/opus-5",
+    )
+    published: list[str] = []
+    with (
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.publish_frontier_event",
+            side_effect=lambda ev: published.append(ev.signal),
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
+            side_effect=_terminal_stub,
+        ),
+        patch(
+            "systems.frontier_consult.route.team_dispatch",
+            AsyncMock(return_value={"execution_id": "child-should-not"}),
+        ),
+    ):
+        await reconcile_pending_spawns()
+        await reconcile_pending_spawns()
+    state = read_spawn_state(exec_id)
+    assert state is not None
+    assert state.state == "final"
+    assert state.review_child_execution_id is None
+    meta = json.loads(state.attempt_metadata)
+    assert meta["abandon_reason"] == "missing_frozen_turn_pin"
+    assert published.count("frontier.review_child.prompt_bind") == 1
 
 
 @pytest.mark.asyncio
