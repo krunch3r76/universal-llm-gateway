@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1035,50 +1037,6 @@ def test_housekeeping_hop_prompt_unchanged(
     assert out == golden
 
 
-def test_mission_preamble_unchanged_when_hop_kind_omitted_golden() -> None:
-    golden_path = (
-        Path(__file__).resolve().parent / "testdata" / "mission_hop_preamble_golden.txt"
-    )
-    golden = golden_path.read_text(encoding="utf-8")
-    birth = "a" * 32
-    caller = (
-        "TYPE: CONTINUITY_HANDOFF\n"
-        "thread_id: 12286\n"
-        f"successor_birth_id: {birth}\n"
-        "trigger: golden-fixture\n"
-    )
-    sidecar = (
-        "## CURRENT LEG\n"
-        "### OWED / NEXT\nfixture owed line\n"
-        "### HOUSE RULES\n- K1 golden-rule\n"
-    )
-    out = ensure_operator_proxy_mission_prompt(
-        caller,
-        standing_handoff_text=sidecar,
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text="",
-        register_text="",
-        execution_id="exec-golden",
-    )
-    assert out == golden
-    explicit = ensure_operator_proxy_mission_prompt(
-        caller + "hop_kind: mission\n",
-        standing_handoff_text=sidecar,
-        roster_text="",
-        fetch_turns=_noop_fetch,
-        journal_text="",
-        register_text="",
-        execution_id="exec-golden",
-    )
-    assert "Act on the running items" in explicit
-    assert "## Housekeeping acts" not in explicit
-    assert (
-        explicit.split("## Hop request (data)", 1)[0]
-        == golden.split("## Hop request (data)", 1)[0]
-    )
-
-
 def test_hop_paste_shows_admit_stamp_and_responsibility_from_body() -> None:
     caller = (
         "TYPE: CONTINUITY_HANDOFF\n"
@@ -1289,6 +1247,88 @@ def _ac6_texts(root, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
     return staged_text, resolved
 
 
+_TESTDATA = Path(__file__).resolve().parent / "testdata"
+_ARCHIVED_MAESTRO_GOLDEN = _TESTDATA / "archive" / "maestro_hop_successor_golden.txt"
+
+
+def _hop_body(lane: str) -> str:
+    from hop_handoff.body import build_continuity_handoff_body
+    from hop_handoff.standing_handoff import StandingHandoffFreshness, standing_handoff_uri
+
+    return build_continuity_handoff_body(
+        thread_id=lane,
+        trigger="criterion-fixture",
+        source="agent-bus-hop-verb",
+        handoff=StandingHandoffFreshness(
+            status="current",
+            uri=standing_handoff_uri(lane),
+            mtime_epoch=1.0,
+            age_s=10.0,
+        ),
+        successor_birth_id="a" * 32,
+    )
+
+
+def _arrival_root(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "arrival-root"
+    (root / "notes/system/threads").mkdir(parents=True)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    return root
+
+
+def _arrival_texts(root: Path, lane: str, body: str) -> tuple[str, str]:
+    from cdp_ask.models import SubmitProjectAskRequest
+    from cdp_ask.runner import resolve_prompt
+
+    from claude_bundles.cdp_model_endpoint_staging import stage_cdp_prompt_with_skills
+
+    staged = stage_cdp_prompt_with_skills(
+        execution_id=f"exec-arrival-{lane}",
+        prompt_text=body,
+        purpose="operator-proxy",
+    )
+    rel = staged.prompt_uri.removeprefix("cortex://").lstrip("/")
+    staged_text = (root / rel).read_text(encoding="utf-8")
+    resolved = resolve_prompt(
+        SubmitProjectAskRequest(
+            prompt_text=body,
+            purpose="operator-proxy",
+            stargate_execution_id=f"sg-arrival-{lane}",
+        )
+    )[0]
+    return staged_text, resolved
+
+
+def _hop_part(text: str) -> str:
+    marker = "# Hop on agent-bus:"
+    idx = text.find(marker)
+    assert idx >= 0, "hop preamble missing in staged text"
+    return text[idx:]
+
+
+def _write_arrival_fixture_files(root: Path, lane: str) -> None:
+    threads = root / "notes/system/threads"
+    threads.mkdir(parents=True, exist_ok=True)
+    (threads / f"{lane}-standing-handoff.md").write_text(
+        "## CURRENT LEG\nLEG 1\n### OWED / NEXT\nowed-sentinel\n",
+        encoding="utf-8",
+    )
+    operational = root / "notes/system/operational"
+    operational.mkdir(parents=True, exist_ok=True)
+    (operational / "maestro-sidekick-roster.md").write_text(
+        "| N | Display name | Lane | Mailbox | State |\n"
+        "| 1 | Fixture | 15999 `fixture` | `x` | live |\n",
+        encoding="utf-8",
+    )
+    maestro = root / "notes/system/maestro"
+    maestro.mkdir(parents=True, exist_ok=True)
+    (maestro / "journal.md").write_text(
+        "## 2026-11-17 — entry 1\nRULE: [route] JOURNAL-SENTINEL\n",
+        encoding="utf-8",
+    )
+    (maestro / "register.md").write_text("REGISTER-SENTINEL\n", encoding="utf-8")
+
+
 def test_ac6_production_seams_render_rules_lineage_and_archive(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1481,3 +1521,177 @@ def test_ac8_non_utf8_journal_and_register_degrade(
             "[render_failed register_card: UnicodeDecodeError — read "
             "cortex://notes/system/maestro/register.md]"
         ) in text
+
+
+_ARIVAL_MARKERS = (
+    "owed-sentinel",
+    "cdp-operator-proxy",
+    "runbook:houseless-setup",
+    "§ 3",
+    "§ 8",
+    "runbook:claude-ai-houseless-setup",
+    "§ 6",
+    "runbook:grand-impresario-playbook",
+    "§ 5",
+    "§ 9",
+    "Waiting and wakes: follow",
+    "The tab-bind stamp is the only registration record.",
+)
+
+_FORBIDDEN_BASE = (
+    "you are the operator seat",
+    "## Induction (K44)",
+    "## Lessons in force",
+    "## Register",
+    "to=maestro",
+    "maestro-loop",
+    "maestro/journal.md",
+    "maestro house:",
+    "maestro-sidekick-roster",
+    "Send TYPE: SEAT_REGISTRATION",
+    "15999",
+    "JOURNAL-SENTINEL",
+    "REGISTER-SENTINEL",
+    "K91",
+    "K22",
+    "R5:",
+)
+
+
+@pytest.mark.parametrize("lane", ["12286", "24136"])
+def test_default_hop_prompt_on_every_lane_through_staging_and_runner(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, lane: str
+) -> None:
+    root = _arrival_root(tmp_path, monkeypatch)
+    _write_arrival_fixture_files(root, lane)
+    body = _hop_body(lane)
+    for text in _arrival_texts(root, lane, body):
+        part = _hop_part(text)
+        assert part.split("\n", 1)[0] == (
+            f"# Hop on agent-bus:{lane}: you are the arriving seat"
+        )
+        assert f"on lane {lane}" in part
+        for marker in _ARIVAL_MARKERS:
+            assert marker in part
+        assert "on lanes" not in part
+        for forbidden in _FORBIDDEN_BASE:
+            assert forbidden not in part
+    operational = root / "notes/system/operational"
+    (operational / "maestro-sidekick-roster.md").write_bytes(b"\xff")
+    maestro = root / "notes/system/maestro"
+    (maestro / "journal.md").write_bytes(b"\xff")
+    (maestro / "register.md").write_bytes(b"\xff")
+    for text in _arrival_texts(root, lane, body):
+        part = _hop_part(text)
+        assert "roster unreadable" not in part
+        assert "render_failed register_card" not in part
+        assert "journal unavailable" not in part
+
+
+def test_default_hop_keeps_3000_bytes_of_an_over_budget_leg(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lane = "24136"
+    root = _arrival_root(tmp_path, monkeypatch)
+    notes = "n" * 9000
+    handoff = (
+        f"## CURRENT LEG\nLEG 1\n### OWED / NEXT\nx\n### NOTES\n{notes}\n"
+    )
+    threads = root / "notes/system/threads"
+    threads.mkdir(parents=True, exist_ok=True)
+    (threads / f"{lane}-standing-handoff.md").write_text(handoff, encoding="utf-8")
+    body = _hop_body(lane)
+    uri = f"cortex://notes/system/threads/{lane}-standing-handoff.md"
+    for text in _arrival_texts(root, lane, body):
+        part = _hop_part(text)
+        runs = [len(s) for s in re.findall(r"n+", part)]
+        assert max(runs) >= 3000
+        assert f"[budget_exceeded checkpoint " in part
+        assert uri in part
+
+
+def test_archived_maestro_paste_is_not_passed_through(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mission_golden = _TESTDATA / "mission_hop_preamble_golden.txt"
+    _ARCHIVED_MAESTRO_GOLDEN.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(mission_golden, _ARCHIVED_MAESTRO_GOLDEN)
+    try:
+        body = _ARCHIVED_MAESTRO_GOLDEN.read_text(encoding="utf-8")
+        root = _arrival_root(tmp_path, monkeypatch)
+        for text in _arrival_texts(root, "12286", body):
+            part = _hop_part(text)
+            hop_lines = [
+                ln
+                for ln in part.splitlines()
+                if ln.startswith("# Hop on agent-bus:")
+            ]
+            assert hop_lines[0] == "# Hop on agent-bus:12286: you are the arriving seat"
+            data_idx = part.index("## Hop request (data)")
+            op_idx = part.index("you are the operator seat")
+            assert op_idx > data_idx
+    finally:
+        _ARCHIVED_MAESTRO_GOLDEN.unlink(missing_ok=True)
+
+
+def test_maestro_archive_is_on_tree_and_intact() -> None:
+    archive_golden = _ARCHIVED_MAESTRO_GOLDEN
+    archive_template = _TESTDATA / "archive" / "maestro_hop_successor_template.txt"
+    mission_golden = _TESTDATA / "mission_hop_preamble_golden.txt"
+    expected_sha = (
+        "a74b048937011bc6001976e36540f65ba785605fad48fd8aeea45b5dbab530e7"
+    )
+    assert archive_golden.is_file(), "archive maestro successor golden missing"
+    sha = hashlib.sha256(archive_golden.read_bytes()).hexdigest()
+    assert sha == expected_sha
+    template = archive_template.read_text(encoding="utf-8")
+    assert template.startswith("# Hop on agent-bus:{lane}: you are the operator seat")
+    assert "{induction_k44_block}" in template
+    assert "{maestro_self_hop_refusal_tail}" in template
+    assert template.count("## Hard refusals") == 1
+    assert not mission_golden.is_file()
+
+
+def test_default_hop_prompt_golden(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    golden_path = _TESTDATA / "hop_arrival_golden.txt"
+    assert golden_path.is_file(), "hop arrival golden missing"
+    golden = golden_path.read_text(encoding="utf-8")
+    root = _arrival_root(tmp_path, monkeypatch)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    birth = "a" * 32
+    caller = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "thread_id: 12286\n"
+        f"successor_birth_id: {birth}\n"
+        "trigger: golden-fixture\n"
+    )
+    sidecar = (
+        "## CURRENT LEG\n"
+        "### OWED / NEXT\nfixture owed line\n"
+        "### HOUSE RULES\n- K1 golden-rule\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        caller,
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+        execution_id="exec-golden",
+    )
+    assert out == golden
+    explicit = ensure_operator_proxy_mission_prompt(
+        caller + "hop_kind: mission\n",
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+        execution_id="exec-golden",
+    )
+    assert (
+        explicit.split("## Hop request (data)", 1)[0]
+        == golden.split("## Hop request (data)", 1)[0]
+    )

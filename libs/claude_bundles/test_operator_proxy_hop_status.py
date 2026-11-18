@@ -1846,3 +1846,31 @@ def test_inflight_plain_terminator_first_line_after_bullets() -> None:
     assert weak_open_only_misses, "OPEN-only pattern must fail at least one row"
     assert weak_no_paren_misses, "no-paren pattern must fail at least one row"
     assert weak_no_carried_misses, "no-CARRIED pattern must fail at least one row"
+
+
+def test_default_hop_reads_only_the_hop_lane(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    def recorder(lane: str) -> list[dict[str, Any]]:
+        calls.append(lane)
+        return [{"turn_number": 5, "subject": "REQUEST|freeform|todo:x"}]
+
+    root = tmp_path / "empty-cortex"
+    root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    out = ensure_operator_proxy_mission_prompt(
+        "thread_id: 24136\n",
+        standing_handoff_text=(
+            "## CURRENT LEG\nLEG 1 — 24136#1\n### OWED / NEXT\nx\n"
+        ),
+        fetch_turns=recorder,
+    )
+    assert calls == ["24136"]
+    live_start = out.index("## Live leg (data, projected from the bus)")
+    live_end = out.index("## Pointers")
+    live_section = out[live_start:live_end]
+    assert "- lane 24136 #5 REQUEST|freeform|todo:x" in live_section
+    running_lines = out[out.index("## What is running now") :].splitlines()
+    assert running_lines[1] == "on lane 24136"
