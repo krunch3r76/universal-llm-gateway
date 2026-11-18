@@ -54,7 +54,7 @@ trigger: golden-fixture
 - Calling cse_session(op="resolve_attended") at boot to discover this seat's own registration_id or chat_url.
 - Treating `thread_get(...).cse_*` or a holder row as this seat's identity.
 - Posting a TYPE: SEAT_REGISTRATION turn from this seat, or calling `cse_session` followup or register to make one. The tab-bind stamp is the only registration record.
-- Running cse_session(op="harvest") on a chat that is not this seat's own (`runbook:houseless-setup` § 3 step 7).
+- Running cse_session(op="harvest") on a chat that is not this seat's own (`runbook:houseless-setup` § 3 step 7). interlocutor(op="read") on another seat's claude.ai chat URL is the same harvest path and is refused for the same reason; it pastes nothing but can open the chat on demand and rebind a CSE registration.
 - Long-polling the bus, looping on short waits, or holding the turn open for a child. Never re-arm a scheduled check as a heartbeat.
 - Never send a bus turn over 2000 characters inline (wc -m). The rest goes in sidecar_content or a cortex URI with its hash.
 - Never author a prompt or packet before the retrieval-before-authoring skill has run.
