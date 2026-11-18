@@ -841,7 +841,12 @@ def test_registry_s1_abandoned_releases_withdrawn() -> None:
 def test_registry_state_all_includes_terminal_rows() -> None:
     ledger = _ledger()
     client = _client()
-    _admit(ledger, dispatch_id="disp-live-all", thread_id="T1", work_key="todo:reg-all-live")
+    _admit(
+        ledger,
+        dispatch_id="disp-live-all",
+        thread_id="T1",
+        work_key="todo:reg-all-live",
+    )
     with ledger._connect() as conn:
         conn.execute(
             "UPDATE cursor_sdk_dispatches SET status='completed', "
@@ -906,7 +911,9 @@ def test_registry_auto_record_stamps_dispatch_row() -> None:
 
 
 def test_registry_next_hint_and_cursor_sdk_address_kind() -> None:
-    from services.git_integration_worker.cursor_sdk_claim_address import normalize_address
+    from services.git_integration_worker.cursor_sdk_claim_address import (
+        normalize_address,
+    )
     from services.git_integration_worker.cursor_sdk_work_registry_admit import (
         registry_next_hint,
     )
@@ -923,3 +930,152 @@ def test_registry_next_hint_and_cursor_sdk_address_kind() -> None:
     hint = registry_next_hint(row_id="disp-abc")
     assert "disp-abc" in hint
     assert "team_dispatch(op=registry" in hint
+
+
+def _dispatch_record(ledger: CursorDispatchLedger, dispatch_id: str) -> dict:
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    assert row is not None
+    return json.loads(row["record_json"])
+
+
+def _assert_knob_report_admit_keys(rec: dict, knobs: dict[str, str]) -> None:
+    assert rec.get("model") == "cursor/grok-4.7"
+    assert rec.get("packet_path") == "tmp/packet.md"
+    assert rec.get("model_knobs") == knobs
+    assert rec.get("sdk_mode") == "agent"
+    assert rec.get("registry_auto_recorded") is True
+
+
+def test_claim_updates_keep_admit_record_through_terminal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+        build_cursor_sdk_registry_address,
+        record_dispatch_registry_best_effort,
+    )
+
+    did = "disp-knob-report-ac1"
+    key = "todo:knob-report-ac1"
+    knobs = {"effort": "high", "fast": "true"}
+
+    monkeypatch.setenv(
+        "CURSOR_SDK_DISPATCH_LEDGER", str(tmp_path / "ac1-ledger.sqlite")
+    )
+    monkeypatch.setattr(CursorDispatchLedger, "_instance", None)
+    ledger = CursorDispatchLedger.instance()
+    client = _client()
+
+    req = _req(
+        dispatch_id=did,
+        execution_id="exec-knob-report-ac1",
+        message=None,
+        packet_path="tmp/packet.md",
+        model_knobs=knobs,
+    )
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent="seat-a",
+        resolved_model="grok-4.7",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=did,
+            thread_id=req.thread_id,
+            model_id="grok-4.7",
+        ),
+        contract="implement",
+        read_only=True,
+        work_key=key,
+        source_ref=key,
+        identity_class="declared",
+    )
+    ledger.merge_record_json(dispatch_id=did, patch={"sdk_mode": "agent"})
+    row_id = record_dispatch_registry_best_effort(
+        dispatch_id=did,
+        thread_id="16006",
+        caller_agent="seat-a",
+        seat_name="seat-a",
+        address=build_cursor_sdk_registry_address(
+            dispatch_id=did,
+            worker_thread="16006",
+            worktree="/tmp/lane-ac1",
+        ),
+        work_key=key,
+        ledger=ledger,
+    )
+    assert row_id == did
+    ledger.mark_running(dispatch_id=did)
+
+    b1 = client.post(
+        f"/api/v1/cursor/claim/{did}/update",
+        json={
+            "holder_agent": "seat-a",
+            "caller_dispatch_id": did,
+            "work_status": "active",
+        },
+    )
+    assert b1.status_code == 200
+    _assert_knob_report_admit_keys(_dispatch_record(ledger, did), knobs)
+
+    b2 = client.post(
+        f"/api/v1/cursor/claim/{did}/update",
+        json={
+            "holder_agent": "seat-a",
+            "caller_dispatch_id": did,
+            "note": "progress",
+        },
+    )
+    assert b2.status_code == 200
+    _assert_knob_report_admit_keys(_dispatch_record(ledger, did), knobs)
+
+    b3 = client.post(
+        f"/api/v1/cursor/claim/{did}/update",
+        json={
+            "holder_agent": "seat-a",
+            "caller_dispatch_id": did,
+            "address_patch": {
+                "kind": "cursor_sdk",
+                "dispatch_id": did,
+                "worker_thread": "16006",
+                "worktree": "/tmp/lane-ac1-patched",
+            },
+        },
+    )
+    assert b3.status_code == 200
+    _assert_knob_report_admit_keys(_dispatch_record(ledger, did), knobs)
+
+    b4 = client.post(
+        f"/api/v1/cursor/claim/{did}/update",
+        json={
+            "holder_agent": "seat-a",
+            "caller_dispatch_id": did,
+            "work_status": "landed",
+            "note": "done",
+        },
+    )
+    assert b4.status_code == 200
+    assert b4.json()["released"]["status"] == "completed"
+    ledger.mark_terminal(dispatch_id=did, terminal_status="completed")
+
+    ledger_resp = client.get("/api/v1/cursor/work-key-ledger", params={"work_key": key})
+    assert ledger_resp.status_code == 200
+    body = ledger_resp.json()
+    entries = [e for e in body["dispatches"] if e["dispatch_id"] == did]
+    assert len(entries) == 1
+    assert entries[0]["knobs"] == knobs
+    assert entries[0]["status"] == "completed"
+
+    rec = _dispatch_record(ledger, did)
+    _assert_knob_report_admit_keys(rec, knobs)
+    assert rec.get("work_status") == "landed"
+    notes = [h.get("note") for h in rec.get("status_history") or []]
+    assert "progress" in notes
+    assert "done" in notes
+    assert rec["address"]["worktree"] == "/tmp/lane-ac1-patched"
+    assert "claim_kind" not in rec
+    assert "holder_agent" not in rec
