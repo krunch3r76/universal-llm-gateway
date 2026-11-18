@@ -388,8 +388,6 @@ def build_generate_lane_reviewer_prompt(
     chars = len(parent_instruction)
     bind = parent_instruction_bind or "unspecified"
     mandate = GENERATE_REVIEW_MANDATE.format(token=token)
-    opener = _FENCE_OPENER.format(
-        token=token, bind=bind, sha256=sha256, chars=chars
-    )
+    opener = _FENCE_OPENER.format(token=token, bind=bind, sha256=sha256, chars=chars)
     closer = _FENCE_CLOSER.format(token=token)
     return f"{mandate}\n{opener}\n{parent_instruction}\n{closer}\n\n{base}"

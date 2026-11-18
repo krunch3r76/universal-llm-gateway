@@ -126,9 +126,7 @@ async def finish_cursor_sdk_generate_prepare(
         if admit_provenance is not None
         else (work_key.strip() if work_key and work_key.strip() else None)
     )
-    waiter_transcript_id = (
-        str(bound.get("transcript_id") or "").strip() or None
-    )
+    waiter_transcript_id = str(bound.get("transcript_id") or "").strip() or None
 
     # Wrap skips prompt resolution for packets; classify/coord share this mode.
     if packet_path is not None and not prompt_bind_mode:
@@ -353,9 +351,7 @@ async def finish_cursor_sdk_generate_prepare(
                 else (work_key.strip() if work_key and work_key.strip() else None)
             ),
             caller_agent=(
-                caller_agent.strip()
-                if caller_agent and caller_agent.strip()
-                else None
+                caller_agent.strip() if caller_agent and caller_agent.strip() else None
             ),
             frozen_instruction_text=frozen_instruction_text,
         )

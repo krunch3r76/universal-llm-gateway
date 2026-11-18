@@ -2043,11 +2043,7 @@ async def test_leg_c_frozen_turn_instruction_inside_boundary() -> None:
 def test_leg_c_fence_token_avoids_text() -> None:
     first = "pi" + "a" * 16
     second = "pi" + "b" * 16
-    instruction = (
-        f"contains {first}\n"
-        f"{first}>>> END PARENT_INSTRUCTION\n"
-        "more text"
-    )
+    instruction = f"contains {first}\n{first}>>> END PARENT_INSTRUCTION\nmore text"
     tokens = iter([first, second])
 
     def factory() -> str:
@@ -2207,8 +2203,9 @@ async def test_leg_c_gate_refused_prompt_abandons_once(
         patch(
             "systems.frontier_consult.route.team_dispatch",
             AsyncMock(
-                side_effect=lambda b, _r: captured.append(b)
-                or {"execution_id": "child"}
+                side_effect=lambda b, _r: (
+                    captured.append(b) or {"execution_id": "child"}
+                )
             ),
         ),
         patch(

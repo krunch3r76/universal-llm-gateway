@@ -18,6 +18,7 @@ SpawnProvenance = Literal["generate_review_child"]
 def is_generate_review_child_lane_wired() -> bool:
     return True
 
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS generate_admission_context (
     execution_id              TEXT PRIMARY KEY,
@@ -79,8 +80,7 @@ _MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
 
 def _ensure_migration_columns(conn: sqlite3.Connection) -> None:
     existing = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(generate_admission_context)")
+        row[1] for row in conn.execute("PRAGMA table_info(generate_admission_context)")
     }
     for name, col_type in _MIGRATION_COLUMNS:
         if name not in existing:
