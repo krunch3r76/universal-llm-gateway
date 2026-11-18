@@ -15,6 +15,10 @@ alwaysApply: true
 
 **P3.2 — Work-complete needs a quoted finish.** A `work_complete` / shipped / done sentence on served work is invalid unless the same turn quotes path-explicit commit proof **and** serving-process recycle proof. Recycle-without-commit is not finishing. Seat self-report ("I should commit") is not evidence.
 
+**P3.3 — Evidence before "absent".** `GetDynamicTools` lists primary tools only; zero matches there does not mean the tool is missing. Before reporting an MCP tool unavailable, run `tool_search(query="<name>")` on `user-vortex-code`; on a hit, call the tool through the returned `dispatch_template` (`dispatch(tool="<name>", arguments='{…}')`).
+
+A report that a tool is absent names each search run and what it returned. Without a `tool_search` result, write "not in GetDynamicTools; tool_search not run", not "unavailable".
+
 **P4 — Do not hold the turn on long waits.** Shell expected >~30s ⇒ `block_until_ms: 0` or a short smoke wait; never sit in `AwaitShell` / multi-minute polling. Exception: a CDP harvest blocking the next action polls on short slices (≤5–10s once idle), ¬ bare long sleeps.
 
 **P4.1 — Dispatch admit.** After `team_dispatch` admit: **no** foreground long `wait`. **Jupiter attended IDE:** watcher legs 1–2 same turn (`runbook:bus-consult-watcher`) with bg `tail` `block_until_ms:0`. **Cursor-on-Xvfb `:8` push-wake houses:** no watcher shells — end the turn idle for `BRIDGE_WAKE` delivery. ¬ sleep loops · ¬ "in flight" prose without a declared wait primitive.
