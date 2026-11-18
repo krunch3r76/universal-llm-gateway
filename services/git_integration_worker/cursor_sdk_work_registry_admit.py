@@ -187,11 +187,7 @@ def stamp_registry_on_dispatch_row(
     work_key: str | None = None,
     ledger: CursorDispatchLedger | None = None,
 ) -> str | None:
-    """Patch an existing dispatch row. Returns dispatch_id on success, else None.
-
-    Takes the write lock (``BEGIN IMMEDIATE``) before it reads, so no other
-    connection can commit between this function's read and its write.
-    """
+    """Patch an existing dispatch row. Returns dispatch_id on success, else None."""
     led = ledger or CursorDispatchLedger.instance()
     norm_address: dict[str, Any] | None = None
     if address is not None:
@@ -205,7 +201,6 @@ def stamp_registry_on_dispatch_row(
             )
             return None
     with led._connect() as conn:
-        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT dispatch_id, caller_agent, record_json, work_key "
             "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -606,11 +601,7 @@ def stamp_registry_terminal_work_status(
     ledger: CursorDispatchLedger | None = None,
     work_status_override: str | None = None,
 ) -> None:
-    """Map terminal dispatch status to registry work_status at closeout.
-
-    Takes the write lock (``BEGIN IMMEDIATE``) before it reads, so no other
-    connection can commit between this function's read and its write.
-    """
+    """Map terminal dispatch status to registry work_status at closeout."""
     if terminal_status not in ("completed", "failed", "cancelled"):
         return
     if work_status_override is not None:
@@ -620,7 +611,6 @@ def stamp_registry_terminal_work_status(
     led = ledger or CursorDispatchLedger.instance()
     try:
         with led._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                 (dispatch_id,),
