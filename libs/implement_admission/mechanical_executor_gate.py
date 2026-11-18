@@ -57,7 +57,11 @@ def effective_mechanical_contract(
     operator_contract: str | None,
     inferred_contract: str | None,
 ) -> str:
-    """Operator contract wins; else handoff / inferred chain (same as prompt-expand)."""
+    """Operator contract wins; else handoff / inferred chain (same as prompt-expand).
+
+    Prompt-expand only — GIW mechanical gate uses
+    ``mechanical_executor_gate_applies`` (union of signals), not this precedence.
+    """
     operator = (operator_contract or "").strip().lower()
     if operator:
         return operator
@@ -67,6 +71,40 @@ def effective_mechanical_contract(
         text = str(token).strip().lower()
         if text:
             return text
+    return "none"
+
+
+def _normalize_contract_token(token: str | None) -> str | None:
+    if token is None:
+        return None
+    text = str(token).strip().lower()
+    return text or None
+
+
+def mechanical_executor_gate_applies(
+    *,
+    handoff_contract: str | None,
+    operator_contract: str | None,
+    inferred_contract: str | None,
+) -> bool:
+    """True when any admit contract signal is a mechanical-implement contract."""
+    for token in (handoff_contract, inferred_contract, operator_contract):
+        if is_mechanical_executor_contract(token):
+            return True
+    return False
+
+
+def primary_mechanical_contract_signal(
+    *,
+    handoff_contract: str | None,
+    operator_contract: str | None,
+    inferred_contract: str | None,
+) -> str:
+    """First mechanical token for refusal detail (handoff → inferred → operator)."""
+    for token in (handoff_contract, inferred_contract, operator_contract):
+        normalized = _normalize_contract_token(token)
+        if normalized and is_mechanical_executor_contract(normalized):
+            return normalized
     return "none"
 
 
@@ -107,6 +145,7 @@ def _parent_child_resume_escape(
 
 def evaluate_mechanical_executor_gate(
     *,
+    gate_applies: bool,
     effective_contract: str,
     wire_model: str,
     resolved_bare_model: str,
@@ -116,8 +155,8 @@ def evaluate_mechanical_executor_gate(
     resume_of: str | None = None,
     parent_resolved_model: str | None = None,
 ) -> MechanicalExecutorGateVerdict:
-    """Return allow or refuse for mechanical-implement contracts."""
-    if not is_mechanical_executor_contract(effective_contract):
+    """Return allow or refuse when ``gate_applies`` (any mechanical contract signal)."""
+    if not gate_applies:
         return MechanicalExecutorGateVerdict(allowed=True)
 
     if _parent_child_resume_escape(

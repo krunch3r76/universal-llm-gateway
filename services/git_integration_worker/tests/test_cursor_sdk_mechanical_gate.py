@@ -77,6 +77,25 @@ def test_grok_implement_refused_contract_model(
     bridge.assert_not_called()
 
 
+def test_mechanical_handoff_operator_confer_refused(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Breaks when operator confer overrides mechanical handoff on grok+implement."""
+    monkeypatch.setattr(route_mod, "launch_sdk_bridge", MagicMock())
+    body = _dispatch_body(
+        model="cursor/grok-4.7",
+        handoff_contract="implement",
+        operator_contract="confer",
+        dispatch_id="mech-gate-op-confer",
+        execution_id="exec-mech-gate-op-confer",
+    )
+    before = _ledger_count(tmp_path)
+    resp = client.post("/api/v1/cursor/dispatch", json=body)
+    assert resp.status_code == 422
+    assert resp.json().get("data", {}).get("validation_stage") == "contract_model"
+    assert _ledger_count(tmp_path) == before
+
+
 def test_operator_implement_pure_mechanical_handoff_refused(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

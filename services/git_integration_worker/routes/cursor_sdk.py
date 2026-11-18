@@ -4318,22 +4318,30 @@ async def admit_cursor_dispatch(
     )
     contract = sdk_contract_or_missing(req.handoff_contract, inferred_contract)
     from implement_admission.mechanical_executor_gate import (
-        effective_mechanical_contract,
         evaluate_mechanical_executor_gate,
+        mechanical_executor_gate_applies,
+        primary_mechanical_contract_signal,
     )
     from services.git_integration_worker.cursor_sdk_model_ban import (
         _parent_resolved_model,
     )
 
-    mech_contract = effective_mechanical_contract(
+    operator_contract = getattr(req, "operator_contract", None)
+    gate_applies = mechanical_executor_gate_applies(
         handoff_contract=req.handoff_contract,
-        operator_contract=getattr(req, "operator_contract", None),
+        operator_contract=operator_contract,
+        inferred_contract=inferred_contract,
+    )
+    mech_contract = primary_mechanical_contract_signal(
+        handoff_contract=req.handoff_contract,
+        operator_contract=operator_contract,
         inferred_contract=inferred_contract,
     )
     parent_model = (
         _parent_resolved_model(str(req.resume_of).strip()) if req.resume_of else None
     )
     mech_verdict = evaluate_mechanical_executor_gate(
+        gate_applies=gate_applies,
         effective_contract=mech_contract,
         wire_model=str(req.model or ""),
         resolved_bare_model=config.model_id,
