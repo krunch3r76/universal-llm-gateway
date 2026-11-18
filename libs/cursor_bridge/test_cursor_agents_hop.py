@@ -413,6 +413,7 @@ function installGlass(buildServices) {
     },
     querySelectorAll() { return []; },
   };
+  return serviceInstances;
 }
 
 function workspaceCollection() {
@@ -481,8 +482,7 @@ const scenarios = {
 (async () => {
   try {
     globalThis.window = globalThis;
-    installGlass(scenarios[scenario]);
-    const built = scenarios[scenario]();
+    const built = installGlass(scenarios[scenario]);
     const expr = "(" + launchSrc + ")";
     const result = await eval(expr);
     const meta = {};
@@ -592,6 +592,24 @@ def test_launch_tab_js_no_agent_id_includes_model_pick(tmp_path: Path) -> None:
     assert result["reason"] == "no_agent_id"
     assert "model_pick" in result
     assert result["model_pick"]["status"] == "hit"
+
+
+def test_model_pick_from_glass_launch_no_agent_id_catalog_hit_not_relay_ok() -> None:
+    out = _model_pick_from_glass_launch(
+        {
+            "ok": False,
+            "reason": "no_agent_id",
+            "model_pick": {
+                "status": "hit",
+                "requested": "claude-sonnet-5-5",
+                "applied_model_id": "claude-sonnet-5-5",
+                "tried": ["claude-sonnet-5-5"],
+            },
+        },
+        model_query="claude-sonnet-5-5",
+    )
+    assert out["ok"] is False
+    assert out["status"] == "hit"
 
 
 @pytest.mark.asyncio
