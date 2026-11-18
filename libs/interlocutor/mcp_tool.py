@@ -60,6 +60,18 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
         ``spawn`` order: visible create → deliver → confirm → hide → restore
         selection on every exit path (see ``grok_spawn_steps``).
 
+        ``spawn`` with ``mailbox`` and ``thread_scope`` (pass both or
+        neither) subscribes the new Grok agent as the wake endpoint for
+        that mailbox on that thread: wakes for later bus turns addressed
+        to ``mailbox`` there go to the bot, and a live subscription
+        another agent holds for the same pair is tombstoned. Omit both for
+        a one-job bot that only needs ``text``/``text_uri``; pass them only
+        with a mailbox name no other seat listens on, never your own.
+        ``mailbox`` is the bot's inbox, not a reply-to: to get an answer
+        back, name your mailbox and thread in the packet text. The
+        replaced subscription is not restored when the bot is retired; its
+        owner must call ``agent_bus`` ``subscribe`` again.
+
         ``list`` / ``spawn`` / ``select`` accept bare ``display:<n>`` for each
         key in ``config/grok-windows.json`` (``:9``/9339, ``:10``/9340,
         ``:14``/9344). ``retire`` requires ``display:<n>/<agent_id>``.
