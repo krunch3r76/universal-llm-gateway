@@ -130,12 +130,8 @@ def test_bind_session_address_idempotent_www_while_in_flight(
         state="streaming",
         kind="execution",
     )
-    with patch(
-        "claude_bundles.cdp_registry.session_address._project_holder",
-        return_value="ok",
-    ):
-        assert bind_session_address(rid, chat_url=legacy) is True
-        assert bind_session_address(rid, chat_url=other) is False
+    assert bind_session_address(rid, chat_url=legacy) is True
+    assert bind_session_address(rid, chat_url=other) is False
     assert reg._store.load_active()[rid]["chat_url"] == canonical
 
 

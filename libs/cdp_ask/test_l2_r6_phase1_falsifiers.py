@@ -17,6 +17,7 @@ def l2r6_isolated_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> P
     from claude_bundles import cdp_registry as reg
     from claude_bundles import cdp_registry_store as store_mod
     from claude_bundles import cse_provenance
+
     from services.git_integration_worker import cse_session_holders
 
     root = tmp_path / "cdp-registry-l2r6"
@@ -93,28 +94,52 @@ def test_f1_ii_canonical_row_www_request_idempotent(l2r6_client: TestClient) -> 
     assert body.get("idempotent") is True
 
 
+def _mock_async_playwright(monkeypatch: pytest.MonkeyPatch, page_url: str) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    async def _start() -> MagicMock:
+        pw = MagicMock()
+        page = MagicMock()
+        page.url = page_url
+        ctx = MagicMock()
+        ctx.pages = [page]
+        browser = MagicMock()
+        browser.contexts = [ctx]
+        pw.chromium.connect_over_cdp = AsyncMock(return_value=browser)
+        pw.stop = AsyncMock()
+        return pw
+
+    factory = MagicMock()
+    factory.start = AsyncMock(side_effect=_start)
+    monkeypatch.setattr("cdp_ask.followup_resolve.async_playwright", lambda: factory)
+
+
 @pytest.mark.asyncio
 async def test_f2_www_upper_chat_no_identity_mismatch(
     monkeypatch: pytest.MonkeyPatch,
+    l2r6_isolated_registry: Path,
 ) -> None:
-    from unittest.mock import AsyncMock
+    from claude_bundles import cdp_registry as reg
 
     from cdp_ask.followup import FollowupProjectAskRequest
     from cdp_ask.followup_resolve import resolve_followup_target
     from cdp_ask.test_followup_resolve import store
 
-    monkeypatch.setattr(
-        "cdp_ask.followup_resolve.cdp_registry.chat_url_for_registration",
-        lambda rid: _CANON_CHAT if rid == "reg-f2" else None,
+    host = reg.register_lane(
+        holder="f2",
+        purpose="operator-proxy",
+        launch_chrome=lambda *_a, **_k: None,
+        is_listening=lambda _p: False,
     )
-    scan = AsyncMock(return_value=[])
-    monkeypatch.setattr("cdp_ask.followup_resolve.scan_lane_cse_urls", scan)
+    rid = host.registration_id
+    reg.bind_chat_url_only(rid, chat_url=_CANON_CHAT)
+    _mock_async_playwright(monkeypatch, _CANON_CHAT)
 
     req = FollowupProjectAskRequest(
+        prompt_text="hi",
         chat_url=_WWW_UPPER_CHAT,
-        registration_id="reg-f2",
-        message="hi",
-        lane="l",
+        registration_id=rid,
+        parent_thread="lane-f2",
     )
     _target, err, _path, _binding = await resolve_followup_target(req, store)
     assert err is None or err.error != "identity_mismatch", getattr(err, "error", err)

@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 pytestmark = pytest.mark.offline
+
+
+@pytest.fixture(autouse=True)
+def _clear_followup_lane_state() -> None:
+    from cdp_ask import followup as fu
+
+    fu._lane_locks.clear()
+    fu._lane_targets.clear()
+    yield
+    fu._lane_locks.clear()
+    fu._lane_targets.clear()
+
 
 _CSE = "https://claude.ai/cowork/cse_l2r6CallPath"
 _CSE_WWW = "https://www.claude.ai/cowork/cse_l2r6CallPath"
@@ -129,7 +140,7 @@ def test_restore_session_address_spelling_only_restores_canonical(
     status = reg.restore_session_address(
         rid,
         expected_chat_url=_CSE,
-        restore_to=_CANON_CHAT,
+        restore_to=_WWW_UPPER_CHAT,
     )
     assert status == "restored"
     stored = reg.chat_url_for_registration(rid)
@@ -181,53 +192,135 @@ async def test_ensure_cse_attached_does_not_skip_owner_with_www_stored(
     assert outcome.registration_id == host.registration_id
 
 
+def _mock_playwright_for_resolve(monkeypatch: pytest.MonkeyPatch, page_url: str) -> None:
+    async def _start() -> MagicMock:
+        pw = MagicMock()
+        page = MagicMock()
+        page.url = page_url
+        ctx = MagicMock()
+        ctx.pages = [page]
+        browser = MagicMock()
+        browser.contexts = [ctx]
+        pw.chromium.connect_over_cdp = AsyncMock(return_value=browser)
+        pw.stop = AsyncMock()
+        return pw
+
+    factory = MagicMock()
+    factory.start = AsyncMock(side_effect=_start)
+    monkeypatch.setattr("cdp_ask.followup_resolve.async_playwright", lambda: factory)
+
+
 @pytest.mark.asyncio
 async def test_paste_verify_accepts_www_page_for_canonical_target(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Paste gate (:643) must accept www page URL for canonical stored target."""
+    from claude_bundles import cdp_registry as reg
+
     from cdp_ask.execution_store import ExecutionStore
     from cdp_ask.followup import execute_followup
-    from cdp_ask.followup_envelope import FollowupCandidate
     from cdp_ask.models import FollowupProjectAskRequest
 
-    store = ExecutionStore(reaper_interval_s=9999.0)
-    target = FollowupCandidate(
-        registration_id="reg-pv",
-        chat_url=_CSE,
-        holder="h",
+    host = reg.register_lane(
+        holder="pv",
         purpose="operator-proxy",
-        cdp_url="http://127.0.0.1:9223",
-        target_binding="explicit",
+        launch_chrome=lambda *_a, **_k: None,
+        is_listening=lambda _p: False,
     )
+    rid = "reg-pv"
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[host.registration_id])
+        row["registration_id"] = rid
+        active[rid] = row
+        active.pop(host.registration_id, None)
+        reg._store.write_active(active)
+    reg.bind_chat_url_only(rid, chat_url=_CSE)
+
+    _mock_playwright_for_resolve(monkeypatch, _CSE)
     page = MagicMock()
     page.url = _CSE_WWW
     pw = MagicMock()
     pw.stop = AsyncMock()
-
-    async def _resolve(*_a: Any, **_k: Any):
-        return target, None, "registration_id", None
-
-    monkeypatch.setattr("cdp_ask.followup.resolve_followup_target", _resolve)
+    paste_mock = AsyncMock(return_value={"ok": True, "receipt": "dom_paste"})
     monkeypatch.setattr(
         "cdp_ask.followup.find_page_on_lane",
         AsyncMock(return_value=(page, pw)),
     )
-    monkeypatch.setattr(
-        "cdp_ask.followup.send_followup_paste_half",
-        AsyncMock(return_value={"ok": True}),
-    )
-    monkeypatch.setattr("cdp_ask.followup._skip_borrow_restore_for_inflight_paste", lambda *_a: False)
+    monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", paste_mock)
 
+    store = ExecutionStore(reaper_interval_s=9999.0)
     req = FollowupProjectAskRequest(
         prompt_text="memo",
-        parent_thread="lane",
+        parent_thread="lane-pv",
         chat_url=_CSE,
-        registration_id="reg-pv",
+        registration_id=rid,
     )
     resp = await execute_followup(req, store)
-    assert resp.error != "lane_not_attached", resp.error
+    assert resp.ok is True
+    paste_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_skip_borrow_restore_inflight_paste_direct() -> None:
+    from cdp_ask.followup import (
+        _acquire_lane,
+        _release_lane,
+        _skip_borrow_restore_for_inflight_paste,
+    )
+    from cdp_ask.followup_reattach import ReattachOutcome
+
+    rid = "reg-l2r7-252a"
+    assert await _acquire_lane(rid, target_chat_url=_CSE_WWW)
+    try:
+        outcome = ReattachOutcome(
+            ok=True,
+            registration_id=rid,
+            reattach_bound_chat_url=_CSE,
+        )
+        assert _skip_borrow_restore_for_inflight_paste(outcome) is True
+    finally:
+        _release_lane(rid)
+
+
+@pytest.mark.asyncio
+async def test_reattach_teardown_skips_borrow_restore_when_inflight_match(
+    isolated_registry: Path,
+) -> None:
+    from claude_bundles import cdp_registry as reg
+
+    from cdp_ask.followup import _acquire_lane, _reattach_teardown, _release_lane
+    from cdp_ask.followup_reattach import ReattachOutcome
+
+    host = reg.register_lane(
+        holder="tb",
+        purpose="operator-proxy",
+        launch_chrome=lambda *_a, **_k: None,
+        is_listening=lambda _p: False,
+    )
+    rid = host.registration_id
+    reg.bind_chat_url_only(rid, chat_url=_CSE)
+    assert await _acquire_lane(rid, target_chat_url=_CSE_WWW)
+    try:
+        outcome = ReattachOutcome(
+            ok=True,
+            registration_id=rid,
+            prior_chat_url=_OTHER,
+            reattach_bound_chat_url=_CSE,
+            lane_created=False,
+            relaunched=False,
+            page_only_borrow=False,
+        )
+        await _reattach_teardown(
+            outcome,
+            retain_lane=True,
+            restore_borrowed_chat_url=True,
+            skip_inflight_restore=True,
+        )
+        assert reg.chat_url_for_registration(rid) == _CSE
+    finally:
+        _release_lane(rid)
 
 
 def test_holder_page_open_true_for_www_tab_of_canonical_holder(
