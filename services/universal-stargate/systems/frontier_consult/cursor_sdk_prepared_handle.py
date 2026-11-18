@@ -39,7 +39,7 @@ class PreparedCursorSdkHandle:
     claimed_via_atomic: bool
     admitted: bool
     alignment_warnings: tuple[dict[str, Any], ...]
-    knob_resolution: tuple[dict[str, Any], ...]
+    knob_resolution: dict[str, dict[str, Any]]
     nest_under: str | None = None
     topic: str | None = None
     packet_kind: str | None = None
@@ -125,7 +125,7 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "claimed_via_atomic": handle.claimed_via_atomic,
         "admitted": handle.admitted,
         "alignment_warnings": list(handle.alignment_warnings),
-        "knob_resolution": list(handle.knob_resolution),
+        "knob_resolution": dict(handle.knob_resolution),
         "nest_under": handle.nest_under,
         "topic": handle.topic,
         "packet_kind": handle.packet_kind,
@@ -192,7 +192,11 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         claimed_via_atomic=bool(data.get("claimed_via_atomic", False)),
         admitted=bool(data.get("admitted", False)),
         alignment_warnings=tuple(data.get("alignment_warnings") or ()),
-        knob_resolution=tuple(data.get("knob_resolution") or ()),
+        knob_resolution=(
+            dict(data["knob_resolution"])
+            if isinstance(data.get("knob_resolution"), dict)
+            else {}
+        ),
         nest_under=data.get("nest_under"),
         topic=data.get("topic"),
         packet_kind=data.get("packet_kind"),

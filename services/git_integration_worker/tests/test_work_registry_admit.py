@@ -10,9 +10,8 @@ from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatc
 from services.git_integration_worker.cursor_sdk_work_registry_admit import (
     bump_frontier_registry_heartbeat,
     close_frontier_registry_row,
-    record_dispatch_registry_best_effort,
     reap_stale_frontier_registry_rows,
-    stamp_registry_terminal_work_status,
+    record_dispatch_registry_best_effort,
     upsert_frontier_registry_dispatch,
 )
 from services.git_integration_worker.models.cursor_api import (
@@ -56,7 +55,11 @@ def test_terminal_stamp_sets_landed_on_completed() -> None:
         thread_id="T1",
         caller_agent="cursor-sdk",
         seat_name="cursor-sdk",
-        address={"kind": "cursor_sdk", "dispatch_id": "disp-term-1", "worker_thread": "T1"},
+        address={
+            "kind": "cursor_sdk",
+            "dispatch_id": "disp-term-1",
+            "worker_thread": "T1",
+        },
         ledger=ledger,
     )
     ledger.mark_terminal(dispatch_id="disp-term-1", terminal_status="completed")
@@ -106,6 +109,69 @@ def isolated_registry_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("CURSOR_SDK_DISPATCH_LEDGER", str(db))
     CursorDispatchLedger._instance = None
     return CursorDispatchLedger.instance()
+
+
+def test_upsert_refresh_on_live_row_keeps_admit_record(
+    isolated_registry_ledger: CursorDispatchLedger,
+) -> None:
+    did = "disp-knob-report-ac2"
+    key = "todo:knob-report-ac2"
+    req = CursorDispatchRequest(
+        thread_id="21802",
+        model="composer-2.5",
+        dispatch_id=did,
+        execution_id="exec-knob-report-ac2",
+        packet_path="tmp/packet.md",
+        model_knobs={"fast": "true"},
+        work_key=key,
+    )
+    isolated_registry_ledger.admit(
+        req=req,
+        fingerprint=isolated_registry_ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent="cursor-sdk",
+        resolved_model=req.model,
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            model_id=req.model,
+        ),
+        work_key=key,
+    )
+    with isolated_registry_ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (did,),
+        ).fetchone()
+    assert row is not None
+    assert row["status"] == "admitted"
+
+    rid = upsert_frontier_registry_dispatch(
+        dispatch_id=did,
+        thread_id="21802",
+        caller_agent="cursor-sdk",
+        seat_name="cursor-sdk",
+        address={"kind": "cursor_sdk", "dispatch_id": did, "worker_thread": "21802"},
+        work_key=key,
+        max_wall_s=1800,
+        ledger=isolated_registry_ledger,
+    )
+    assert rid == did
+    with isolated_registry_ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (did,),
+        ).fetchone()
+    assert row is not None
+    rec = json.loads(row["record_json"])
+    assert rec.get("model") == "composer-2.5"
+    assert rec.get("packet_path") == "tmp/packet.md"
+    assert rec.get("model_knobs") == {"fast": "true"}
+    assert rec.get("seat_name") == "cursor-sdk"
+    assert rec.get("address", {}).get("kind") == "cursor_sdk"
+    assert rec.get("registry_auto_recorded") is True
+    assert rec.get("max_wall_s") == 1800
 
 
 def test_close_frontier_row_admitted_to_failed_frees_work_key(
@@ -172,7 +238,10 @@ def test_close_frontier_row_does_not_overwrite_cancelled(
         )
         conn.commit()
     outcome = close_frontier_registry_row(
-        "exec-cancel-hold", "failed", "should_not_apply", ledger=isolated_registry_ledger
+        "exec-cancel-hold",
+        "failed",
+        "should_not_apply",
+        ledger=isolated_registry_ledger,
     )
     assert outcome == {"ok": True, "marked": False}
     with isolated_registry_ledger._connect() as conn:
@@ -300,8 +369,7 @@ def test_registry_record_after_api_completion_does_not_insert_admitted(
     assert row_id == f"api-{exec_id}"
     with isolated_registry_ledger._connect() as conn:
         rows = conn.execute(
-            "SELECT dispatch_id, status FROM cursor_sdk_dispatches "
-            "WHERE work_key=?",
+            "SELECT dispatch_id, status FROM cursor_sdk_dispatches WHERE work_key=?",
             (key,),
         ).fetchall()
     assert len(rows) == 1
@@ -312,8 +380,6 @@ def test_reaper_fails_stale_api_role_and_cdp_rows(
     isolated_registry_ledger: CursorDispatchLedger,
 ) -> None:
     from datetime import UTC, datetime, timedelta
-
-    from services.git_integration_worker.cursor_dispatch_ledger import _now
 
     stale = (datetime.now(UTC) - timedelta(hours=5)).isoformat()
     for dispatch_id, kind in (("stale-api", "api_role"), ("stale-cdp", "cdp")):
@@ -551,11 +617,15 @@ def test_bump_heartbeat_cdp_only(
         work_key="todo:api-hb",
         ledger=isolated_registry_ledger,
     )
-    assert bump_frontier_registry_heartbeat("cdp-hb", ledger=isolated_registry_ledger) == {
+    assert bump_frontier_registry_heartbeat(
+        "cdp-hb", ledger=isolated_registry_ledger
+    ) == {
         "ok": True,
         "bumped": True,
     }
-    assert bump_frontier_registry_heartbeat("api-hb", ledger=isolated_registry_ledger) == {
+    assert bump_frontier_registry_heartbeat(
+        "api-hb", ledger=isolated_registry_ledger
+    ) == {
         "ok": True,
         "bumped": False,
     }

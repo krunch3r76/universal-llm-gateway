@@ -25,6 +25,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     _emit_impresario_lease_acquired,
     _holder_surface_from_record,
     _lease_epoch_from_row,
+    _merge_record_json_conn,
     bump_lease_epoch_conn,
 )
 from services.git_integration_worker.cursor_sdk_claim_address import (
@@ -245,6 +246,20 @@ def _merge_claim_record(
         history.append({"at": now, "note": str(note).strip()})
         merged["status_history"] = history
     return merged
+
+
+_CLAIM_OWNED_KEYS = ("address", "work_status", "status_history")
+
+
+def _overlay_claim_owned(conn: Any, *, claim_id: str, merged: dict[str, Any]) -> None:
+    """Overlay the keys ``update()`` owns onto the row's current ``record_json``.
+
+    Every other key (the admit record, ``sdk_mode``, usage,
+    ``registry_auto_recorded``) is carried forward from the row. Call inside the
+    caller's ``BEGIN IMMEDIATE`` transaction, after the ownership check.
+    """
+    patch = {key: merged[key] for key in _CLAIM_OWNED_KEYS if key in merged}
+    _merge_record_json_conn(conn, dispatch_id=claim_id, patch=patch)
 
 
 def _attach_claim_fields(holder: dict[str, Any], record: dict[str, Any]) -> None:
@@ -768,7 +783,7 @@ def update(
     ledger: CursorDispatchLedger | None = None,
     now: str | None = None,
 ) -> dict[str, Any]:
-    """Patch claim metadata; ``landed`` / ``abandoned`` release the row."""
+    """Patch claim-owned record keys (address, work_status, status_history); ``landed`` / ``abandoned`` release the row."""
     if (
         work_status is None
         and address_patch is None
@@ -793,6 +808,7 @@ def update(
                     message=str(exc),
                 ) from exc
         with led._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT dispatch_id, status, caller_agent, record_json "
                 "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -820,18 +836,7 @@ def update(
                     note=note,
                     now=stamp,
                 )
-                record = _record(
-                    holder_agent,
-                    prior.get("request_turn"),
-                    seat_name=prior.get("seat_name"),
-                    address=prior.get("address"),
-                    work_status=prior.get("work_status"),
-                    status_history=list(prior.get("status_history") or []),
-                )
-                conn.execute(
-                    "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
-                    (record, claim_id),
-                )
+                _overlay_claim_owned(conn, claim_id=claim_id, merged=prior)
                 conn.commit()
         outcome = _UPDATE_RELEASE[work_status]
         released = release(
@@ -891,23 +896,7 @@ def update(
             note=note,
             now=stamp,
         )
-        record = _record(
-            holder_agent,
-            prior.get("request_turn"),
-            seat_name=prior.get("seat_name"),
-            address=prior.get("address"),
-            work_status=prior.get("work_status"),
-            status_history=list(prior.get("status_history") or []),
-        )
-        if row["status"] == CLAIM_STATUS:
-            where_status = "status='claimed'"
-        else:
-            where_status = f"status IN ({_ACTING_IN})"
-        conn.execute(
-            f"UPDATE cursor_sdk_dispatches SET record_json=? "
-            f"WHERE dispatch_id=? AND {where_status} AND caller_agent=?",
-            (record, claim_id, holder_agent),
-        )
+        _overlay_claim_owned(conn, claim_id=claim_id, merged=prior)
         conn.commit()
         row = conn.execute(
             "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",

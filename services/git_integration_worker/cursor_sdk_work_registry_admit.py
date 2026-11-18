@@ -158,6 +158,25 @@ def _merge_registry_record(
     return merged
 
 
+def _frontier_registry_record_json(
+    existing: dict[str, Any],
+    *,
+    seat_name: str | None,
+    address: dict[str, Any],
+    max_wall_s: int | None,
+    prompt_bytes: int | None,
+) -> str:
+    """Registry fields over *existing*: seat, address, active, auto-recorded, budgets."""
+    rec = _merge_registry_record(
+        existing, seat_name=seat_name, address=address, work_status="active"
+    )
+    if max_wall_s is not None:
+        rec["max_wall_s"] = int(max_wall_s)
+    if prompt_bytes is not None:
+        rec["prompt_bytes"] = int(prompt_bytes)
+    return json.dumps(rec, sort_keys=True, separators=(",", ":"))
+
+
 def stamp_registry_on_dispatch_row(
     *,
     dispatch_id: str,
@@ -243,27 +262,31 @@ def upsert_frontier_registry_dispatch(
             exc,
         )
         return None
-    rec = _merge_registry_record(
-        {},
-        seat_name=seat_name,
-        address=norm_address,
-        work_status="active",
-    )
-    if max_wall_s is not None:
-        rec["max_wall_s"] = int(max_wall_s)
-    if prompt_bytes is not None:
-        rec["prompt_bytes"] = int(prompt_bytes)
-    record_json = json.dumps(rec, sort_keys=True, separators=(",", ":"))
     holder = (caller_agent or seat_name or "dispatch").strip()
     fp = str(dispatch_id).strip()
     with led._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         existing = conn.execute(
-            "SELECT dispatch_id, status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            "SELECT dispatch_id, status, record_json FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id=?",
             (fp,),
         ).fetchone()
         if existing is not None:
             if str(existing["status"]) in _FRONTIER_TERMINAL_STATUSES:
                 return fp
+            try:
+                parsed = json.loads(existing["record_json"] or "{}")
+            except json.JSONDecodeError:
+                parsed = {}
+            if not isinstance(parsed, dict):
+                parsed = {}
+            record_json = _frontier_registry_record_json(
+                parsed,
+                seat_name=seat_name,
+                address=norm_address,
+                max_wall_s=max_wall_s,
+                prompt_bytes=prompt_bytes,
+            )
             conn.execute(
                 "UPDATE cursor_sdk_dispatches SET record_json=?, thread_id=?, "
                 "caller_agent=COALESCE(?, caller_agent), work_key=COALESCE(?, work_key) "
@@ -281,6 +304,13 @@ def upsert_frontier_registry_dispatch(
             from services.git_integration_worker.cursor_dispatch_ledger import _now
 
             stamp = _now()
+            record_json = _frontier_registry_record_json(
+                {},
+                seat_name=seat_name,
+                address=norm_address,
+                max_wall_s=max_wall_s,
+                prompt_bytes=prompt_bytes,
+            )
             conn.execute(
                 "INSERT INTO cursor_sdk_dispatches "
                 "(dispatch_id, fingerprint, thread_id, caller_agent, resolved_model, "
