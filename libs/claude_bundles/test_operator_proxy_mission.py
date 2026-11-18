@@ -1002,6 +1002,39 @@ def test_housekeeping_preamble_has_budgets_not_mission_act_seven() -> None:
     assert out.index("## Budgets") < out.index("## Housekeeping acts")
 
 
+def test_housekeeping_hop_prompt_unchanged(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guard: housekeeping hop form must not change when default form is reworked."""
+    root = tmp_path / "hk-golden-root"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    birth = "b" * 32
+    caller = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "thread_id: 12286\n"
+        f"successor_birth_id: {birth}\n"
+        "hop_kind: housekeeping\n"
+    )
+    sidecar = (
+        "## CURRENT LEG\n### OWED / NEXT\nhk fixture\n### HOUSE RULES\n- K1 hk-rule\n"
+    )
+    golden_path = (
+        Path(__file__).resolve().parent / "testdata" / "housekeeping_hop_golden.txt"
+    )
+    golden = golden_path.read_text(encoding="utf-8")
+    out = ensure_operator_proxy_mission_prompt(
+        caller,
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+        execution_id="exec-hk-golden",
+    )
+    assert out == golden
+
+
 def test_mission_preamble_unchanged_when_hop_kind_omitted_golden() -> None:
     golden_path = (
         Path(__file__).resolve().parent / "testdata" / "mission_hop_preamble_golden.txt"

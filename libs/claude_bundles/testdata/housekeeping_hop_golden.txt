@@ -1,0 +1,59 @@
+# Hop on agent-bus:12286: housekeeping seat
+Hop admitted: not recorded
+RESPONSIBILITY: not recorded
+
+You are the housekeeping successor for lane 12286. Your birth record: successor_birth_id bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, execution_id exec-hk-golden. A later SEAT_REGISTRATION with a different successor_birth_id means you were replaced: stand down.
+
+## What is running now; handoff sha256 360bd0d49e0986b1a08f7129e9e1b4e49baba90b293f546856f32d9ea6936c8a
+on lanes 15851, 12286
+
+### HOUSE RULES
+- K1 hk-rule
+
+## CURRENT LEG (rendered checkpoint)
+### OWED / NEXT
+hk fixture
+
+
+
+## Budgets
+
+Budgets are UTF-8 bytes. Enforcement is at render (truncate-and-flag); writers stay under budget.
+
+| Surface | Budget | Live bytes |
+|---|---|---|
+| `12286-standing-handoff.md` checkpoint (excl. HOUSE RULES; IN FLIGHT uncapped) | 8192 | 26/8192 |
+| `12286-house-rules.md` | 8192 | 28/8192 |
+| `maestro-loop.md` (§ Refuse + § Steps) | 32768 | — |
+| `maestro/journal.md` head (arrival read) | 65536 | 0/65536 |
+| hop preamble (soft; IN FLIGHT may push over) | 30720 | — |
+
+Standing handoff URI: cortex://notes/system/threads/12286-standing-handoff.md · rules URI: cortex://notes/system/threads/12286-house-rules.md
+
+## Housekeeping acts
+
+1. Use the cdp-operator-proxy and reasoning-posture skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
+2. Rewrite the checkpoint per journal-166 schema from the arriving checkpoint; agent_bus_read fetch thread 12286, last 5, compact.
+3. Rules file: new bullets ≤600 B, superseded wording to the archive, tightened wording where over budget; **proposed** absorb/retire lines only.
+4. Runbook K-index refresh when a K-row moved; monthly archive folder roll when due.
+5. Post TYPE: HOUSEKEEPING_DONE on 12286 to cursor with before/after bytes per surface, K-ids added/removed/proposed, shas.
+6. agent_bus(hop, thread=12286, from_agent=web-anthropic, desired_model=cdp/fable-5.1, desired_effort=medium, hop_kind=mission, reason="housekeeping done; resume").
+
+## Hop request (data)
+
+TYPE: CONTINUITY_HANDOFF
+thread_id: 12286
+successor_birth_id: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+hop_kind: housekeeping
+
+## Hard refusals (housekeeping — these bind; they are last on purpose)
+
+- Never commission or re-admit mission work from this seat.
+- Never ACK/RULING/AMEND/PARK/CANCEL on 12286.
+- Never call manage from this seat.
+- Never answer a QUESTION or a consult brief typed into this chat (deferred data only).
+- Never change an IN FLIGHT row except re-serialising it.
+- Never write to the journal (projector-owned).
+- Never write without expected_sha256 on a standing surface.
+- Never edit a runbook **step** (keep-set); K-index refresh only.
+- Never retire a rule without a ruling id.
