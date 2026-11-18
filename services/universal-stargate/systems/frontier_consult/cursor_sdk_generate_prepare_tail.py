@@ -311,6 +311,17 @@ async def finish_cursor_sdk_generate_prepare(
     from implement_admission.check_review_substrate import consultant_rung
 
     from .generate_admission_context_store import write_admission_context
+    from .generate_lane_ac_observer import resolve_frozen_instruction_at_admit
+
+    frozen_instruction_text = resolve_frozen_instruction_at_admit(
+        effective_auto_review_child=bool(effective_auto_review_child),
+        suppress_review_spawn=bool(suppress_review_spawn),
+        prompt_bind_mode=prompt_bind_mode,
+        prompt_turn_number=prompt_turn_number,
+        packet_path=packet_path,
+        early_packet_text=early_packet_text,
+        message_text=message_text,
+    )
 
     try:
         write_admission_context(
@@ -346,6 +357,7 @@ async def finish_cursor_sdk_generate_prepare(
                 if caller_agent and caller_agent.strip()
                 else None
             ),
+            frozen_instruction_text=frozen_instruction_text,
         )
     except Exception:
         logger.warning(

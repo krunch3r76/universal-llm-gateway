@@ -216,6 +216,7 @@ async def _build_generate_lane_review_prompt(
     parent_dispatch_thread_id: str | None,
     prompt_turn_number: int | None = None,
     prompt_bind_mode: str | None = None,
+    frozen_instruction_text: str | None = None,
 ) -> _ReviewPromptBuild | None:
     """Build review-child prompt; fail closed on frozen-turn read failure (6655)."""
     from .admission import FrontierEndpointError
@@ -232,6 +233,8 @@ async def _build_generate_lane_review_prompt(
     read_outcome = "skipped"
     bound_class = "sentinel"
     bound_digest = bound_prompt_sha256_prefix(draft_body)
+    parent_instruction: str | None = None
+    parent_instruction_bind: str | None = None
 
     if thread_id and prompt_turn_number is not None and prompt_turn_number >= 1:
         bind_mode = prompt_bind_mode or "frozen_turn"
@@ -263,9 +266,21 @@ async def _build_generate_lane_review_prompt(
         read_outcome = "ok"
         if thread_body.strip():
             packet_text = thread_body
-            draft_body = f"{COMPOSER_DRAFT_SENTINEL}\n{thread_body}"
+            parent_instruction = thread_body
+            parent_instruction_bind = "frozen_turn"
             bound_class = classify_bound_prompt_class(thread_body)
             bound_digest = bound_prompt_sha256_prefix(thread_body)
+    elif (
+        prompt_bind_mode in ("explicit_external", "explicit_inline")
+        and frozen_instruction_text is not None
+        and frozen_instruction_text.strip()
+    ):
+        packet_text = frozen_instruction_text
+        parent_instruction = frozen_instruction_text
+        parent_instruction_bind = prompt_bind_mode
+        read_outcome = "frozen_admit"
+        bound_class = classify_bound_prompt_class(frozen_instruction_text)
+        bound_digest = bound_prompt_sha256_prefix(frozen_instruction_text)
     elif thread_id and prompt_bind_mode == "explicit_inline":
         read_outcome = "skipped_explicit_inline"
         bound_class = "caller_prompt"
@@ -277,6 +292,8 @@ async def _build_generate_lane_review_prompt(
         packet_text=packet_text,
         staged_draft_body=draft_body,
         reasoning_trace_body=trace_body,
+        parent_instruction=parent_instruction,
+        parent_instruction_bind=parent_instruction_bind,
     )
     return _ReviewPromptBuild(
         prompt=prompt,
@@ -344,16 +361,26 @@ async def _dispatch_review_child(
         )
         return {}
 
-    if prompt_turn_number is None:
+    pinned = prompt_turn_number is not None and prompt_turn_number >= 1
+    snapshot = (
+        not pinned
+        and parent_ctx.prompt_bind_mode in ("explicit_external", "explicit_inline")
+        and bool((parent_ctx.frozen_instruction_text or "").strip())
+    )
+    if not (pinned or snapshot):
         logger.warning(
-            "review_child spawn fail-closed: missing frozen_turn pin thread=%s",
+            "review_child spawn fail-closed: missing frozen_turn pin thread=%s "
+            "bind=%s snapshot=%s",
             delivery_thread,
+            parent_ctx.prompt_bind_mode,
+            parent_ctx.frozen_instruction_text is not None,
         )
         abandon_spawn_state(
             parent_execution_id=parent_execution_id,
             reason="missing_frozen_turn_pin",
         )
         return {}
+    child_turn = prompt_turn_number if pinned else None
 
     work_key = _resolve_review_work_key(parent_ctx, delivery_thread)
     caller_agent = _normalize_parent_caller_agent(parent_ctx)
@@ -372,6 +399,28 @@ async def _dispatch_review_child(
                 reason="cdp_caller_agent_missing",
             )
             return {}
+        if snapshot:
+            from claude_bundles.cdp_model_endpoint_staging import CdpStagingError
+            from claude_bundles.cdp_review_prompt_gate import enforce_review_prompt_gate
+
+            try:
+                enforce_review_prompt_gate(
+                    contract=contract,
+                    prompt_text=prompt,
+                    dispatch_thread_id=delivery_thread,
+                )
+            except CdpStagingError as exc:
+                logger.warning(
+                    "review_child spawn abandoned: review prompt gate refused "
+                    "code=%s parent=%s",
+                    getattr(exc, "code", None),
+                    parent_execution_id,
+                )
+                abandon_spawn_state(
+                    parent_execution_id=parent_execution_id,
+                    reason="review_prompt_gate_refused",
+                )
+                return {}
         child_body = TeamDispatchGenerateBody(
             op=_GENERATE_OP,
             model=reviewer.model,
@@ -383,8 +432,10 @@ async def _dispatch_review_child(
             work_key=work_key,
             auto_review_child=False,
             spawn_review_provenance=_SPAWN_PROVENANCE,
-            prompt_turn_number=prompt_turn_number,
-            prompt_bind_mode=prompt_bind_mode or "frozen_turn",
+            prompt_turn_number=child_turn,
+            prompt_bind_mode=(
+                (prompt_bind_mode or "frozen_turn") if pinned else "explicit_external"
+            ),
         )
     else:
         scoped_prompt = _REVIEWER_EMPTY_SCOPE_PREFIX + prompt
@@ -397,8 +448,8 @@ async def _dispatch_review_child(
             prompt=scoped_prompt,
             auto_review_child=False,
             spawn_review_provenance=_SPAWN_PROVENANCE,
-            prompt_turn_number=prompt_turn_number,
-            prompt_bind_mode="frozen_turn",
+            prompt_turn_number=child_turn,
+            prompt_bind_mode="frozen_turn" if pinned else "explicit_external",
             lane="B",
             read_only=True,
             work_key=work_key,
@@ -464,6 +515,7 @@ async def spawn_generate_lane_review_child(
         parent_dispatch_thread_id=delivery_thread,
         prompt_turn_number=ctx.prompt_turn_number,
         prompt_bind_mode=ctx.prompt_bind_mode,
+        frozen_instruction_text=ctx.frozen_instruction_text,
     )
     if build is None:
         return {}
