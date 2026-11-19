@@ -67,8 +67,9 @@ def begin(key: str, digest: str) -> dict[str, Any]:
     with _LOCK:
         slot = _SLOTS.get(key)
         if slot is None:
-            _SLOTS[key] = _new_slot(digest, key, token)
-            return {"action": "create", "token": token, "nonce": key}
+            nonce = str(uuid.uuid4())
+            _SLOTS[key] = _new_slot(digest, nonce, token)
+            return {"action": "create", "token": token, "nonce": nonce}
         if slot.get("digest") != digest:
             return {"action": "conflict", "code": "idempotency_conflict"}
         if slot.get("state") == "verified":

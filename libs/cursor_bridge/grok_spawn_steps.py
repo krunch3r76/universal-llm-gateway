@@ -103,7 +103,7 @@ async def run_spawn(
         return {**claim, "ok": False, "display": ops._display_key(display)}
     token = str(claim["token"])
     agent_id = str(claim.get("agent_id") or "")
-    nonce = str(claim.get("nonce") or idem)
+    nonce = str(claim["nonce"])
     hide_ok = bool(claim.get("hide_ok"))
     sub_done = bool(claim.get("sub_done"))
     async def _adopt() -> dict[str, Any]:
