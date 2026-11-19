@@ -1363,10 +1363,14 @@ def _run_sdk_sync(
     # in which `skills=` can become real. Guidance, not transport — a mount failure
     # is reported and the dispatch continues.
     mount_result = None
+    staging_skills = skills
     try:
+        from reasoning_posture_contracts import posture_staging_skills
+
+        staging_skills = posture_staging_skills(skills, resolved_model=resolved_model)
         mount_result = stage_dispatch_skills(
             dispatch_home / ".cursor",
-            skills,
+            staging_skills,
             source_repo=ctx.hub,
             workspace_roots=()
             if is_bare
@@ -1377,7 +1381,7 @@ def _run_sdk_sync(
         logger.warning(
             "skills mount failed: dispatch_id=%s skills=%s err=%s",
             ctx.dispatch_id,
-            skills,
+            staging_skills,
             exc,
         )
     else:
@@ -5411,6 +5415,11 @@ async def admit_cursor_dispatch(
     payload = admission.model_dump()
     payload["registry_row_id"] = req.dispatch_id
     payload["_next"] = registry_next_hint(row_id=req.dispatch_id)
+    from reasoning_posture_contracts import posture_harness_report
+
+    payload["posture_harness"] = posture_harness_report(
+        resolved_prompt, resolved_model=req.model
+    )
     return JSONResponse(status_code=200, content=payload)
 
 
