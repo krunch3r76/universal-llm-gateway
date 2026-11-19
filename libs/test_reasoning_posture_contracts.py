@@ -67,7 +67,6 @@ def test_warrants_injection_mandatory_model_overrides_skip_set() -> None:
 
 def test_warrants_injection_default_argument_is_contract_only() -> None:
     from job_vocab.records import BY_NAME
-
     from reasoning_posture_contracts import (
         REASONING_POSTURE_SKIP_CONTRACTS,
         reasoning_posture_warrants_injection,

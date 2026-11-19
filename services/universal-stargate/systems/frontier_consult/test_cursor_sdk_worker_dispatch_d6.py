@@ -210,7 +210,9 @@ async def test_worker_200_passes_posture_harness_through(
     )
     assert result["posture_harness"] == harness
 
-    async def _worker_no_harness(*_args: object, **_kwargs: object) -> tuple[bool, dict]:
+    async def _worker_no_harness(
+        *_args: object, **_kwargs: object
+    ) -> tuple[bool, dict]:
         return (
             True,
             {
