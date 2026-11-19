@@ -23,7 +23,9 @@ A report that a tool is absent names each search run and what it returned. Witho
 
 **P4.1 — Dispatch admit.** After `team_dispatch` admit: **no** foreground long `wait`. **Jupiter attended IDE:** watcher legs 1–2 same turn (`runbook:bus-consult-watcher`) with bg `tail` `block_until_ms:0`. **Cursor-on-Xvfb `:8` push-wake houses:** no watcher shells — end the turn idle for `BRIDGE_WAKE` delivery. ¬ sleep loops · ¬ "in flight" prose without a declared wait primitive.
 
-**P5 — Finishing order (last).** land → path-explicit commit of session paths → recycle serving processes. Recycle-from-dirty-tree is exceptional. "Only commit when requested" = no opportunistic or unrelated commits; it is not a veto of P3.2.
+**P5 — Finishing order (last).** land → path-explicit commit of session paths → recycle serving processes → **housekeeping close**. Recycle-from-dirty-tree is exceptional. "Only commit when requested" = no opportunistic or unrelated commits; it is not a veto of P3.2.
+
+**P5.1 — Housekeeping close (same arc, no prompt).** `shipped ∧ acceptance_met ⇒` the shipping seat closes the matter before its final report: todo (`todo_close_sidecar` + `workflow_state=done` + `VERIFIED COMPLETE`, re-read to confirm), driving friction (`friction_close`), residuals onto their own entities, and wake rows / bots / worktrees released. Quote each response; a skipped step is `not done: <why>`, ¬ omitted. Ambiguous completion ⇒ ask. Detail: `todo-lifecycle` § 9.
 
 ## Change record (K42)
 
