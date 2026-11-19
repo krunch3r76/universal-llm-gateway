@@ -52,6 +52,10 @@ def test_begin_create_nonce_independent_of_key() -> None:
     b = begin("key-b", digest)
     assert a["action"] == "create" and b["action"] == "create"
     assert str(a["nonce"]) != str(b["nonce"])
+    _canonical_uuid(str(a["nonce"]))
+    _canonical_uuid(str(b["nonce"]))
+    assert str(a["nonce"]) != "key-a"
+    assert str(b["nonce"]) != "key-b"
 
 
 def test_begin_adopt_after_create_unknown_reuses_slot_nonce() -> None:
