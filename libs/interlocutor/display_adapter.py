@@ -1,4 +1,4 @@
-"""Cursor display :8 adapter."""
+"""Cursor display adapter (:8) and Grok window displays from config/grok-windows.json."""
 
 from __future__ import annotations
 
@@ -10,6 +10,13 @@ from cursor_bridge.electron_chat_relay import ElectronEndpoint, read_endpoint_tu
 from cursor_bridge.grok_spawn_idempotency import _NON_RETRYABLE
 
 from interlocutor.targets import DisplayEightTarget, DisplayGrokWindowTarget
+
+
+def _with_display(
+    target: DisplayEightTarget, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Addressed display from the parsed target (bare number string); overrides leaf copy."""
+    return {**payload, "display": target.display}
 
 
 def _endpoint(target: DisplayEightTarget) -> ElectronEndpoint:
@@ -126,25 +133,31 @@ async def read_display_latest(target: DisplayEightTarget) -> dict[str, Any]:
     snap = await read_endpoint_turn(_endpoint(target), select=True)
     if not snap.get("ok"):
         code = str(snap.get("code") or snap.get("reason") or "read_failed")
-        return {
-            "ok": False,
-            "code": code,
-            "reason": str(snap.get("reason") or snap.get("detail") or code),
-        }
+        return _with_display(
+            target,
+            {
+                "ok": False,
+                "code": code,
+                "reason": str(snap.get("reason") or snap.get("detail") or code),
+            },
+        )
     recent = list(snap.get("recent_messages") or [])
-    return {
-        "ok": True,
-        "adapter": "display_eight",
-        "coverage": "latest",
-        "latest_message": snap.get("latest_message") or "",
-        "generating": bool(snap.get("generating")),
-        "composer_draft": str(snap.get("composer_draft") or ""),
-        "latest_fingerprint": str(snap.get("latest_fingerprint") or ""),
-        "active_agent_id": snap.get("active_agent_id"),
-        "active_title": snap.get("active_title"),
-        "recent_messages": recent[-3:],
-        "endpoint": snap.get("endpoint"),
-    }
+    return _with_display(
+        target,
+        {
+            "ok": True,
+            "adapter": "display_eight",
+            "coverage": "latest",
+            "latest_message": snap.get("latest_message") or "",
+            "generating": bool(snap.get("generating")),
+            "composer_draft": str(snap.get("composer_draft") or ""),
+            "latest_fingerprint": str(snap.get("latest_fingerprint") or ""),
+            "active_agent_id": snap.get("active_agent_id"),
+            "active_title": snap.get("active_title"),
+            "recent_messages": recent[-3:],
+            "endpoint": snap.get("endpoint"),
+        },
+    )
 
 
 async def steer_display(
@@ -158,19 +171,28 @@ async def steer_display(
 ) -> dict[str, Any]:
     body = text or ""
     if not body.strip():
-        return ClassifyRefuse(
-            code="text_required", reason="steer requires text"
-        ).model_dump()
+        return _with_display(
+            target,
+            ClassifyRefuse(
+                code="text_required", reason="steer requires text"
+            ).model_dump(),
+        )
 
     voice_s = (voice or "self").strip().lower()
     if voice_s == "operator_relay":
         grant_s = (grant or "").strip().lower()
         auth = (authorization_source or "").strip()
         if grant_s not in {"operator", "explicit"} or not auth:
-            return ClassifyRefuse(
-                code="watermark_missing_authorization",
-                reason="operator_relay requires grant (operator|explicit) and authorization_source",
-            ).model_dump()
+            return _with_display(
+                target,
+                ClassifyRefuse(
+                    code="watermark_missing_authorization",
+                    reason=(
+                        "operator_relay requires grant (operator|explicit) "
+                        "and authorization_source"
+                    ),
+                ).model_dump(),
+            )
         from cursor_bridge.operator_paste import deliver_operator_paste
 
         result = await deliver_operator_paste(
@@ -188,33 +210,41 @@ async def steer_display(
 
         result = await paste_endpoint_message(_endpoint(target), body, select=True)
     else:
-        return ClassifyRefuse(
-            code="unsupported_voice",
-            reason=f"unsupported voice: {voice!r}",
-        ).model_dump()
+        return _with_display(
+            target,
+            ClassifyRefuse(
+                code="unsupported_voice",
+                reason=f"unsupported voice: {voice!r}",
+            ).model_dump(),
+        )
 
     if isinstance(result, dict) and result.get("ok") is False and result.get("code"):
-        return {
-            "ok": False,
-            "code": str(result.get("code")),
-            "reason": str(
-                result.get("reason") or result.get("message") or result.get("code")
-            ),
-            **{
-                k: v
-                for k, v in result.items()
-                if k not in {"code", "reason", "message"}
+        return _with_display(
+            target,
+            {
+                "ok": False,
+                "code": str(result.get("code")),
+                "reason": str(
+                    result.get("reason") or result.get("message") or result.get("code")
+                ),
+                **{
+                    k: v
+                    for k, v in result.items()
+                    if k not in {"code", "reason", "message"}
+                },
             },
-        }
+        )
 
     if not _verified_display_send(result):
         failure = _display_steer_failure(result)
         leaf = _leaf(result)
         if str(leaf.get("reason") or "") in _NON_RETRYABLE:
             failure["retryable"] = False
-        return failure
+        return _with_display(target, failure)
 
-    return _display_steer_success(result, voice_s=voice_s, target=target)
+    return _with_display(
+        target, _display_steer_success(result, voice_s=voice_s, target=target)
+    )
 
 
 def read_display_latest_sync(target: DisplayEightTarget) -> dict[str, Any]:
@@ -224,12 +254,15 @@ def read_display_latest_sync(target: DisplayEightTarget) -> dict[str, Any]:
 async def select_display_target(target: DisplayEightTarget) -> dict[str, Any]:
     """Roster-select only — does not restore a prior ``currentAgentId``."""
     if target.app != "grok":
-        return {
-            "ok": False,
-            "code": "unsupported_app",
-            "reason": f"select supports grok only (got {target.app!r})",
-            "adapter": "display_eight",
-        }
+        return _with_display(
+            target,
+            {
+                "ok": False,
+                "code": "unsupported_app",
+                "reason": f"select supports grok only (got {target.app!r})",
+                "adapter": "display_eight",
+            },
+        )
     from cursor_bridge.grok_agent_ops import (
         grok_selection_current_agent_id_async,
         select_grok_agent_async,
@@ -237,12 +270,15 @@ async def select_display_target(target: DisplayEightTarget) -> dict[str, Any]:
 
     aid = str(target.agent_id or "").strip()
     if not aid:
-        return {
-            "ok": False,
-            "code": "agent_id_required",
-            "reason": "select requires agent_id",
-            "adapter": "display_eight",
-        }
+        return _with_display(
+            target,
+            {
+                "ok": False,
+                "code": "agent_id_required",
+                "reason": "select requires agent_id",
+                "adapter": "display_eight",
+            },
+        )
     picked = await select_grok_agent_async(target.display, aid)
     current = await grok_selection_current_agent_id_async(target.display)
     ok = bool(picked.get("ok")) and current == aid
@@ -261,7 +297,7 @@ async def select_display_target(target: DisplayEightTarget) -> dict[str, Any]:
         out["reason"] = str(
             picked.get("reason") or picked.get("code") or "selection_failed"
         )
-    return out
+    return _with_display(target, out)
 
 
 def select_display_target_sync(target: DisplayEightTarget) -> dict[str, Any]:
@@ -342,7 +378,7 @@ def retire_grok_agent_sync(target: DisplayEightTarget) -> dict[str, Any]:
     from cursor_bridge.grok_agent_ops import retire_grok_agent
 
     out = retire_grok_agent(target.display, target.agent_id)
-    return {**out, "adapter": "display_eight", "op": "retire"}
+    return _with_display(target, {**out, "adapter": "display_eight", "op": "retire"})
 
 
 __all__ = [

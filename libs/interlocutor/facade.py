@@ -58,12 +58,18 @@ def execute_read(
 
     if isinstance(resolved, DisplayEightTarget):
         if coverage not in {"latest"}:
-            return _refuse(
-                ClassifyRefuse(
-                    code="capability_unsupported",
-                    reason=f"display :8 supports coverage=latest only (got {coverage!r})",
-                )
-            )
+            return {
+                **_refuse(
+                    ClassifyRefuse(
+                        code="capability_unsupported",
+                        reason=(
+                            f"display :{resolved.display} supports coverage=latest only "
+                            f"(got {coverage!r})"
+                        ),
+                    )
+                ),
+                "display": resolved.display,
+            }
         return display_adapter.read_display_latest_sync(resolved)
 
     if isinstance(resolved, CoworkMaestroTarget):
@@ -103,7 +109,9 @@ def execute_steer(
         return {
             "ok": False,
             "code": str(body_res.get("code") or "text_required"),
-            "reason": str(body_res.get("reason") or body_res.get("code") or "text_required"),
+            "reason": str(
+                body_res.get("reason") or body_res.get("code") or "text_required"
+            ),
             "delivered": False,
             "pasted": False,
         }

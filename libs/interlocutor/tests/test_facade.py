@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from chat_harvest.models import ClassifyRefuse
-from interlocutor import idempotency
+from interlocutor import display_adapter, idempotency
 from interlocutor.facade import execute_read, execute_steer
-from interlocutor.targets import MAESTRO_COWORK_PARENT_THREAD, resolve_target
+from interlocutor.targets import (
+    MAESTRO_COWORK_PARENT_THREAD,
+    DisplayEightTarget,
+    resolve_target,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -19,6 +24,111 @@ _DISPLAY_TARGET = "display:8/test-agent"
 @pytest.fixture(autouse=True)
 def _clear_idempotency() -> None:
     idempotency.clear_for_tests()
+
+
+def test_read_meta_refusal_names_target_display() -> None:
+    out = execute_read(target="display:9/agent-1", coverage="meta")
+    assert out["ok"] is False
+    assert out["code"] == "capability_unsupported"
+    assert ":9" in out["reason"]
+    assert ":8" not in out["reason"]
+    assert out["display"] == "9"
+
+
+def test_read_meta_refusal_on_display_8_unchanged() -> None:
+    out = execute_read(target="display:8/agent-1", coverage="meta")
+    assert out["reason"] == "display :8 supports coverage=latest only (got 'meta')"
+    assert out["display"] == "8"
+
+
+def test_read_latest_carries_display() -> None:
+    with patch(
+        "interlocutor.display_adapter.read_endpoint_turn", new_callable=AsyncMock
+    ) as read_turn:
+        read_turn.return_value = {"ok": True, "latest_message": "hi"}
+        out = execute_read(target="display:9/agent-1", coverage="latest")
+    assert out["ok"] is True
+    assert out["adapter"] == "display_eight"
+    assert out["coverage"] == "latest"
+    assert out["latest_message"] == "hi"
+    assert out["display"] == "9"
+
+    with patch(
+        "interlocutor.display_adapter.read_endpoint_turn", new_callable=AsyncMock
+    ) as read_turn:
+        read_turn.return_value = {"ok": False, "code": "no_active_chat"}
+        out = execute_read(target="display:9/agent-1", coverage="latest")
+    assert out["ok"] is False
+    assert out["code"] == "no_active_chat"
+    assert out["display"] == "9"
+
+
+def test_steer_success_on_display_9_carries_display_and_replays() -> None:
+    with patch(
+        "cursor_bridge.electron_chat_relay.paste_endpoint_message",
+        new_callable=AsyncMock,
+    ) as paste:
+        paste.return_value = {
+            "ok": True,
+            "delivered": True,
+            "pasted": True,
+            "message": "once",
+            "display": ":9",
+        }
+        first = execute_steer(
+            target="display:9/agent-1", text="once", idempotency_key="k9"
+        )
+        second = execute_steer(
+            target="display:9/agent-1", text="once", idempotency_key="k9"
+        )
+    assert first["ok"] is True
+    assert first["adapter"] == "display_eight"
+    assert first["display"] == "9"
+    assert second.get("duplicate") is True
+    assert second["display"] == "9"
+    assert paste.await_count == 1
+
+
+def test_is_verified_steer_receipt_ignores_display_field() -> None:
+    base = {"adapter": "display_eight", "display": "9"}
+    assert idempotency.is_verified_steer_receipt(
+        {**base, "ok": True, "delivered": True, "pasted": True}
+    )
+    assert not idempotency.is_verified_steer_receipt({**base, "ok": True})
+    assert not idempotency.is_verified_steer_receipt(
+        {**base, "ok": True, "delivered": True, "pasted": False}
+    )
+
+
+def test_display_adapter_refusals_carry_display() -> None:
+    target = DisplayEightTarget(display="9", agent_id="a")
+    out = display_adapter.steer_display_sync(
+        target,
+        text="",
+        voice="self",
+        grant=None,
+        authorization_source=None,
+        scope=None,
+    )
+    assert out["code"] == "text_required"
+    assert out["display"] == "9"
+
+    sel = asyncio.run(
+        display_adapter.select_display_target(
+            DisplayEightTarget(display="9", app="cursor", agent_id="a")
+        )
+    )
+    assert sel["code"] == "unsupported_app"
+    assert sel["adapter"] == "display_eight"
+    assert sel["display"] == "9"
+
+    with patch(
+        "cursor_bridge.grok_agent_ops.retire_grok_agent", return_value={"ok": True}
+    ):
+        retired = display_adapter.retire_grok_agent_sync(target)
+    assert retired["adapter"] == "display_eight"
+    assert retired["op"] == "retire"
+    assert retired["display"] == "9"
 
 
 def test_maestro_target_resolves_to_cowork_house_12286() -> None:
