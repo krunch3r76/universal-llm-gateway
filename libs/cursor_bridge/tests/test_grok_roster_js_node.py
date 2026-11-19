@@ -158,7 +158,6 @@ def test_node_executes_roster_filters_create_and_retire() -> None:
         "clientNonce": "nonce-1",
         "name": "Bot",
         "description": "",
-        "creationRoute": {"kind": "box"},
         "isKickstartRequested": False,
     }
     assert out["spawn"]["agent_id"] == "new-1"

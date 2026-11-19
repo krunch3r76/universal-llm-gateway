@@ -69,12 +69,11 @@ def js_select(agent_id: str) -> str:
 
 
 def js_spawn(*, client_nonce: str, name: str, description: str, hidden: bool) -> str:
-    """``createAgent`` with the box route. Hide is a separate ensure step."""
+    """``createAgent`` via the app default route (box route refused; assertion a:44290). Hide is a separate ensure step."""
     payload = {
         "clientNonce": client_nonce,
         "name": name,
         "description": description,
-        "creationRoute": {"kind": "box"},
         "isKickstartRequested": False,
     }
     nm = json.dumps(name)
