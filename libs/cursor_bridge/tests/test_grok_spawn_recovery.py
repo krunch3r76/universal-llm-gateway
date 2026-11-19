@@ -102,6 +102,7 @@ async def test_cancel_during_create_blocks_retry() -> None:
     with patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval):
         with pytest.raises(asyncio.CancelledError):
             await spawn_grok_agent_async("9", "bot", idempotency_key="cancel-create")
+
     async def _empty_list(_display: object, expr: str, **_kw: Any) -> dict[str, Any]:
         if "agents" in expr:
             return {"ok": True, "agents": [], "currentAgentId": None}
@@ -174,6 +175,56 @@ def _unconfirmed_create(store: dict[str, Any], raw: Any) -> Any:
         return {"ok": True, "hidden": True, "currentAgentId": "agent-1"}
 
     return _eval
+
+
+@pytest.mark.asyncio
+async def test_create_agent_threw_5xx_releases_slot_and_adopts_on_retry() -> None:
+    store: dict[str, Any] = {"creates": 0}
+    lists = {"n": 0}
+    threw = {
+        "ok": False,
+        "code": "create_agent_threw",
+        "created": None,
+        "clientNonce": "n",
+        "envelope": {
+            "message": "upstream",
+            "code": "server_error",
+            "transportKind": "http_5xx",
+            "command": "roster.createAgent",
+            "clientNonce": "n",
+        },
+    }
+
+    async def _eval(_display: object, expr: str, **_kw: Any) -> Any:
+        if "createAgent" in expr:
+            store["creates"] += 1
+            return threw
+        if "setAgentHiddenFromSidebar" in expr:
+            return {"ok": True, "hidden": True, "code": "hidden"}
+        if "agents" in expr and "currentAgentId" in expr:
+            lists["n"] += 1
+            if lists["n"] <= 2:
+                return {"ok": True, "agents": [], "currentAgentId": None}
+            return {
+                "ok": True,
+                "agents": [{"id": "adopted-5xx", "name": "bot"}],
+                "currentAgentId": "adopted-5xx",
+            }
+        return {"ok": True, "currentAgentId": "adopted-5xx"}
+
+    with patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval):
+        first = await spawn_grok_agent_async(
+            "9", "bot", idempotency_key="threw-5xx", hidden=True
+        )
+        second = await spawn_grok_agent_async(
+            "9", "bot", idempotency_key="threw-5xx", hidden=True
+        )
+    assert first["code"] == "create_unknown"
+    assert first["needs_operator"] is True
+    assert first.get("envelope", {}).get("transportKind") == "http_5xx"
+    assert second["ok"] is True
+    assert second["agent_id"] == "adopted-5xx"
+    assert store["creates"] == 1
 
 
 @pytest.mark.asyncio
@@ -268,7 +319,10 @@ async def test_first_call_roster_diff_hide_subscribe_steer_once() -> None:
 
     with (
         patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval),
-        patch("cursor_bridge.grok_spawn_steps.preflight_subscriptions", return_value={"ok": True}),
+        patch(
+            "cursor_bridge.grok_spawn_steps.preflight_subscriptions",
+            return_value={"ok": True},
+        ),
         patch("cursor_bridge.grok_spawn_steps.subscribe_grok", side_effect=_sub),
         patch("interlocutor.display_adapter.steer_display", steer),
     ):
@@ -330,7 +384,9 @@ async def test_non_dict_create_blocks_second_create() -> None:
         first = await spawn_grok_agent_async("9", "bot", idempotency_key="non-dict")
     with patch(
         "cursor_bridge.grok_agent_ops._eval_display",
-        side_effect=_unconfirmed_create(store, {"ok": True, "agents": [], "currentAgentId": None}),
+        side_effect=_unconfirmed_create(
+            store, {"ok": True, "agents": [], "currentAgentId": None}
+        ),
     ):
         second = await spawn_grok_agent_async("9", "bot", idempotency_key="non-dict")
     assert first["code"] == "create_unknown"
@@ -369,6 +425,7 @@ async def test_ambiguous_eval_error_burns_key() -> None:
 
     with patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval):
         first = await spawn_grok_agent_async("9", "bot", idempotency_key="ambig")
+
     async def _adopt_eval(_display: object, expr: str, **_kw: Any) -> dict[str, Any]:
         if "agents" in expr:
             return {"ok": True, "agents": [], "currentAgentId": None}
@@ -628,7 +685,6 @@ async def test_subscribe_failure_resumes_without_second_create() -> None:
 
 @pytest.mark.asyncio
 async def test_text_spawn_hides_after_confirm_not_before_steer() -> None:
-    store: dict[str, Any] = {"hidden": True}
     order: list[str] = []
     steer = AsyncMock(return_value={"ok": True, "delivered": True, "pasted": True})
 
@@ -732,7 +788,9 @@ async def test_restore_after_failed_text_confirm() -> None:
 
     with (
         patch("cursor_bridge.grok_agent_ops._eval_display", side_effect=_eval),
-        patch("cursor_bridge.grok_agent_ops.select_grok_agent_async", side_effect=_select),
+        patch(
+            "cursor_bridge.grok_agent_ops.select_grok_agent_async", side_effect=_select
+        ),
         patch("interlocutor.display_adapter.steer_display", steer),
     ):
         out = await spawn_grok_agent_async(

@@ -290,6 +290,96 @@ class _FakeMCP:
         return deco
 
 
+def test_mcp_spawn_refused_records_envelope_scalars() -> None:
+    from interlocutor.mcp_tool import register_interlocutor_tool
+
+    recorded: list[tuple[str, dict[str, object]]] = []
+    mcp = _FakeMCP()
+
+    def _rec(signal: str, **payload: object) -> None:
+        recorded.append((signal, payload))
+
+    with patch("interlocutor.mcp_tool._record", side_effect=_rec):
+        register_interlocutor_tool(mcp)
+        fail = {
+            "ok": False,
+            "code": "create_unknown",
+            "reason": "create_agent_threw",
+            "needs_operator": True,
+            "envelope": {
+                "code": "permission_denied",
+                "transportKind": "app_refusal",
+                "command": "roster.createAgent",
+            },
+        }
+        with patch("interlocutor.mcp_tool.execute_spawn", return_value=fail):
+            mcp.fn(op="spawn", target="display:9", name="bot")
+    assert recorded[0][0] == "interlocutor.spawn.refused"
+    payload = recorded[0][1]
+    assert payload["envelope_code"] == "permission_denied"
+    assert payload["transport_kind"] == "app_refusal"
+    assert payload["command"] == "roster.createAgent"
+    assert payload["needs_operator"] is True
+
+
+def test_mcp_spawn_completed_payload_unchanged() -> None:
+    from interlocutor.mcp_tool import register_interlocutor_tool
+
+    recorded: list[tuple[str, dict[str, object]]] = []
+    mcp = _FakeMCP()
+    success = {
+        "ok": True,
+        "agent_id": "a1",
+        "name": "bot",
+        "display": "9",
+        "hidden": True,
+        "clientNonce": "uuid",
+        "select": {"ok": True},
+        "subscription": None,
+        "steer": None,
+        "currentAgentId": "a1",
+    }
+    expected_keys = frozenset(success) | {"op", "target"}
+
+    def _rec(signal: str, **payload: object) -> None:
+        recorded.append((signal, payload))
+
+    with patch("interlocutor.mcp_tool._record", side_effect=_rec):
+        register_interlocutor_tool(mcp)
+        with patch("interlocutor.mcp_tool.execute_spawn", return_value=dict(success)):
+            out = mcp.fn(op="spawn", target="display:9", name="bot")
+    assert frozenset(out) == expected_keys
+    assert recorded == [("interlocutor.spawn.completed", {"target": "display:9"})]
+
+
+def test_mcp_retire_refused_records_code_and_reason() -> None:
+    from interlocutor.mcp_tool import register_interlocutor_tool
+
+    recorded: list[tuple[str, dict[str, object]]] = []
+    mcp = _FakeMCP()
+
+    def _rec(signal: str, **payload: object) -> None:
+        recorded.append((signal, payload))
+
+    with patch("interlocutor.mcp_tool._record", side_effect=_rec):
+        register_interlocutor_tool(mcp)
+        with patch(
+            "interlocutor.mcp_tool.execute_retire",
+            return_value={"ok": False, "code": "row_not_found", "reason": "missing"},
+        ):
+            mcp.fn(op="retire", target="display:9/ghost")
+        with patch(
+            "interlocutor.mcp_tool.execute_retire",
+            return_value={"ok": True, "code": "retired"},
+        ):
+            mcp.fn(op="retire", target="display:9/vis")
+    assert recorded[0] == (
+        "interlocutor.retire.refused",
+        {"target": "display:9/ghost", "code": "row_not_found", "reason": "missing"},
+    )
+    assert recorded[1] == ("interlocutor.retire.completed", {"target": "display:9/vis"})
+
+
 def test_mcp_steer_records_committed_refused_and_unknown() -> None:
     from interlocutor.mcp_tool import register_interlocutor_tool
 

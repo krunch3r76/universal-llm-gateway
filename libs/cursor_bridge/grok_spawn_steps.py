@@ -24,6 +24,7 @@ from cursor_bridge.grok_roster_js import (
     js_spawn,
 )
 from cursor_bridge.grok_spawn_adopt import adopt_agent_by_name
+from cursor_bridge.grok_spawn_failure_envelope import envelope_from_js_spawn_result
 from cursor_bridge.grok_spawn_idempotency import (
     begin,
     known_not_sent,
@@ -106,6 +107,7 @@ async def run_spawn(
     nonce = str(claim["nonce"])
     hide_ok = bool(claim.get("hide_ok"))
     sub_done = bool(claim.get("sub_done"))
+
     async def _adopt() -> dict[str, Any]:
         snap = roster_snapshot_for(idem, token)
         return await adopt_agent_by_name(display, nm, pre_create_ids=snap)
@@ -191,6 +193,7 @@ async def run_spawn(
                         "reason": code,
                         "display": ops._display_key(display),
                         "detail": raw,
+                        "envelope": envelope_from_js_spawn_result(raw),
                     }
                 adopted = await _adopt()
                 if adopted.get("ok") is True:
@@ -205,6 +208,7 @@ async def run_spawn(
                         "reason": code or "spawn_unconfirmed",
                         "display": ops._display_key(display),
                         "detail": raw,
+                        "envelope": envelope_from_js_spawn_result(raw),
                         "adopt": adopted,
                     }
             elif created:
@@ -369,7 +373,9 @@ async def run_spawn(
 
                     steer_result = await steer_display(
                         DisplayEightTarget(
-                            display=ops._display_key(display), app="grok", agent_id=agent_id
+                            display=ops._display_key(display),
+                            app="grok",
+                            agent_id=agent_id,
                         ),
                         text=body,
                         voice=(voice or "self").strip().lower(),
@@ -397,7 +403,9 @@ async def run_spawn(
                         release(idem, token, outcome="created")
                         return {
                             "ok": False,
-                            "code": str(steer_result.get("code") or "initial_text_failed"),
+                            "code": str(
+                                steer_result.get("code") or "initial_text_failed"
+                            ),
                             "agent_id": agent_id,
                             "display": ops._display_key(display),
                             "hidden": False,

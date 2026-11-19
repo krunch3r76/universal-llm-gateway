@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
+from cursor_bridge.grok_spawn_failure_envelope import spawn_refused_event_scalars
+
 from interlocutor.facade import (
     execute_list,
     execute_read,
@@ -144,6 +146,7 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
                     target=target,
                     code=result.get("code"),
                     reason=result.get("reason"),
+                    **spawn_refused_event_scalars(result),
                 )
             else:
                 _record(f"interlocutor.spawn.{outcome}", target=target)
@@ -152,7 +155,15 @@ def register_interlocutor_tool(mcp: FastMCP) -> None:
         if op == "retire":
             result = execute_retire(target=target)
             outcome = "refused" if result.get("ok") is False else "completed"
-            _record(f"interlocutor.retire.{outcome}", target=target)
+            if outcome == "refused":
+                _record(
+                    "interlocutor.retire.refused",
+                    target=target,
+                    code=result.get("code"),
+                    reason=result.get("reason"),
+                )
+            else:
+                _record(f"interlocutor.retire.{outcome}", target=target)
             return {**result, "op": "retire", "target": target}
 
         if not (text or "").strip() and not (text_uri or "").strip():

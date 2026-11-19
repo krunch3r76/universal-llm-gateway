@@ -104,7 +104,28 @@ def js_spawn(*, client_nonce: str, name: str, description: str, hidden: bool) ->
     if (typeof created === 'object') return {{kind: 'object', keys: Object.keys(created).slice(0, 12)}};
     return {{kind: typeof created}};
   }};
-  const created = await client.roster.createAgent({json.dumps(payload)});
+  let created;
+  try {{
+    created = await client.roster.createAgent({json.dumps(payload)});
+  }} catch (err) {{
+    const pick = (v) => (v === undefined || v === null ? null : String(v));
+    const src = err && typeof err === 'object' ? err : {{}};
+    const message = pick(src.message) ?? (err !== undefined && err !== null ? pick(err) : null);
+    const nonce = {json.dumps(client_nonce)};
+    return {{
+      ok: false,
+      code: 'create_agent_threw',
+      created: null,
+      clientNonce: nonce,
+      envelope: {{
+        message,
+        code: pick(src.code),
+        transportKind: pick(src.transportKind),
+        command: pick(src.command),
+        clientNonce: nonce,
+      }},
+    }};
+  }}
   let agentId = extractAgentId(created);
   let recovered = agentId ? 'return_value' : null;
   const idleCap = 8;

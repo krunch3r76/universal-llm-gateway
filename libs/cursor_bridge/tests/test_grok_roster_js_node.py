@@ -55,6 +55,9 @@ const client = {
   roster: {
     snapshots: { get() { return { agents: { rows } }; } },
     async createAgent(payload) {
+      if (captured.createThrow !== undefined) {
+        throw captured.createThrow;
+      }
       captured.payload = payload;
       if (captured.latePersist) {
         if (captured.lateDuplicate) {
@@ -102,6 +105,7 @@ global.document = {
 };
 const script = JSON.parse(process.argv[1]);
 if (script.createResult !== undefined) captured.createResult = script.createResult;
+if (script.createThrow !== undefined) captured.createThrow = script.createThrow;
 if (script.skipHideFlip) captured.skipHideFlip = true;
 if (script.latePersist) captured.latePersist = true;
 if (script.lateDuplicate) captured.lateDuplicate = true;
@@ -145,7 +149,9 @@ def test_node_executes_roster_filters_create_and_retire() -> None:
         {
             "exprs": {
                 "listed": js_list(include_hidden=False, include_retired=False),
-                "spawn": js_spawn(client_nonce="nonce-1", name="Bot", description="", hidden=True),
+                "spawn": js_spawn(
+                    client_nonce="nonce-1", name="Bot", description="", hidden=True
+                ),
                 "retire": js_retire("vis"),
                 "again": js_retire("vis"),
             }
@@ -197,7 +203,9 @@ def test_node_spawn_id_extract_shapes(create_result: object, expected_id: str) -
         {
             "createResult": create_result,
             "exprs": {
-                "spawn": js_spawn(client_nonce="n", name="Bot", description="", hidden=True),
+                "spawn": js_spawn(
+                    client_nonce="n", name="Bot", description="", hidden=True
+                ),
             },
         }
     )
@@ -211,7 +219,9 @@ def test_node_spawn_late_roster_diff_finds_id() -> None:
             "latePersist": True,
             "createResult": {},
             "exprs": {
-                "spawn": js_spawn(client_nonce="late", name="Bot", description="", hidden=True),
+                "spawn": js_spawn(
+                    client_nonce="late", name="Bot", description="", hidden=True
+                ),
             },
         }
     )
@@ -227,7 +237,9 @@ def test_node_spawn_leftover_new_rows_ambiguous() -> None:
             "leftoverNew": True,
             "createResult": {},
             "exprs": {
-                "spawn": js_spawn(client_nonce="left", name="Bot", description="", hidden=True),
+                "spawn": js_spawn(
+                    client_nonce="left", name="Bot", description="", hidden=True
+                ),
             },
         }
     )
@@ -243,7 +255,9 @@ def test_node_spawn_late_duplicate_names_ambiguous() -> None:
             "lateDuplicate": True,
             "createResult": {},
             "exprs": {
-                "spawn": js_spawn(client_nonce="dup", name="Bot", description="", hidden=True),
+                "spawn": js_spawn(
+                    client_nonce="dup", name="Bot", description="", hidden=True
+                ),
             },
         }
     )
@@ -252,12 +266,68 @@ def test_node_spawn_late_duplicate_names_ambiguous() -> None:
     assert out["spawn"]["needs_operator"] is True
 
 
+def test_node_spawn_create_agent_threw_carries_envelope() -> None:
+    thrown = {
+        "message": "permission_denied: quota",
+        "code": "permission_denied",
+        "transportKind": "app_refusal",
+        "command": "roster.createAgent",
+    }
+    out = _run_node(
+        {
+            "createThrow": thrown,
+            "exprs": {
+                "spawn": js_spawn(
+                    client_nonce="nonce-threw",
+                    name="Bot",
+                    description="",
+                    hidden=True,
+                ),
+            },
+        }
+    )
+    spawn = out["spawn"]
+    assert spawn["ok"] is False
+    assert spawn["code"] == "create_agent_threw"
+    assert spawn["created"] is None
+    assert spawn["clientNonce"] == "nonce-threw"
+    env = spawn["envelope"]
+    assert env["message"] == thrown["message"]
+    assert env["code"] == thrown["code"]
+    assert env["transportKind"] == thrown["transportKind"]
+    assert env["command"] == thrown["command"]
+    assert env["clientNonce"] == "nonce-threw"
+
+
+def test_node_spawn_create_agent_threw_http_5xx() -> None:
+    thrown = {
+        "message": "upstream error",
+        "code": "server_error",
+        "transportKind": "http_5xx",
+        "command": "roster.createAgent",
+    }
+    out = _run_node(
+        {
+            "createThrow": thrown,
+            "exprs": {
+                "spawn": js_spawn(
+                    client_nonce="5xx", name="Bot", description="", hidden=True
+                ),
+            },
+        }
+    )
+    assert out["spawn"]["code"] == "create_agent_threw"
+    assert out["spawn"]["envelope"]["transportKind"] == "http_5xx"
+
+
 def test_node_spawn_create_agent_no_id() -> None:
     out = _run_node(
         {
             "createResult": {},
             "exprs": {
-                "spawn": js_spawn(client_nonce="nonce-2", name="Bot", description="", hidden=True),
+                "spawn": js_spawn(
+                    client_nonce="nonce-2", name="Bot", description="", hidden=True
+                ),
             },
         }
     )
