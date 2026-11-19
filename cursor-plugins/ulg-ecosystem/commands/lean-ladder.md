@@ -30,7 +30,7 @@ Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retriev
 | `planner` | no | `here` | `here` or `glass:<n>` — selects § Wake registration subsection | prose |
 | `planner_model` | no | `claude-sonnet-5-5` | Glass spawn model (not `cursor/grok-4.7`) | `{{planner_model}}` |
 | `planner_effort` | no | `high` | Glass spawn effort | `{{planner_effort}}` |
-| `wake` | no | `subscribe` | `subscribe` or `none` — § No-wake resume and mailbox routing vs § Wake registration | prose |
+| `wake` | no | `subscribe` (**standing operator rule: always register**) | `subscribe` or `none` — `none` only when the operator types `wake=none` in this invocation; never inferred, never chosen to dodge a registration error — § No-wake resume and mailbox routing vs § Wake registration | prose |
 | `skip_confer` | no | `false` | Omit Leg 1 when confer sidecar exists | prose |
 
 Prose parameters (`planner`, `wake`, `skip_confer`) are not `{{slots}}`; the template names which subsections apply.
@@ -48,7 +48,8 @@ Prose parameters (`planner`, `wake`, `skip_confer`) are not `{{slots}}`; the tem
 
 1. **Parse** parameters and defaults; infer `slug` when absent. Echo resolved values in ≤8 lines.
 2. **Rename this tab** — once `slug` is resolved, rename the tab that runs the legs with Cursor's `rename_chat`: title `lean-ladder {slug}`; when the run has a bus thread id `{n}` (after § Wake registration, or the first worker thread when `wake=none`), rename once more to `{n} {slug}`. Invoking `/lean-ladder` is the rename ask: do not wait to be asked again. `rename_chat` unavailable or failed ⇒ say so once and continue; no retry loop. With `planner=glass:<n>` the spawned tab renames itself, not the spawning seat.
-3. **Template** — substitute slots and prose flags, then follow the template only:
+3. **Register wakes first (default, not optional)** — unless the operator passed `wake=none`, run § Wake registration (`whereami` → `subscribe` → `subscriptions` verify; mailbox `cursor-{slug}`, scope = the arc thread) immediately after the arc thread exists and before retrieval, packets, or any dispatch. Quote the verified row id. `whereami` unresolved, a refused `subscribe`, or no row ⇒ post BLOCKED / report and stop; never fall back to `wake=none`. After every admit, end the turn idle for `BRIDGE_WAKE`.
+4. **Template** — substitute slots and prose flags, then follow the template only:
    - § Preflight (before any dispatch)
    - § Retrieval gate (seat duty, before each authored artifact) for each artifact you author
    - § Wake registration (every Cursor planner; before any dispatch) — subsection `planner=here` or `planner=glass:<n>`
@@ -57,8 +58,8 @@ Prose parameters (`planner`, `wake`, `skip_confer`) are not `{{slots}}`; the tem
    - § Legs (run in order; one bounded step each) including optional § Leg 2b — Optional plan review (`cursor/grok-4.7`)
    - § Selective reading of closeouts (md tooling only) for harvests
    - § Completion (quote, do not narrate)
-4. **`planner=glass:<n>`** — the spawning seat runs preflight, retrieval for the spawn prompt, and wake registration only; the spawned tab runs all legs through completion (see § Wake registration / `planner=glass:<n>` step 6).
-5. **`planner=here`** — this tab runs all legs through completion.
+5. **`planner=glass:<n>`** — the spawning seat runs preflight, retrieval for the spawn prompt, and wake registration only; the spawned tab runs all legs through completion (see § Wake registration / `planner=glass:<n>` step 6).
+6. **`planner=here`** — this tab runs all legs through completion.
 
 ## Template section index
 
