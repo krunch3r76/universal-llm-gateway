@@ -41,7 +41,8 @@ Operator names grand impresario on a commissioned item (`todo:{slug}` or an expl
    Falsifier: dispatches while another live row holds the same key, or AC drift with no operator amend. Specimen: `CURSOR_SOURCE_REF_IN_FLIGHT` (22910–22914).
 
 2. **Layer delegates.** Design or judgment forks → consult packets (`handoff-packet-authoring`, `consult-routing`). Mechanical slices → `team_dispatch` lane B implement (`cursor/composer-2.5`). Mission-shaped arcs → `conductor` or `mission-operator` when the lane contract requires it.
-   Falsifier: parent authors large diffs or absorbs lane transcripts instead of harvesting envelopes. Specimen: lean-dispatch packet in / envelope out.
+   Lane freshness: fire each fresh lane-B implement or fix-round generate **without** `reuse_thread` (operator decision 2026-11-19, `todo:lane-b-reused-lane-stale-base`): lane trees are keyed on `thread_id` and reused without a reset to master, so `reuse_thread=<arc>` lands the worker on the arc's old lane. `reuse_thread` stays only for `resume_of` or hop re-admit of the same agent (same-lane by design). Before land, run `git merge-base --is-ancestor <master base> <lane commit>`; on a stale lane, cherry-pick the single reported commit from a land worktree, re-run the ACs on master, never merge the lane (template `lean-dispatch-ladder.md` § Leg 3).
+   Falsifier: parent authors large diffs or absorbs lane transcripts instead of harvesting envelopes, or a fresh lane-B leg carries `reuse_thread` / a stale lane is merged. Specimen: lean-dispatch packet in / envelope out; lane-24482 (arc 24482).
 
 3. **Independent review.** Before land: width-seat critic on diff or plan per `consult-routing`; originator ≠ reviewer; harvest verdict before merge or DONE.
    Falsifier: same seat that implemented also signs review, or land precedes review harvest. Specimen: runbook:operator-impresario review step.
