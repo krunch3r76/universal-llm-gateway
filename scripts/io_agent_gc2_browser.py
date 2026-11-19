@@ -2,76 +2,38 @@
 
 from __future__ import annotations
 
-import os
-import shutil
-import stat
-from pathlib import Path
-
-_REPO_SCRIPTS = Path(__file__).resolve().parent / "io-agent"
-_GC2_CONFIG = Path.home() / ".config" / "io-agent-gc2"
-_GC2_BIN = _GC2_CONFIG / "bin"
-_GC2_APPS = Path.home() / ".local" / "share" / "applications"
+from grokbot_box_mcp.gc2_browser import (
+    ensure_gc2_browser_shims,
+    gc2_service_environment as _gc2_service_environment,
+)
 
 
-def _install_executable(src: Path, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
-    mode = dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-    dest.chmod(mode)
-
-
-def provision_gc2_browser_config(*, home: Path | None = None) -> dict[str, object]:
+def provision_gc2_browser_config(*, home=None) -> dict[str, object]:
     """Write gc2 browser wrappers and desktop entries under ``~/.config/io-agent-gc2``."""
-    home = home or Path.home()
-    config = home / ".config" / "io-agent-gc2"
-    bin_dir = config / "bin"
-    apps = home / ".local" / "share" / "applications"
+    from pathlib import Path
 
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    apps.mkdir(parents=True, exist_ok=True)
-
-    open_url = bin_dir / "gc2-open-url.sh"
-    xdg_open = bin_dir / "xdg-open"
-    _install_executable(_REPO_SCRIPTS / "gc2-open-url.sh", open_url)
-    shutil.copy2(open_url, xdg_open)
-
-    for name in (
-        "grok-bot-gc2.desktop",
-        "gc2-browser-wrapper.desktop",
-    ):
-        shutil.copy2(_REPO_SCRIPTS / name, apps / name)
-
-    mimeapps = config / "mimeapps.list"
-    shutil.copy2(_REPO_SCRIPTS / "gc2-mimeapps.list", mimeapps)
-
-    return {
-        "ok": True,
-        "config_dir": str(config),
-        "bin_dir": str(bin_dir),
-        "open_url": str(open_url),
-        "mimeapps": str(mimeapps),
-        "applications": [
-            str(apps / "grok-bot-gc2.desktop"),
-            str(apps / "gc2-browser-wrapper.desktop"),
-        ],
-    }
+    return ensure_gc2_browser_shims(home=Path(home) if home else None)
 
 
-def gc2_service_environment(*, home: Path | None = None) -> dict[str, str]:
+def gc2_service_environment(*, home=None) -> dict[str, str]:
     """systemd Environment= keys for io-agent-grok-gc2 OAuth browser routing."""
-    home = home or Path.home()
-    config = home / ".config" / "io-agent-gc2"
-    bin_dir = config / "bin"
-    path = os.pathsep.join([str(bin_dir), "/usr/local/bin", "/usr/bin", "/bin"])
-    udd = home / ".gateway" / "grok-io-gc2"
-    return {
-        "DISPLAY": ":10",
-        "GROK_AGENT_DATA_DIR": str(udd),
-        "XDG_CONFIG_HOME": str(udd / ".config"),
-        "XDG_CONFIG_DIRS": f"{config}:/etc/xdg",
-        "PATH": path,
-        "BROWSER": str(bin_dir / "gc2-open-url.sh"),
-        "MOZ_DISABLE_REMOTE": "1",
-    }
+    from pathlib import Path
+
+    return _gc2_service_environment(home=Path(home) if home else None)
 
 
+def main() -> int:
+    out = ensure_gc2_browser_shims()
+    if not out.get("chromium_ready"):
+        print(
+            "ensure: shims synced; Playwright Chromium not found — "
+            "run: $HOME/.venvs/universal/bin/playwright install chromium",
+            flush=True,
+        )
+    else:
+        print(f"ensure: ok chromium={out['chromium_bin']}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

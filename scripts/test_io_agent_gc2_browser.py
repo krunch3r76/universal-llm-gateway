@@ -60,6 +60,9 @@ def test_gc2_open_url_launches_chrome_with_profile(tmp_path: Path) -> None:
     logged = log.read_text(encoding="utf-8")
     assert "--user-data-dir=" in logged
     assert "https://authenticator.cursor.sh/example" in logged
+    assert "firefox" not in script.read_text(encoding="utf-8").lower() or (
+        "avoid firefox" in script.read_text(encoding="utf-8").lower()
+    )
 
 
 @pytest.mark.offline
