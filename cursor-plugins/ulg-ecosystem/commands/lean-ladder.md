@@ -31,9 +31,10 @@ Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retriev
 | `planner_model` | no | `claude-sonnet-5-5` | Glass spawn model (not `cursor/grok-4.7`) | `{{planner_model}}` |
 | `planner_effort` | no | `high` | Glass spawn effort | `{{planner_effort}}` |
 | `wake` | no | `subscribe` (**standing operator rule: always register**) | `subscribe` or `none` — `none` only when the operator types `wake=none` in this invocation; never inferred, never chosen to dodge a registration error — § No-wake resume and mailbox routing vs § Wake registration | prose |
-| `skip_confer` | no | `false` | Omit Leg 1 when confer sidecar exists | prose |
 
-Prose parameters (`planner`, `wake`, `skip_confer`) are not `{{slots}}`; the template names which subsections apply.
+Leg 1 (architect confer) always runs, on light and heavy paths alike. A confer sidecar that already exists for the slug (resumed arc) is reused, not re-fired.
+
+Prose parameters (`planner`, `wake`) are not `{{slots}}`; the template names which subsections apply.
 
 ## Slug inference
 
