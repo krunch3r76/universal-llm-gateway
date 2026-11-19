@@ -614,6 +614,23 @@ def touch_lane_worktree_dispatch(
         )
 
 
+def update_lane_branch_point(
+    *,
+    source_repo: Path,
+    thread_id: str,
+    branch_point: str,
+) -> None:
+    """Set registry ``branch_point`` without replacing the lane row."""
+    repo_str = str(source_repo.resolve())
+    with ledger_connection() as conn:
+        ensure_worktree_schema(conn)
+        conn.execute(
+            "UPDATE cursor_sdk_lane_worktrees SET branch_point=? "
+            "WHERE source_repo=? AND thread_id=?",
+            (branch_point, repo_str, thread_id),
+        )
+
+
 def unregister_lane_worktree(
     *,
     source_repo: Path,

@@ -315,6 +315,7 @@ from services.git_integration_worker.cursor_sdk_usage_extract import (
 from services.git_integration_worker.cursor_sdk_workspace import (
     resolve_promoted_workspace,
 )
+from services.git_integration_worker.cursor_sdk_lane_refresh import StaleLaneError
 from services.git_integration_worker.cursor_sdk_worktree import (
     NestParentNotFoundError,
     WorktreeMintError,
@@ -4724,6 +4725,16 @@ async def admit_cursor_dispatch(
             retryable=False,
             validation_stage="nest_under",
             extra_data={"fix_hint": _NEST_PARENT_NOT_FOUND_HINT},
+        )
+    except StaleLaneError as exc:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_STALE_LANE",
+            failure_layer="admission",
+            http_status=409,
+            detail_summary=str(exc),
+            retryable=False,
+            validation_stage="stale_lane",
         )
     except WorktreeMintError as exc:
         return _reject_pre_admission(
