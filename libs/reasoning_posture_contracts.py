@@ -1,15 +1,18 @@
-"""Shared contract sets for judgment-skill injection on dispatch preambles.
+"""Contract sets and model rules for reasoning-posture injection on preambles.
 
 GIW ``resolve_prompt_preamble`` and Stargate handoff enrich both consult these
-frozensets so mechanical/quick contracts skip the posture invoke while judgment
-contracts — including freeform ``none`` — receive ``/reasoning-posture`` plus
-the Use-line. Grok-4.7 judgment recipes use ``contract=none``; the slash is
-the Cursor skill-fire cue that seat reliably honors.
+sets. Judgment contracts, freeform included, receive ``/reasoning-posture`` plus
+the Use-line; contracts in ``REASONING_POSTURE_SKIP_CONTRACTS`` skip it, except
+when the caller passes a ``resolved_model`` in ``POSTURE_MANDATORY_CURSOR_MODELS``
+(``composer-2.5``, ``grok-4.7``): those get the invoke and
+``WHOLE_FILE_READ_BLOCK`` on every contract. Stargate handoff enrich passes no
+model and keeps the contract-only rule. The slash is the Cursor skill-fire cue.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Literal
 
 from job_vocab import HARNESS_STACK_SKIP_JOBS
@@ -48,9 +51,65 @@ REASONING_POSTURE_PREAMBLE = (
 _SLASH_LINE_RE = re.compile(r"(?m)^/reasoning-posture\s*$")
 _USE_LINE_RE = re.compile(r"Use the `?reasoning-posture`? skill", re.IGNORECASE)
 
+# Cursor bare ids that receive the posture invoke and the whole-file block on
+# every contract, the skip set notwithstanding. "Admitted" (cursor_capabilities)
+# and "needs posture" are different facts, so this is its own set (D5).
+POSTURE_MANDATORY_CURSOR_MODELS: frozenset[str] = frozenset(
+    {"composer-2.5", "grok-4.7"}
+)
+REASONING_POSTURE_SKILL_SLUG = "reasoning-posture"
+WHOLE_FILE_READ_MARKER = "WHOLE-FILE READ (mandatory)"
+WHOLE_FILE_READ_BLOCK = (
+    f"{WHOLE_FILE_READ_MARKER}: Any file your output rests on, meaning a file you "
+    "edit, review, cite by line or report as read, you read whole before you rely on "
+    "it, at the commit or content hash the packet names when it names one. One "
+    "exception: when your packet gives you a diff to review as your primary read, the "
+    "diff is your read for the lines it shows, and you open a file whole wherever a "
+    "judgment depends on code outside its hunks. A search hit or a partial window is a "
+    "lead, not a read. When a file is longer than one read returns, read consecutive "
+    "windows of at most 800 lines with no gaps, and record for each window its first "
+    "line number, its last line number and the exact text of its last line. Your "
+    "closeout carries a coverage table: path, content hash when the tool reports one, "
+    "lines read, and whole / judged from the diff / partial / not read. Mark a file "
+    "whole only when your windows run from line 1 to its last line; otherwise mark it "
+    "partial and name the lines you did not read. Reads made to satisfy this rule do "
+    "not count against a TIER-B read or tool-call budget; that budget still bounds "
+    "exploratory search."
+)
+POSTURE_HARNESS_SOURCE = "giw.admit_prompt"
 
-def reasoning_posture_warrants_injection(contract: str | None) -> bool:
-    """True when *contract* should receive the judgment posture invoke."""
+
+def posture_mandatory_model(resolved_model: str | None) -> bool:
+    """True when *resolved_model* is a cursor model that always gets posture (D5).
+
+    Strips and lower-cases first: ``canonical_cursor_bare_id`` keeps an upper-case
+    provider prefix (and raises on it) and does not strip padding.
+    """
+    if resolved_model is None:
+        return False
+    text = resolved_model.strip().lower()
+    if not text:
+        return False
+    from cursor_capabilities import canonical_cursor_bare_id
+
+    try:
+        bare = canonical_cursor_bare_id(text)
+    except ValueError:
+        return False
+    return bare in POSTURE_MANDATORY_CURSOR_MODELS
+
+
+def reasoning_posture_warrants_injection(
+    contract: str | None, *, resolved_model: str | None = None
+) -> bool:
+    """True when the preamble should carry the posture invoke.
+
+    A mandatory model (``posture_mandatory_model``) overrides the skip set. With no
+    model the rule is contract-only, which the ``ulg-for-llms`` gate and Stargate
+    handoff enrich rely on.
+    """
+    if posture_mandatory_model(resolved_model):
+        return True
     return (contract or "").strip().lower() not in REASONING_POSTURE_SKIP_CONTRACTS
 
 
@@ -63,6 +122,38 @@ def reasoning_posture_invoke_parts(*texts: str | None) -> tuple[str, ...]:
     if not _USE_LINE_RE.search(blob):
         parts.append(REASONING_POSTURE_PREAMBLE)
     return tuple(parts)
+
+
+def posture_staging_skills(
+    skills: Sequence[str] | None, *, resolved_model: str | None
+) -> list[str] | None:
+    """Skills to stage into the dispatch HOME: the caller's, plus the posture body
+    for a mandatory model so its invoke can resolve (D10)."""
+    if not posture_mandatory_model(resolved_model):
+        return None if skills is None else list(skills)
+    staged = list(skills or [])
+    present = {str(s).strip() for s in staged}
+    if (
+        REASONING_POSTURE_SKILL_SLUG not in present
+        and f"agent_skill:{REASONING_POSTURE_SKILL_SLUG}" not in present
+    ):
+        staged.append(REASONING_POSTURE_SKILL_SLUG)
+    return staged
+
+
+def posture_harness_report(
+    prompt: str, *, resolved_model: str | None
+) -> dict[str, object]:
+    """What the prompt GIW assembled at admit carries (D3); a projection of that
+    text, named by ``source``, not a statement about what the worker read."""
+    return {
+        "reasoning_posture": bool(
+            _SLASH_LINE_RE.search(prompt) or _USE_LINE_RE.search(prompt)
+        ),
+        "whole_file_read": WHOLE_FILE_READ_MARKER in prompt,
+        "mandatory_model": posture_mandatory_model(resolved_model),
+        "source": POSTURE_HARNESS_SOURCE,
+    }
 
 
 # Judgment jobs that receive hypothesize-simulate rival-fill injection.
@@ -109,11 +200,19 @@ __all__ = [
     "FREEFORM_CONTRACTS",
     "HYPOTHESIZE_ON_JOBS",
     "HYPOTHESIZE_SIMULATE_CONTRACTS",
+    "POSTURE_HARNESS_SOURCE",
+    "POSTURE_MANDATORY_CURSOR_MODELS",
     "POSTURE_SKIP_JOBS",
     "REASONING_POSTURE_PREAMBLE",
+    "REASONING_POSTURE_SKILL_SLUG",
     "REASONING_POSTURE_SKIP_CONTRACTS",
     "REASONING_POSTURE_SLASH",
+    "WHOLE_FILE_READ_BLOCK",
+    "WHOLE_FILE_READ_MARKER",
     "contract_is_freeform",
+    "posture_harness_report",
+    "posture_mandatory_model",
+    "posture_staging_skills",
     "reasoning_posture_invoke_parts",
     "reasoning_posture_warrants_injection",
     "resolve_delegation_tier",

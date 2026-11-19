@@ -100,6 +100,24 @@ def test_bare_contract_emits_lane_b_floor() -> None:
     assert "ulg-for-llms" not in preamble
 
 
+def test_bare_contract_mandatory_model_keeps_floor_and_gains_posture() -> None:
+    preamble = resolve_prompt_preamble(
+        handoff_contract="bare",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_branch="cursor-sdk/lane-bare",
+        lane_worktree="/tmp/wt-bare",
+        resolved_model="cursor/grok-4.7",
+    )
+    _mutation_pair(preamble)
+    assert preamble.startswith("/reasoning-posture")
+    assert "WHOLE-FILE READ (mandatory)" in preamble
+    assert "DURABLE DELIVERABLE ROUTING" not in preamble
+    assert "LANE-B BRANCH CONTRACT" not in preamble
+    assert "ulg-for-llms" not in preamble
+
+
 def test_bare_contract_honors_opt_in_skills_and_keeps_floor() -> None:
     preamble = resolve_prompt_preamble(
         handoff_contract="bare",

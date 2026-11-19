@@ -296,6 +296,9 @@ async def _finish_prepared_dispatch(
     result = _sdk_admit_envelope(handle, queued=queued)
     if queued:
         result["queue_ticket"] = worker_detail.get("ticket") or {}
+    ticket = worker_detail.get("ticket")
+    if isinstance(ticket, dict) and isinstance(ticket.get("posture_harness"), dict):
+        result["posture_harness"] = ticket["posture_harness"]
     return result
 
 

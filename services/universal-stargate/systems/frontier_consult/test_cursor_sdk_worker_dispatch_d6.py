@@ -172,6 +172,69 @@ async def test_worker_202_returns_queued_envelope(
 
 
 @pytest.mark.asyncio
+async def test_worker_200_passes_posture_harness_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_prepare_for_worker_tests(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_signals.publish_frontier_event",
+        lambda event: None,
+    )
+    harness = {
+        "reasoning_posture": True,
+        "whole_file_read": True,
+        "mandatory_model": True,
+        "source": "giw.admit_prompt",
+    }
+
+    async def _worker_ok(*_args: object, **_kwargs: object) -> tuple[bool, dict]:
+        return (
+            True,
+            {
+                "status_code": 200,
+                "dispatch_id": "disp-x",
+                "ticket": {"admitted": True, "posture_harness": harness},
+            },
+        )
+
+    monkeypatch.setattr(generate_mod, "dispatch_cursor_sdk_worker", _worker_ok)
+    result = await generate_mod.dispatch_cursor_sdk_generate(
+        request_id="req-posture",
+        role="cursor-sdk",
+        model="cursor/composer-2.5",
+        subject="s",
+        caller_agent="dispatch",
+        contract="implement",
+        packet_path="tmp/packet.md",
+        message_text=None,
+    )
+    assert result["posture_harness"] == harness
+
+    async def _worker_no_harness(*_args: object, **_kwargs: object) -> tuple[bool, dict]:
+        return (
+            True,
+            {
+                "status_code": 200,
+                "dispatch_id": "disp-y",
+                "ticket": {},
+            },
+        )
+
+    monkeypatch.setattr(generate_mod, "dispatch_cursor_sdk_worker", _worker_no_harness)
+    result = await generate_mod.dispatch_cursor_sdk_generate(
+        request_id="req-posture-absent",
+        role="cursor-sdk",
+        model="cursor/composer-2.5",
+        subject="s",
+        caller_agent="dispatch",
+        contract="implement",
+        packet_path="tmp/packet.md",
+        message_text=None,
+    )
+    assert "posture_harness" not in result
+
+
+@pytest.mark.asyncio
 async def test_worker_timeout_hard_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_prepare_for_worker_tests(monkeypatch)
 

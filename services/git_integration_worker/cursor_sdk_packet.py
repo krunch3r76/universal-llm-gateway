@@ -5,6 +5,8 @@ Who calls: GIW ``_resolve_prompt`` and Stargate cursor-sdk generate — every
 POSTs. Not Auto/life-only. Invariant: non-mechanical contracts get a
 ``reasoning-posture`` invoke unless the packet already carries one;
 mechanical/quick contracts skip.
+The two models in ``POSTURE_MANDATORY_CURSOR_MODELS`` get the invoke and
+``WHOLE_FILE_READ_BLOCK`` on every contract, ``bare`` included.
 """
 
 from __future__ import annotations
@@ -21,8 +23,11 @@ from implement_admission.conductor_no_restart import (
 from reasoning_posture_contracts import (
     HYPOTHESIZE_ON_JOBS,
     POSTURE_SKIP_JOBS,
+    WHOLE_FILE_READ_BLOCK,
+    WHOLE_FILE_READ_MARKER,
     DelegationTier,
     contract_is_freeform,
+    posture_mandatory_model,
     reasoning_posture_invoke_parts,
     reasoning_posture_warrants_injection,
     resolve_delegation_tier,
@@ -698,12 +703,26 @@ def _tier_prefix_blocks(
 
 
 def _prefix_reasoning_posture(
-    contract: str, parts: list[str], *texts: str | None
+    contract: str,
+    parts: list[str],
+    *texts: str | None,
+    resolved_model: str | None = None,
 ) -> list[str]:
-    """Put slash + Use-line first on judgment contracts; skip cues already present."""
-    if not reasoning_posture_warrants_injection(contract):
+    """Put slash + Use-line first on judgment contracts; skip cues already present.
+
+    A mandatory model gets the invoke on every contract, followed by the
+    whole-file read block unless a text or part already carries its marker.
+    """
+    if not reasoning_posture_warrants_injection(
+        contract, resolved_model=resolved_model
+    ):
         return parts
-    return [*reasoning_posture_invoke_parts(*texts, *parts), *parts]
+    head = [*reasoning_posture_invoke_parts(*texts, *parts)]
+    if posture_mandatory_model(resolved_model) and not any(
+        WHOLE_FILE_READ_MARKER in (t or "") for t in (*texts, *parts)
+    ):
+        head.append(WHOLE_FILE_READ_BLOCK)
+    return [*head, *parts]
 
 
 def _already_invokes_hypothesize_simulate(*texts: str | None) -> bool:
@@ -895,6 +914,8 @@ def resolve_prompt_preamble(
 
     Non-mechanical contracts get ``/reasoning-posture`` plus the Use-line unless
     *prompt_preamble* or *existing_text* already carries those cues (idempotent).
+    When *resolved_model* is ``composer-2.5`` or ``grok-4.7``, every contract
+    gets them, followed by ``WHOLE_FILE_READ_BLOCK`` (once; idempotent on the marker).
     Freeform ``freeform`` still skips the harness stack; posture is the judgment floor.
     Two exceptions share the worktree gate: the lane-B cwd warning, and the
     failure-paths block. Conductor packets get the cwd warning and not the
@@ -934,6 +955,8 @@ def resolve_prompt_preamble(
     the failure-paths block, and one refusal line (forward_only, no push or PR
     unless the packet names it, no pkill of fleet services, no cancel or kill
     of an in-flight execution). Caller ``skills=`` invokes still prepend.
+    For ``composer-2.5`` and ``grok-4.7``, ``bare`` also starts with the
+    posture invoke and the whole-file read block.
     """
     contract = sdk_contract_or_missing(handoff_contract, inferred_contract)
     tier = delegation_tier or resolve_delegation_tier(
@@ -1002,6 +1025,13 @@ def resolve_prompt_preamble(
         )
         _append_bare_refusal_line(parts_bare, existing_text=existing_text)
         parts_bare = _tier_prefix() + parts_bare
+        parts_bare = _prefix_reasoning_posture(
+            contract,
+            parts_bare,
+            prompt_preamble,
+            existing_text,
+            resolved_model=resolved_model,
+        )
         if not parts_bare:
             return ""
         return "\n\n".join(parts_bare) + "\n\n"
@@ -1023,7 +1053,11 @@ def resolve_prompt_preamble(
         if preamble:
             parts.append(preamble.strip())
         parts = _prefix_reasoning_posture(
-            contract, parts, prompt_preamble, existing_text
+            contract,
+            parts,
+            prompt_preamble,
+            existing_text,
+            resolved_model=resolved_model,
         )
         tier_blocks = _tier_prefix()
         if tier == "B":
@@ -1192,7 +1226,9 @@ def resolve_prompt_preamble(
         parts.append(preamble.strip())
     if contract in {"check-review", "code-review"}:
         parts.append(_REVIEW_VERDICT_CONTRACT)
-    parts = _prefix_reasoning_posture(contract, parts, prompt_preamble, existing_text)
+    parts = _prefix_reasoning_posture(
+        contract, parts, prompt_preamble, existing_text, resolved_model=resolved_model
+    )
     _append_work_registry_rule(
         parts,
         existing_text=existing_text,

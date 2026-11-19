@@ -332,6 +332,23 @@ def test_dispatch_admits_and_spawns_task(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
+def test_dispatch_admit_reports_posture_harness(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    resp = client.post("/api/v1/cursor/dispatch", json=_dispatch_body())
+    assert resp.status_code == 200
+    assert resp.json()["posture_harness"] == {
+        "reasoning_posture": True,
+        "whole_file_read": True,
+        "mandatory_model": True,
+        "source": "giw.admit_prompt",
+    }
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
 def test_dispatch_opus_5_5_alias_admits(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
@@ -1577,6 +1594,112 @@ def test_qualified_skills_id_keeps_preexisting_plugin_copy(
         skills=["agent_skill:foo"],
     )
     assert skill.is_file()
+
+
+def test_run_sdk_sync_stages_reasoning_posture_for_mandatory_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    hub = tmp_path / "hub"
+    skill_path = (
+        hub
+        / "cursor-plugins/ulg-ecosystem/skills/reasoning-posture/SKILL.md"
+    )
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text("---\nname: reasoning-posture\n---\n", encoding="utf-8")
+
+    homes = tmp_path / "homes"
+
+    def _home(did: str, **_: object) -> Path:
+        home = homes / did
+        home.mkdir(parents=True, exist_ok=True)
+        return home
+
+    repo_venv = _fake_repo_venv(tmp_path)
+    monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
+    monkeypatch.setattr(route_mod, "setup_cursor_dispatch_home", _home)
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        route_mod, "resolve_cursor", lambda _m: MagicMock(model_id="grok-4.7")
+    )
+    monkeypatch.setattr(
+        route_mod, "build_model_selection", lambda _c, _o: MagicMock(params=[])
+    )
+    monkeypatch.setattr(
+        route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True)
+    )
+    monkeypatch.setattr(
+        route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
+    )
+
+    def _fake_launch(*_a: object, command: list[str], **_k: object) -> MagicMock:
+        class _Run:
+            def wait(self) -> MagicMock:
+                return MagicMock(result="ok", status="finished", duration_ms=10)
+
+            def conversation(self) -> list[object]:
+                return []
+
+        class _Agent:
+            id = "agent-1"
+
+            def send(self, _prompt: str) -> _Run:
+                return _Run()
+
+        client = MagicMock()
+        client.create_agent.return_value = _Agent()
+        client.close = MagicMock()
+        return client
+
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch)
+    route_mod._run_sdk_sync(
+        ctx=_ctx(
+            hub,
+            dispatch_id="disp-posture-stage",
+            thread_id="1752",
+            contract="bare",
+        ),
+        prompt="hello",
+        config_model_id="cursor/grok-4.7",
+        selection_overrides=None,
+        resolved_model="cursor/grok-4.7",
+        gate_loop=MagicMock(),
+        skills=None,
+    )
+    staged = (
+        homes
+        / "disp-posture-stage"
+        / ".cursor"
+        / "skills"
+        / "reasoning-posture"
+        / "SKILL.md"
+    )
+    assert staged.is_file()
+
+    route_mod._run_sdk_sync(
+        ctx=_ctx(
+            hub,
+            dispatch_id="disp-posture-stage-auto",
+            thread_id="1752",
+            contract="bare",
+        ),
+        prompt="hello",
+        config_model_id="cursor/grok-4.7",
+        selection_overrides=None,
+        resolved_model="cursor/auto",
+        gate_loop=MagicMock(),
+        skills=None,
+    )
+    not_staged = (
+        homes
+        / "disp-posture-stage-auto"
+        / ".cursor"
+        / "skills"
+        / "reasoning-posture"
+        / "SKILL.md"
+    )
+    assert not not_staged.exists()
 
 
 def test_dispatch_path_prepend_pins_cursor_agent_before_grok(

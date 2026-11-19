@@ -123,19 +123,92 @@ def test_resolve_prompt_preamble_hypothesize_simulate_judgment_contracts() -> No
 
 
 @pytest.mark.parametrize(
+    "resolved_model",
+    [None, "cursor/auto", "cursor/claude-opus-5-5", "openai/gpt-5"],
+)
+@pytest.mark.parametrize(
     "contract",
     ["implement", "mechanical", "propagate", "execute", "answer", "ask"],
 )
 def test_resolve_prompt_preamble_skips_reasoning_posture_on_mechanical_or_quick(
+    contract: str,
+    resolved_model: str | None,
+) -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract=contract,
+        prompt_preamble=None,
+        inferred_contract=None,
+        resolved_model=resolved_model,
+    )
+    assert "reasoning-posture" not in text
+    assert "ulg-for-llms" not in text
+    assert "WHOLE-FILE READ (mandatory)" not in text
+
+
+@pytest.mark.parametrize(
+    ("resolved_model", "contract"),
+    [
+        ("cursor/composer-2.5", "implement"),
+        ("composer-2.5", "mechanical"),
+        ("cursor/grok-4.7", "mechanical"),
+        ("cursor/grok-4.7", "implement"),
+    ],
+)
+def test_resolve_prompt_preamble_mandatory_model_gets_posture_on_skip_contracts(
+    resolved_model: str,
     contract: str,
 ) -> None:
     text = resolve_prompt_preamble(
         handoff_contract=contract,
         prompt_preamble=None,
         inferred_contract=None,
+        resolved_model=resolved_model,
     )
-    assert "reasoning-posture" not in text
-    assert "ulg-for-llms" not in text
+    assert text.startswith("/reasoning-posture")
+    assert "Use the `reasoning-posture` skill" in text
+    assert "Use the `ulg-for-llms` skill" not in text
+
+
+@pytest.mark.parametrize("resolved_model", ["cursor/composer-2.5", "cursor/grok-4.7"])
+@pytest.mark.parametrize("contract", ["implement", "freeform", "confer"])
+def test_whole_file_read_block_for_mandatory_models(
+    resolved_model: str,
+    contract: str,
+) -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract=contract,
+        prompt_preamble=None,
+        inferred_contract=None,
+        resolved_model=resolved_model,
+    )
+    assert text.count("WHOLE-FILE READ (mandatory)") == 1
+    assert "consecutive windows of at most 800 lines" in text
+    assert "exact text of its last line" in text
+    assert "do not count against a TIER-B" in text
+    assert (
+        text.index("Use the `reasoning-posture` skill")
+        < text.index("WHOLE-FILE READ (mandatory)")
+    )
+    other = resolve_prompt_preamble(
+        handoff_contract="confer",
+        prompt_preamble=None,
+        inferred_contract=None,
+        resolved_model="cursor/auto",
+    )
+    assert "WHOLE-FILE READ (mandatory)" not in other
+
+
+def test_whole_file_read_block_not_repeated_when_packet_carries_it() -> None:
+    from reasoning_posture_contracts import WHOLE_FILE_READ_BLOCK
+
+    text = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        existing_text=WHOLE_FILE_READ_BLOCK,
+        resolved_model="cursor/composer-2.5",
+    )
+    assert "WHOLE-FILE READ (mandatory)" not in text
 
 
 def test_resolve_prompt_preamble_none_freeform_preserves_packet_text() -> None:
