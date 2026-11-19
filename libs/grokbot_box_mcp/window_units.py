@@ -118,6 +118,8 @@ After={profile.xvfb_unit}
 Requires={profile.xvfb_unit}
 
 [Service]
+# x11vnc 0.9.16 exits on Wayland if WAYLAND_DISPLAY is set, ignoring -display.
+UnsetEnvironment=WAYLAND_DISPLAY
 ExecStart=/usr/bin/x11vnc -display {profile.display} -localhost -no6 -rfbport {port} -nopw -shared -forever -noxdamage -skip_lockkeys -clear_all
 Restart=on-failure
 RestartSec=2
