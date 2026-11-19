@@ -528,6 +528,20 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         instruction_profile="reasoner",
         probed_at="2026-11-15",
     ),
+    # Gemini 4 Neon (Google frontier, everyday agentic tier). Cursor docs
+    # 2026-11-19: successor to Hydrogen. Knob surface mirrors Hydrogen until
+    # a live ListModels probe re-stamps this card (cursor.com/docs/models/gemini-4-neon).
+    "gemini-4-neon": ModelCapability(
+        knobs={
+            "effort": KnobSpec(
+                accepted=("low", "medium", "high", "xhigh"),
+                default="high",
+            ),
+        },
+        default_variant={"effort": "high"},
+        instruction_profile="reasoner",
+        probed_at="2026-11-19",
+    ),
     "glm-5.2": ModelCapability(
         knobs={
             "reasoning": KnobSpec(accepted=("high", "max"), default="high"),

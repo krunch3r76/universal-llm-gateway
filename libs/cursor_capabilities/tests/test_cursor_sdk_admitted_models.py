@@ -95,6 +95,13 @@ def test_explicit_pin_admits_gemini_4_carbon_other_models_pool() -> None:
     assert is_cursor_sdk_model_admitted("cursor/gemini-4-carbon") is False
 
 
+def test_explicit_pin_admits_gemini_4_neon_other_models_pool() -> None:
+    assert (
+        is_cursor_sdk_model_admitted("cursor/gemini-4-neon", explicit_pin=True) is True
+    )
+    assert is_cursor_sdk_model_admitted("cursor/gemini-4-neon") is False
+
+
 @pytest.mark.parametrize("bare_id", sorted(OTHER_MODELS_BARE))
 def test_explicit_pin_admits_every_other_models_pool_card(bare_id: str) -> None:
     assert is_cursor_sdk_model_admitted(f"cursor/{bare_id}", explicit_pin=True) is True

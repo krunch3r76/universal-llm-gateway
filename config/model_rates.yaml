@@ -125,6 +125,13 @@ models:
     output_rate_per_m: 7.5
     source: manual_seed
     pinned: true
+  # Gemini 4 Neon — https://cursor.com/docs/models-and-pricing (read 2026-11-19).
+  - model_id: cursor/gemini-4-neon
+    input_rate_per_m: 3.0
+    cache_read_rate_per_m: 0.15
+    output_rate_per_m: 15.0
+    source: cursor.com/docs/models-and-pricing 2026-11-19
+    pinned: true
   - model_id: cursor/glm-5.2
     input_rate_per_m: 1.4
     cache_read_rate_per_m: 0.26
