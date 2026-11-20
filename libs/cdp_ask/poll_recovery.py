@@ -289,19 +289,20 @@ async def _harvest_chat_to_snapshot(
         chat_url,
         holder="cdp-poll-recovery",
         allow_mint=True,
+        page_only_attach=True,
     )
     if not outcome.ok or outcome.page is None:
         return None
-    attested = (await current_model_label(outcome.page)).strip() or None
     response: HarvestResponse | None = None
     try:
+        attested = (await current_model_label(outcome.page)).strip() or None
         response = await harvest_page(
             outcome.page,
             req,
             provenance={"poll_recovery": True},
         )
     finally:
-        await _teardown_opened(outcome, response)
+        await _teardown_opened(outcome, response, release_minted=True)
 
     if response.outcome != "harvested":
         return None

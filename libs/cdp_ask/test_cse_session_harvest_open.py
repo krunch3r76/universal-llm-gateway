@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cdp_ask.cse_session_harvest_open import harvest_by_opening_url
+from cdp_ask.cse_session_harvest_open import _teardown_opened, harvest_by_opening_url
 from cdp_ask.cse_session_models import HarvestRequest, HarvestResponse
 from cdp_ask.followup_reattach import ReattachOutcome
 
@@ -101,15 +101,17 @@ async def test_attachment_refused_twice_returns_not_attached_with_attempts() -> 
 
 
 @pytest.mark.asyncio
-async def test_open_success_scrapes_without_closing_the_browser() -> None:
+async def test_found_tab_borrow_is_left_open_after_read() -> None:
+    """A tab the harvest attach found is left open after the read."""
     page = MagicMock()
     opened = ReattachOutcome(
         ok=True,
         page=page,
         pw=MagicMock(),
-        relaunched=True,
+        page_only_borrow=True,
+        page_only_close_tab=False,
         cdp_url="http://127.0.0.1:9222",
-        registration_id="reg-dormant",
+        registration_id="reg-found",
     )
 
     async def _page(_page, _req, provenance=None, **_identity):
@@ -138,11 +140,50 @@ async def test_open_success_scrapes_without_closing_the_browser() -> None:
     assert result.provenance
     assert result.provenance.get("opened_on_demand") is True
     assert "cdp_url" not in result.provenance
-    assert result.provenance.get("registration_id") == "reg-dormant"
+    assert result.provenance.get("registration_id") == "reg-found"
 
 
 @pytest.mark.asyncio
-async def test_loading_incomplete_skips_park_for_minted_lane() -> None:
+async def test_opened_tab_borrow_is_closed_after_read() -> None:
+    """A tab the harvest attach opened is closed after the read."""
+    page = MagicMock()
+    pw = MagicMock()
+    opened = ReattachOutcome(
+        ok=True,
+        page=page,
+        pw=pw,
+        lane_created=False,
+        page_only_borrow=True,
+        page_only_close_tab=True,
+    )
+    harvest_page = AsyncMock(
+        return_value=HarvestResponse(
+            outcome="incomplete_dom",
+            reason="loading",
+        )
+    )
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_open.ensure_cse_attached",
+            AsyncMock(return_value=opened),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_open._teardown_attempt",
+            AsyncMock(),
+        ) as teardown,
+    ):
+        await harvest_by_opening_url(
+            "https://claude.ai/cowork/cse_x",
+            HarvestRequest(chat_url="https://claude.ai/cowork/cse_x"),
+            None,
+            harvest_page,
+        )
+    teardown.assert_awaited_once_with(page, pw, close_page=True)
+
+
+@pytest.mark.asyncio
+async def test_minted_host_is_released_after_read() -> None:
+    """A host minted for the read is closed and released after the teardown."""
     page = MagicMock()
     pw = MagicMock()
     opened = ReattachOutcome(
@@ -151,6 +192,8 @@ async def test_loading_incomplete_skips_park_for_minted_lane() -> None:
         pw=pw,
         lane_created=True,
         registration_id="reg-new",
+        page_only_borrow=True,
+        page_only_close_tab=True,
     )
     harvest_page = AsyncMock(
         return_value=HarvestResponse(
@@ -167,6 +210,7 @@ async def test_loading_incomplete_skips_park_for_minted_lane() -> None:
             "cdp_ask.cse_session_harvest_open._teardown_attempt",
             AsyncMock(),
         ) as teardown,
+        patch("claude_bundles.cdp_registry.deregister_lane", MagicMock()) as deregister,
     ):
         result = await harvest_by_opening_url(
             "https://claude.ai/cowork/cse_x",
@@ -174,91 +218,33 @@ async def test_loading_incomplete_skips_park_for_minted_lane() -> None:
             None,
             harvest_page,
         )
-    teardown.assert_awaited_once_with(page, pw, close_page=False)
+    teardown.assert_awaited_once_with(page, pw, close_page=True)
+    deregister.assert_called_once_with("reg-new")
     assert result.outcome == "incomplete_dom"
     assert result.reason == "loading"
 
 
 @pytest.mark.asyncio
-async def test_loading_incomplete_borrowed_host_leaves_the_tab() -> None:
+async def test_teardown_without_release_minted_keeps_minted_host() -> None:
+    """Without release_minted, as execution resume calls it, no host is released."""
     page = MagicMock()
     pw = MagicMock()
-    opened = ReattachOutcome(
-        ok=True,
-        page=page,
-        pw=pw,
-        lane_created=False,
-        relaunched=False,
-    )
-    harvest_page = AsyncMock(
-        return_value=HarvestResponse(
-            outcome="incomplete_dom",
-            reason="loading",
-        )
-    )
-    with (
-        patch(
-            "cdp_ask.cse_session_harvest_open.ensure_cse_attached",
-            AsyncMock(return_value=opened),
-        ),
-        patch(
-            "cdp_ask.cse_session_harvest_open._teardown_attempt",
-            AsyncMock(),
-        ) as teardown,
-    ):
-        await harvest_by_opening_url(
-            "https://claude.ai/cowork/cse_x",
-            HarvestRequest(chat_url="https://claude.ai/cowork/cse_x"),
-            None,
-            harvest_page,
-        )
-    teardown.assert_awaited_once_with(page, pw, close_page=False)
-
-
-@pytest.mark.asyncio
-async def test_skip_park_keeps_registration_for_lane_order() -> None:
-    """Skip-teardown on loading mint leaves registration live for _lane_order."""
-    from cdp_ask.followup_reattach import _lane_order
-
-    page = MagicMock()
-    pw = MagicMock()
-    reg_id = "reg-mint-loading"
-    opened = ReattachOutcome(
+    minted = ReattachOutcome(
         ok=True,
         page=page,
         pw=pw,
         lane_created=True,
-        registration_id=reg_id,
-    )
-    harvest_page = AsyncMock(
-        return_value=HarvestResponse(outcome="incomplete_dom", reason="loading")
-    )
-    lane = __import__(
-        "claude_bundles.cdp_registry", fromlist=["cdp_registry"]
-    ).Registration(
-        registration_id=reg_id,
-        port=9222,
-        profile_suffix="x",
-        profile=__import__("pathlib").Path("/tmp/p"),
-        cdp_url="http://127.0.0.1:9222",
-        holder="cse-session-harvest",
-        purpose="ask",
+        registration_id="reg-minted",
+        page_only_borrow=True,
+        page_only_close_tab=True,
     )
     with (
         patch(
-            "cdp_ask.cse_session_harvest_open.ensure_cse_attached",
-            AsyncMock(return_value=opened),
-        ),
-        patch(
             "cdp_ask.cse_session_harvest_open._teardown_attempt",
             AsyncMock(),
-        ),
+        ) as teardown,
+        patch("claude_bundles.cdp_registry.deregister_lane", MagicMock()) as deregister,
     ):
-        await harvest_by_opening_url(
-            "https://claude.ai/cowork/cse_x",
-            HarvestRequest(chat_url="https://claude.ai/cowork/cse_x"),
-            None,
-            harvest_page,
-        )
-    ordered = _lane_order([lane], None, "https://claude.ai/cowork/cse_x")
-    assert ordered[0].registration_id == reg_id
+        await _teardown_opened(minted)
+    teardown.assert_awaited_once_with(page, pw, close_page=True)
+    deregister.assert_not_called()

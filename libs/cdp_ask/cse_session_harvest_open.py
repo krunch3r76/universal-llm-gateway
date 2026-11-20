@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
+
+from claude_bundles import cdp_registry
 
 from cdp_ask.cse_session_models import HarvestRequest, HarvestResponse
 from cdp_ask.followup import _acquire_lane, _release_lane
@@ -30,12 +33,18 @@ class _LaneHold:
             _release_lane(self.registration_id)
 
 
-async def _teardown_opened(outcome, response: HarvestResponse | None = None) -> None:
-    """Disconnect Playwright and leave the Chrome and tab up.
+async def _teardown_opened(
+    outcome,
+    response: HarvestResponse | None = None,
+    *,
+    release_minted: bool = False,
+) -> None:
+    """Disconnect Playwright after a read and close what the read opened.
 
-    Harvest is a read. Parking a relaunched seat or closing the tab drops the
-    browser the caller just proved is the page. Hygiene treats an idle ``ask``
-    host as a leak; the lane hold above is what stops that kill during the read.
+    A tab this read opened is closed; a tab it found is left as found. A host
+    the attach minted is released when the caller passes *release_minted*,
+    which only the two harvest callers do. Hygiene treats an idle ``ask`` host
+    as a leak; the lane hold above is what stops that kill during the read.
     """
     del response
     if outcome is None or not outcome.ok:
@@ -43,6 +52,11 @@ async def _teardown_opened(outcome, response: HarvestResponse | None = None) -> 
     # Page-only borrow: close only a tab this attach opened, not a reused lane tab.
     close_page = bool(getattr(outcome, "page_only_close_tab", False))
     await _teardown_attempt(outcome.page, outcome.pw, close_page=close_page)
+    minted = bool(getattr(outcome, "lane_created", False))
+    page_only = bool(getattr(outcome, "page_only_borrow", False))
+    if release_minted and minted and page_only:
+        with contextlib.suppress(Exception):
+            cdp_registry.deregister_lane(outcome.registration_id)
 
 
 def _with_opened(
@@ -66,7 +80,11 @@ async def harvest_by_opening_url(
     requested_registration_id: str | None = None,
     requested_chat_url: str | None = None,
 ) -> HarvestResponse:
-    """Goto *chat_url* on a registry host and harvest. The tab stays open."""
+    """Goto *chat_url* on a registry host and harvest.
+
+    A tab this call opened is closed after the read, and a host it minted is
+    released.
+    """
     attach_attempts: list[dict[str, Any]] = []
     outcome = None
     for attempt_idx in range(2):
@@ -75,6 +93,7 @@ async def harvest_by_opening_url(
             holder=HARVEST_HOLDER,
             allow_mint=True,
             allow_k44_superseded_page_only=True,
+            page_only_attach=True,
         )
         attach_attempts.append(
             {
@@ -121,4 +140,4 @@ async def harvest_by_opening_url(
             response.provenance = merged
             return response
         finally:
-            await _teardown_opened(outcome, response)
+            await _teardown_opened(outcome, response, release_minted=True)
