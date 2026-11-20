@@ -54,6 +54,25 @@ def _tree_t2(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def test_inventory_skips_services_relative_import_t1(tmp_path: Path) -> None:
+    root = _tree_t1(tmp_path)
+    rel = root / "services/svc/rel.py"
+    rel.parent.mkdir(parents=True, exist_ok=True)
+    rel.write_text("from .pkg_a.helper import f\n", encoding="utf-8")
+    inv = build_importer_inventory(
+        ["libs/pkg_a/helper.py"],
+        repo_root=root,
+        files_expected=["libs/pkg_a/helper.py"],
+    )
+    assert inv.status == "complete"
+    assert "services/svc/rel.py" not in [s.path for s in inv.sites]
+    assert [(s.path, s.line, s.names) for s in inv.sites] == [
+        ("libs/pkg_a/sibling.py", 1, ("f",)),
+        ("libs/pkg_b/user.py", 2, ("f",)),
+        ("services/svc/x.py", 1, ()),
+    ]
+
+
 def test_inventory_sites_t1(tmp_path: Path) -> None:
     root = _tree_t1(tmp_path)
     inv = build_importer_inventory(

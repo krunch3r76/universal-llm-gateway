@@ -123,6 +123,8 @@ def _match_import_sites(
                     if alias.name == module or alias.name.startswith(module + "."):
                         _add(module, node, ())
         elif isinstance(node, ast.ImportFrom):
+            if node.level >= 1 and importer_mod is None:
+                continue
             resolved = node.module
             if node.level >= 1 and importer_mod:
                 resolved = _resolve_relative(importer_mod, "." * node.level, node.module)
