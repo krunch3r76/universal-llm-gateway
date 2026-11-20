@@ -321,9 +321,7 @@ def reserve_allocating_row(
             _events.cdp_port_allocating(
                 registration_id=registration_id,
                 port=port,
-                parent_thread=parent_thread
-                if isinstance(parent_thread, str)
-                else None,
+                parent_thread=parent_thread if isinstance(parent_thread, str) else None,
                 holder=holder,
             )
         )

@@ -648,7 +648,9 @@ async def execute_followup(
             return resp
 
         page, pw = found
-        if claude_seat_identity_key(page.url or "") != claude_seat_identity_key(target.chat_url):
+        if claude_seat_identity_key(page.url or "") != claude_seat_identity_key(
+            target.chat_url
+        ):
             resp = fail_followup(
                 "lane_not_attached",
                 detail=lane_not_attached_detail(),

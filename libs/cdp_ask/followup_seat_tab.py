@@ -85,7 +85,9 @@ def _refusal(row: Any, req: FollowupProjectAskRequest) -> str | None:
     return None
 
 
-def _unavailable(req: FollowupProjectAskRequest, cause: str) -> FollowupProjectAskResponse:
+def _unavailable(
+    req: FollowupProjectAskRequest, cause: str
+) -> FollowupProjectAskResponse:
     logger.warning(
         "houseless seat tab unavailable registration_id=%s cause=%s",
         req.registration_id,

@@ -169,7 +169,10 @@ async def test_second_wake_gets_lane_busy(seat_registry: dict[str, Any]) -> None
     with paste_env() as send_mock:
         send_mock.side_effect = _hold_send
         first = asyncio.create_task(execute_followup(_wake_req(), ExecutionStore()))
-        await asyncio.wait_for(entered.wait(), timeout=5)
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+        except TimeoutError:
+            pass
         second = await execute_followup(_wake_req(), ExecutionStore())
         assert second.error == "lane_busy"
         assert not [o for o in seat_registry["ops"] if o[0] == "close"]

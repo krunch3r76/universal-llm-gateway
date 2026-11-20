@@ -289,9 +289,7 @@ def reopen_tab_row(
                 registration_id=rid,
                 host_registration_id=hid,
                 prior_host_registration_id=prior_host or None,
-                trigger=trigger
-                if trigger in {"boot", "host_lost", "wake"}
-                else "boot",
+                trigger=trigger if trigger in {"boot", "host_lost", "wake"} else "boot",
                 stale_target_closed=stale_closed,
             )
         )

@@ -269,7 +269,11 @@ def _persist_session_address(
     if not raw:
         return
     parsed = parse_claude_seat_address(raw)
-    if parsed is None or parsed.kind not in ("unified_chat", "cowork_cse", "code_session"):
+    if parsed is None or parsed.kind not in (
+        "unified_chat",
+        "cowork_cse",
+        "code_session",
+    ):
         return
     bind_url = parsed.canonical_url
     from claude_bundles.cdp_registry.models import STATUS_TAB
@@ -325,6 +329,7 @@ def _latch_streaming_attachment(
             exc_info=True,
         )
         from claude_bundles import cdp_registry_events
+
         cdp_registry_events.emit(
             cdp_registry_events.cdp_provenance_unresolved(
                 chat_url=latch_url,
