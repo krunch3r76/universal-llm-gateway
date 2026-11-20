@@ -13,6 +13,7 @@ from implement_admission.source_ref import SourceRefError, parse_source_ref
 from pydantic import BaseModel
 
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
+from .closeout_route_probe_observe import schedule_closeout_route_probe_observe
 from .deploy_state_gate import require_deploy_state
 from .pinned_deliverable_ingress import (
     PinnedDeliverableBody,
@@ -126,6 +127,13 @@ async def implement_closeout(
                     code="closeout_source_unresolvable",
                 ).to_dict(),
             )
+
+    schedule_closeout_route_probe_observe(
+        request_id=request_id,
+        idempotency_key=body.idempotency_key,
+        source_ref=effective_source_ref,
+        closeout=payload,
+    )
 
     loop = asyncio.get_running_loop()
     admin_override = bool(payload.get("deploy_state_admin_override"))
