@@ -19,6 +19,7 @@ from claude_bundles import cdp_lane
 from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
 
+from .houseless_seat_row import HOUSELESS_SEAT, is_parked_houseless_seat
 from .models import STATUS_TAB, Registration, RegistryError, normalize_account_id
 
 
@@ -85,7 +86,11 @@ def _close_target_on_port(port: int, target_id: str) -> None:
 
 
 def release_tab_row(registration_id: str) -> None:
-    """Close the tab target and delete the row. A tab never becomes ``released``."""
+    """Close the tab target and delete the row.
+
+    A parked houseless seat row is left in place; ``detach`` is its only exit.
+    A tab never becomes ``released``.
+    """
     rid = str(registration_id or "").strip()
     if not rid:
         return
@@ -97,6 +102,8 @@ def release_tab_row(registration_id: str) -> None:
         active = _store.load_active()
         row = active.get(rid)
         if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
+            return
+        if is_parked_houseless_seat(row):
             return
         row_copy = dict(row)
         port = row.get("port") if isinstance(row.get("port"), int) else None
@@ -140,6 +147,9 @@ def finish_tab_on_exit(reg: Registration, *, branch: str) -> None:
     from claude_bundles.cse_wake_retain import registration_has_wake_debt
 
     rid = reg.registration_id
+    if branch == HOUSELESS_SEAT:
+        _keep_tab_row(rid, reason=HOUSELESS_SEAT, close_target=True)
+        return
     if branch == "normal":
         release_tab_row(rid)
         return
@@ -157,6 +167,12 @@ def finish_tab_on_exit(reg: Registration, *, branch: str) -> None:
 
 
 def _keep_tab_row(registration_id: str, *, reason: str, close_target: bool) -> None:
+    """Keep a tab row address-only: null ``target_id``, record *reason*.
+
+    On a parked houseless seat row, writes only for ``houseless_seat`` (re-park)
+    or ``reopen_failed``; any other reason is a no-op so abort or ``holder_dead``
+    keeps never touch a wake's open tab.
+    """
     rid = str(registration_id or "").strip()
     port: int | None = None
     target_id = ""
@@ -166,6 +182,10 @@ def _keep_tab_row(registration_id: str, *, reason: str, close_target: bool) -> N
         row = active.get(rid)
         if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
             return
+        if is_parked_houseless_seat(row):
+            if reason not in (HOUSELESS_SEAT, "reopen_failed"):
+                return
+            reason = HOUSELESS_SEAT
         port = row.get("port") if isinstance(row.get("port"), int) else None
         target_id = str(row.get("target_id") or "").strip()
         host_id = str(row.get("host_registration_id") or "")
@@ -174,6 +194,7 @@ def _keep_tab_row(registration_id: str, *, reason: str, close_target: bool) -> N
         updated["tab_kept_reason"] = reason
         active[rid] = updated
         _store.write_active(active)
+        _store.append_log("tab_kept", updated)
     if close_target and isinstance(port, int) and target_id:
         with contextlib.suppress(Exception):
             _close_target_on_port(port, target_id)
@@ -191,8 +212,9 @@ def _keep_tab_row(registration_id: str, *, reason: str, close_target: bool) -> N
 def mark_tab_reopen_failed(registration_id: str) -> None:
     """Return *registration_id* to address-only with ``tab_kept_reason=reopen_failed``.
 
-    Closes a target the failed reopen managed to record. A missing row is a
-    no-op so a later release cannot be undone.
+    On a parked seat row the reason stays ``houseless_seat``. Closes a target
+    the failed reopen managed to record. A missing row is a no-op so a later
+    release cannot be undone.
     """
     _keep_tab_row(registration_id, reason="reopen_failed", close_target=True)
 
@@ -205,7 +227,8 @@ def reopen_tab_row(
     """Point a tab row at *host_registration_id* and open a fresh CDP target.
 
     The row is rewritten under the ports lock before the target opens: host,
-    port, and ``holder_pid`` move, ``tab_kept_reason`` clears, and
+    port, and ``holder_pid`` move, ``tab_kept_reason`` clears except on a
+    parked houseless seat row (which keeps it whatever the trigger), and
     ``target_id`` stays empty until the new target id is written. A stale
     target is closed on the row's previous port when that port still listens.
     ``chat_url`` is not rewritten. Emits ``cdp_tab_reopened``.
@@ -234,7 +257,9 @@ def reopen_tab_row(
         updated["host_registration_id"] = hid
         updated["port"] = port
         updated["holder_pid"] = os.getpid()
-        updated["tab_kept_reason"] = None
+        updated["tab_kept_reason"] = (
+            HOUSELESS_SEAT if is_parked_houseless_seat(row) else None
+        )
         updated["target_id"] = None
         active[rid] = updated
         _store.write_active(active)
@@ -264,7 +289,9 @@ def reopen_tab_row(
                 registration_id=rid,
                 host_registration_id=hid,
                 prior_host_registration_id=prior_host or None,
-                trigger=trigger if trigger in {"boot", "host_lost"} else "boot",
+                trigger=trigger
+                if trigger in {"boot", "host_lost", "wake"}
+                else "boot",
                 stale_target_closed=stale_closed,
             )
         )

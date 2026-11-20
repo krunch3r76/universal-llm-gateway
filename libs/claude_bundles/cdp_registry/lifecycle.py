@@ -745,7 +745,11 @@ def _kill_listener(port: int) -> None:
 
 
 def detach(registration_id: str, *, reason: str) -> dict[str, Any]:
-    """Pop a superseded hop row after stand-down token and Chrome kill."""
+    """Pop a superseded hop row after stand-down token and Chrome kill.
+
+    A tab row owns no Chrome, so its port's listener and its host's profile
+    are left alone.
+    """
     rid = (registration_id or "").strip()
     if not rid:
         raise ProtocolError(
@@ -807,10 +811,20 @@ def detach(registration_id: str, *, reason: str) -> dict[str, Any]:
                     return True
             return False
 
-        if isinstance(port, int) and listen(port) and not _another_row_shares_port():
+        is_tab = row_copy.get("status") == STATUS_TAB
+        if (
+            not is_tab
+            and isinstance(port, int)
+            and listen(port)
+            and not _another_row_shares_port()
+        ):
             registry_package()._kill_listener(port)
             listener_killed = True
-        profile_outcome = reclaim_profile_for_detached_row(rid, row_copy)
+        profile_outcome = (
+            "skipped_tab_row"
+            if is_tab
+            else reclaim_profile_for_detached_row(rid, row_copy)
+        )
         detached_at = time.time()
         log_row = {
             **row_copy,

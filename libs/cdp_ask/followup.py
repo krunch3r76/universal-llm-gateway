@@ -53,6 +53,10 @@ from cdp_ask.followup_resolve import (
     lane_not_attached_detail,
     resolve_followup_target,
 )
+from cdp_ask.followup_seat_tab import (
+    deliver_houseless_seat_tab,
+    is_houseless_seat_tab_row,
+)
 from cdp_ask.models import (
     FollowupProjectAskRequest,
     FollowupProjectAskResponse,
@@ -487,6 +491,10 @@ async def execute_followup(
 
     if req.min_receipt == "human_visible":
         return fail_followup("human_visible_receipt_unavailable")
+
+    seat_row = _registry_row_for_registration(req.registration_id or "")
+    if is_houseless_seat_tab_row(seat_row):
+        return await deliver_houseless_seat_tab(req, seat_row, prompt)
 
     reattach_outcome: ReattachOutcome | None = None
     reattach_used = False

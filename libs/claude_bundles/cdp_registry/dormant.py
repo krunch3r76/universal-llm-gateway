@@ -457,10 +457,12 @@ def reap_dead_holder_tab_rows() -> list[str]:
 
     In-flight rows stay address-only with ``tab_kept_reason=holder_dead`` and
     the stale target closed. Rows with no execution in flight are deleted.
-    A live ``holder_pid`` is skipped, so this reap and ``hydrate_in_flight``
-    can run in either order and leave the same rows.
+    Parked seat rows are skipped before any other check. A live ``holder_pid``
+    is skipped, so this reap and ``hydrate_in_flight`` can run in either order
+    and leave the same rows.
     """
     from claude_bundles.cdp_registry.execution_state import row_execution_in_flight
+    from claude_bundles.cdp_registry.houseless_seat_row import is_parked_houseless_seat
     from claude_bundles.cdp_registry.hygiene import _pid_alive
     from claude_bundles.cdp_registry.tab_rows_reopen import (
         _keep_tab_row,
@@ -471,6 +473,8 @@ def reap_dead_holder_tab_rows() -> list[str]:
     active = _store.load_active()
     for rid, row in list(active.items()):
         if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
+            continue
+        if is_parked_houseless_seat(row):
             continue
         holder_pid = row.get("holder_pid")
         if not isinstance(holder_pid, int) or _pid_alive(holder_pid):

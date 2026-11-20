@@ -265,8 +265,12 @@ def _maybe_append_houseless_tab_provenance(
 
 
 def sweep_kept_tab_rows() -> list[str]:
-    """Release kept tab rows whose host is dead, port is down, or a keep reason is set."""
+    """Release kept tab rows whose host is dead, port is down, or a keep reason is set.
+
+    Parked houseless seat rows are skipped.
+    """
     from claude_bundles.cdp_registry.execution_state import row_execution_in_flight
+    from claude_bundles.cdp_registry.houseless_seat_row import is_parked_houseless_seat
     from claude_bundles.cse_wake_retain import registration_has_wake_debt
 
     released: list[str] = []
@@ -274,6 +278,8 @@ def sweep_kept_tab_rows() -> list[str]:
     listen = cdp_lane.is_listening
     for rid, row in list(active.items()):
         if not isinstance(row, dict) or row.get("status") != STATUS_TAB:
+            continue
+        if is_parked_houseless_seat(row):
             continue
         if row_execution_in_flight(row):
             continue

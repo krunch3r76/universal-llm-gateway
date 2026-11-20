@@ -27,6 +27,7 @@ import time
 from typing import Any
 
 from claude_bundles.cdp_registry.execution_state import in_flight_rows
+from claude_bundles.cdp_registry.houseless_seat_row import houseless_seat_exit_branch
 from claude_bundles.cdp_registry.models import _row_to_registration
 from claude_bundles.cdp_registry_store import load_active
 from claude_bundles.chat_model_select import current_model_label
@@ -398,7 +399,14 @@ def _dispose_host(record: ExecutionRecord, *, teardown: bool = False) -> None:
     if row is None:
         return
     if row.get("status") == "tab":
-        if teardown:
+        seat = houseless_seat_exit_branch(
+            row,
+            aborted=record.abort_requested,
+            ended_ok=record.status == "completed",
+        )
+        if seat is not None:
+            branch = seat
+        elif teardown:
             branch = "teardown"
         elif record.abort_requested:
             branch = "abort"
