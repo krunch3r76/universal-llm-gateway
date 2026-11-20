@@ -1084,6 +1084,23 @@ def emit_sdk_lane_selected(
 
 
 @event_factory
+def SdkLaneBBaseRefreshed(  # noqa: N802
+    outcome: str, dispatch_id: str, thread_id: str,
+    old_tip: str | None, new_tip: str | None, behind_by: int,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.base_refreshed",
+        payload={"outcome": outcome, "dispatch_id": dispatch_id, "thread_id": thread_id,
+                 "old_tip": old_tip, "new_tip": new_tip, "behind_by": behind_by},
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_base_refreshed(**kwargs: Any) -> None:
+    _emit(SdkLaneBBaseRefreshed(**kwargs))
+
+
+@event_factory
 def SdkLaneBMinted(  # noqa: N802
     dispatch_id: str,
     thread_id: str,

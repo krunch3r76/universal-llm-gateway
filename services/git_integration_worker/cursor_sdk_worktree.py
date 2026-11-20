@@ -2,10 +2,11 @@
 
 Lane-B dispatches bind a stable tree under ``worktree_root`` keyed by
 ``thread_id`` (dir ``lane-{thread}``, branch ``cursor-sdk/lane-{thread}``).
-Mint is once per lane; later admits reuse the tree. If the branch still
-exists after the directory is gone, remint attaches the existing branch
-instead of ``worktree add -b``. The reaper removes a lane tree only when
-it has no live writer and the branch has merged.
+Mint is once per lane; reused admits refresh the base onto master when the
+lane is landed and safe. If the branch still exists after the directory is
+gone, remint attaches the existing branch instead of ``worktree add -b``.
+The reaper removes a lane tree only when it has no live writer and the branch
+has merged.
 """
 
 from __future__ import annotations
@@ -521,6 +522,17 @@ def resolve_admit_binding(
         )
 
     if lane == "B":
+        from services.git_integration_worker.cursor_sdk_lane_refresh import (
+            refresh_lane_after_admit_bind,
+        )
+
+        def _lane_refresh(ws: Path) -> None:
+            refresh_lane_after_admit_bind(
+                source_repo=source_repo,
+                worktree_path=ws,
+                thread_id=req.thread_id,
+                dispatch_id=req.dispatch_id,
+            )
         existing = lookup_lane_worktree(
             thread_id=req.thread_id,
             source_repo=source_repo,
@@ -532,6 +544,7 @@ def resolve_admit_binding(
                 dispatch_id=req.dispatch_id,
             )
             workspace = existing.worktree_path.resolve()
+            _lane_refresh(workspace)
             return AdmitBindingResult(
                 workspace=workspace,
                 lease_key=str(workspace),
@@ -551,6 +564,7 @@ def resolve_admit_binding(
                 source_repo=source_repo,
                 thread_id=req.thread_id,
             )
+            _lane_refresh(workspace)
             return AdmitBindingResult(
                 workspace=workspace,
                 lease_key=str(workspace),
@@ -577,6 +591,7 @@ def resolve_admit_binding(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
         )
+        _lane_refresh(workspace)
         return AdmitBindingResult(
             workspace=workspace,
             lease_key=str(workspace),
