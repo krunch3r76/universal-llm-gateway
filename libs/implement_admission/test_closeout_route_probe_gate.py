@@ -159,10 +159,49 @@ def test_trigger_arms_and_attribution() -> None:
         raise OSError("nope")
 
     v = evaluate_closeout_route_probes(
-        {"files_modified": paths},
+        {"propagation": [{"service": "cdp_ask"}], "files_modified": paths},
         reach=reach_both_err,
     )
-    assert v.required == []
+    assert v.would_require is True
+    assert len(v.required) == 1
+    assert v.required[0]["slug"] == "cdp_ask"
+    assert v.required[0]["reached"] is None
+    assert len(v.reach_errors) == 2
+
+
+def test_path_prefix_only_excludes_counting_slug() -> None:
+    v = evaluate_closeout_route_probes(
+        {
+            "propagation": [
+                {"service": "cdp_ask"},
+                {
+                    "service": "cdp_ask",
+                    "reason": "derived:path_prefix; import_path:not_probed",
+                },
+            ],
+        },
+        reach=lambda s, p: False,
+    )
+    assert v.would_require is True
+    assert v.required[0]["named_by"] == ["row:untagged"]
+    assert v.path_prefix_only == []
+
+
+def test_unmapped_path_prefix_excluded() -> None:
+    v = evaluate_closeout_route_probes(
+        {
+            "propagation": [
+                {
+                    "service": "rag",
+                    "reason": "derived:path_prefix; import_path:not_probed",
+                },
+            ],
+        },
+        reach=lambda s, p: False,
+    )
+    assert v.path_prefix_only == []
+    assert v.unmapped == []
+    assert v.would_require is False
 
 
 def test_evidence_reason_codes() -> None:

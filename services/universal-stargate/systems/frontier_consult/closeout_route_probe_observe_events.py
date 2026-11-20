@@ -1,4 +1,7 @@
-"""Observe-only route-probe check signals at implement closeout ingress."""
+"""Observe-only route-probe check signals at implement closeout ingress.
+
+observe-only: never refuses, rewrites, delays or fails a closeout
+"""
 
 from __future__ import annotations
 
@@ -91,6 +94,7 @@ def FrontierCloseoutRouteprobeCheckFailed(  # noqa: N802
 def emit_closeout_routeprobe_evaluated(
     *, loop: asyncio.AbstractEventLoop | None = None, **kwargs: Any
 ) -> None:
+    """Publish evaluated signal synchronously when loop is None, else via call_soon_threadsafe."""
     event = FrontierCloseoutRouteprobeEvaluated(**kwargs)
     if loop is None:
         publish_frontier_event(event)
@@ -101,6 +105,7 @@ def emit_closeout_routeprobe_evaluated(
 def emit_closeout_routeprobe_check_failed(
     *, loop: asyncio.AbstractEventLoop | None = None, **kwargs: Any
 ) -> None:
+    """Publish check.failed synchronously when loop is None, else via call_soon_threadsafe."""
     event = FrontierCloseoutRouteprobeCheckFailed(**kwargs)
     if loop is None:
         publish_frontier_event(event)

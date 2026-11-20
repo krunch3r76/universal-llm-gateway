@@ -1,4 +1,12 @@
-"""Closeout route-probe observe evaluator (Leg E2 Gate B)."""
+"""Closeout route-probe observe evaluator (Leg E2 Gate B).
+
+observe-only: never refuses, rewrites, delays or fails a closeout
+
+What arm 2 cannot see (docstring, from plan F11): the reach is computed on the
+checkout Stargate runs from, not the worker's tree, and ``files_untracked_or_ignored``
+is not read. Both lean toward under-reporting; neither produces a false
+``would_require``.
+"""
 
 from __future__ import annotations
 
@@ -49,6 +57,8 @@ class RouteProbeObserveVerdict:
 def make_route_probe_reach(
     root: Path, *, budget_s: float = ROUTE_PROBE_REACH_BUDGET_S
 ) -> Callable[[str, str], bool]:
+    """Return a ``reach`` callable that raises when a hit lands at or past ``budget_s``."""
+
     def reach(slug: str, lib_path: str) -> bool:
         started = time.monotonic()
         hit = route_probe_lib_reach(
@@ -139,6 +149,7 @@ def evaluate_closeout_route_probes(
     root: Path | None = None,
     reach_budget_s: float = ROUTE_PROBE_REACH_BUDGET_S,
 ) -> RouteProbeObserveVerdict:
+    """Grade closeout JSON for route-probe evidence without refusing the closeout."""
     if not isinstance(closeout, Mapping):
         return RouteProbeObserveVerdict(
             would_require=False,
@@ -247,7 +258,9 @@ def evaluate_closeout_route_probes(
             unmapped.add(slug)
             del slug_named[slug]
 
-    path_prefix_only = sorted(slug_path_prefix)
+    path_prefix_only = sorted(
+        s for s in slug_path_prefix if s in evidence and not slug_named.get(s)
+    )
 
     slug_reach: dict[str, tuple[bool | None, str | None]] = {}
     reach_errors: list[dict[str, str]] = []

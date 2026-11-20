@@ -1,4 +1,7 @@
-"""Parse closeout verification commands for route-probe observe (Leg E2)."""
+"""Parse closeout verification commands for route-probe observe (Leg E2).
+
+observe-only: never refuses, rewrites, delays or fails a closeout
+"""
 
 from __future__ import annotations
 
