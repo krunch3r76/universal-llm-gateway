@@ -1,4 +1,5 @@
 """Acceptance proofs for the page-only harvest attach (B2a, B2b, B3)."""
+# ruff: noqa: F811  # pytest fixture name matches import from test_followup_reattach.py:108-141
 
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES
 
 from cdp_ask.cse_session_harvest import execute_harvest
 from cdp_ask.cse_session_models import HarvestRequest
@@ -16,13 +18,12 @@ from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup_reattach import ensure_cse_attached
 from cdp_ask.poll_recovery import recover_poll_snapshot
 from cdp_ask.test_followup_reattach import (
+    _connect_factory,
     _FakeCtx,
     _FakePage,
-    _connect_factory,
     _noop_launch,
-    isolated_registry,
+    isolated_registry,  # noqa: F401
 )
-from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES
 
 U = "https://claude.ai/cowork/cse_pageonly_harvest"
 OTHER_U = "https://claude.ai/cowork/cse_other_bound"
@@ -237,18 +238,6 @@ async def test_harvest_changes_no_registration_row(
     assert result.outcome not in {"not_attached", "unreachable"}
 
 
-def _poll_recovery_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "cdp_ask.poll_recovery.snapshot_from_archive_token",
-        lambda *_a, **_k: None,
-    )
-    monkeypatch.setattr("cdp_ask.poll_recovery.chat_url_from_archives", lambda _t: None)
-    monkeypatch.setattr(
-        "cdp_ask.poll_recovery.chat_url_from_provenance", lambda _t: None
-    )
-    monkeypatch.setattr("cdp_ask.poll_recovery._recovery_last_attempt", {})
-
-
 @pytest.mark.asyncio
 async def test_poll_recovery_changes_no_registration_row(
     isolated_registry: Path,
@@ -270,7 +259,7 @@ async def test_poll_recovery_changes_no_registration_row(
         "cdp_ask.poll_recovery.current_model_label",
         AsyncMock(return_value="claude-sonnet"),
     )
-    _poll_recovery_stubs(monkeypatch)
+    monkeypatch.setattr("cdp_ask.poll_recovery._recovery_last_attempt", {})
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     await recover_poll_snapshot(EXE, ExecutionStore(), chat_url_hint=U)
     after_active = _active_snapshot()
@@ -353,7 +342,7 @@ async def test_poll_recovery_label_read_failure_still_tears_down(
         "cdp_ask.poll_recovery.current_model_label",
         AsyncMock(side_effect=RuntimeError("label read failed")),
     )
-    _poll_recovery_stubs(monkeypatch)
+    monkeypatch.setattr("cdp_ask.poll_recovery._recovery_last_attempt", {})
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
 
     with pytest.raises(RuntimeError, match="label read failed"):
@@ -391,7 +380,6 @@ async def test_default_attach_still_binds_where_harvest_does_not(
     host_id = host.registration_id
     snap = copy.deepcopy(reg._store.load_active()[host_id])
     _patch_harvest_harness(monkeypatch, tmp_path, metadata_scrape=False)
-    _patch_holder_remote(monkeypatch)
     store = ExecutionStore()
     await execute_harvest(
         HarvestRequest(chat_url=U, metadata_only=True),
