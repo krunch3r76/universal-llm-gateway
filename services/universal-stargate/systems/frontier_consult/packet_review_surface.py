@@ -5,7 +5,18 @@ from __future__ import annotations
 import re
 from typing import Literal
 
+from implement_admission.admission_read import frontmatter_list_value
+from implement_admission.domain_change_caller_gate import normalize_expected_path
+
 ReviewSurface = Literal["sidecar", "source"]
+
+CALLER_INVENTORY_INSTRUCTION = (
+    "Caller inventory: machine-generated from the repository. For each site "
+    "marked outside files_expected, open the file at that line and report PASS "
+    "or FAIL for that site: does the call still hold under the changed helper's "
+    "accepted inputs, return values and raised errors? An incomplete or "
+    "not-computed inventory is not evidence that no callers exist."
+)
 
 SELF_CHECK_NON_AUTHORITY_LINE = (
     "Executor Self-check PASS is evidence to inspect, not completion authority."
@@ -142,6 +153,68 @@ def has_durable_deliverable_and_halt(packet_text: str | None) -> bool:
     if not packet_text or not packet_text.strip():
         return False
     return _has_durable_deliverable_and_halt(packet_text)
+
+
+def _paths_from_declaration_line(line: str) -> list[str]:
+    found: list[str] = []
+    found.extend(re.findall(r"`([^`]+)`", line))
+    found.extend(
+        re.findall(
+            r"(?:cortex|workspaces)://[^\s,;|`\"']+",
+            line,
+            flags=re.IGNORECASE,
+        )
+    )
+    found.extend(
+        re.findall(
+            r"(?:^|[\s,;`-])((?:services|libs)/[^\s,;|`\"']+)",
+            line,
+            flags=re.IGNORECASE,
+        )
+    )
+    return found
+
+
+def files_expected_paths(packet_text: str) -> list[str]:
+    """Collect normalized production paths from packet frontmatter or scope bullets."""
+    raw: list[str] = []
+    listed = frontmatter_list_value(packet_text, "files_expected")
+    if listed is not None:
+        raw.extend(listed)
+    else:
+        for section in ("scope", "task_guidance"):
+            body = _extract_section(packet_text, section)
+            if not body:
+                continue
+            lines = body.splitlines()
+            idx = 0
+            while idx < len(lines):
+                lowered = lines[idx].lower()
+                if "files_expected" not in lowered and "files expected" not in lowered:
+                    idx += 1
+                    continue
+                raw.extend(_paths_from_declaration_line(lines[idx]))
+                idx += 1
+                while idx < len(lines):
+                    stripped = lines[idx].strip()
+                    if not stripped:
+                        break
+                    if not (stripped.startswith("- ") or stripped.startswith("* ")):
+                        break
+                    raw.extend(_paths_from_declaration_line(lines[idx]))
+                    idx += 1
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        norm = normalize_expected_path(item)
+        if norm is None or not (
+            norm.startswith("libs/") or norm.startswith("services/")
+        ):
+            continue
+        if norm not in seen:
+            seen.add(norm)
+            out.append(norm)
+    return out
 
 
 def classify_review_surface(packet_text: str) -> ReviewSurface:

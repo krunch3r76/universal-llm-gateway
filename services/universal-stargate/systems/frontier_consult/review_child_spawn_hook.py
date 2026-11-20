@@ -34,6 +34,7 @@ from .generate_admission_context_store import (
     try_claim_spawn_pending,
 )
 from .generate_lane_ac_observer import build_generate_lane_reviewer_prompt
+from .review_caller_inventory import build_caller_inventory_block
 from .skill_suggest_durable_state import DurableTerminalEvent, durable_catch_up_terminal
 
 logger = get_logger(__name__)
@@ -288,12 +289,14 @@ async def _build_generate_lane_review_prompt(
     trace_body = (
         f"{REASONING_TRACE_SENTINEL}\n# auto review child for generate/cursor-sdk"
     )
+    caller_inventory_block = await build_caller_inventory_block(packet_text)
     prompt = build_generate_lane_reviewer_prompt(
         packet_text=packet_text,
         staged_draft_body=draft_body,
         reasoning_trace_body=trace_body,
         parent_instruction=parent_instruction,
         parent_instruction_bind=parent_instruction_bind,
+        caller_inventory_block=caller_inventory_block,
     )
     return _ReviewPromptBuild(
         prompt=prompt,
