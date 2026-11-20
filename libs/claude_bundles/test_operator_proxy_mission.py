@@ -468,10 +468,10 @@ def _runbook_for_refuse_coverage() -> str:
 
 
 def test_refuse_bullets_map_to_template_lines() -> None:
-    """Hop template keeps twelve hard-refusal bullets."""
+    """Hop template keeps eleven hard-refusal bullets."""
     refusals = _HOP_ARRIVAL_TEMPLATE.split(_HOP_REFUSALS_MARKER, 1)[1]
     hop_bullets = [ln for ln in refusals.splitlines() if ln.startswith("- ")]
-    assert len(hop_bullets) == 12
+    assert len(hop_bullets) == 11
     assert "wc -m" in refusals
     assert "conductor_hop.py" not in refusals
     assert "Sleep at most 290" not in refusals
@@ -1616,3 +1616,39 @@ def test_default_hop_prompt_golden(
         explicit.split("## Hop request (data)", 1)[0]
         == golden.split("## Hop request (data)", 1)[0]
     )
+
+
+def test_arriving_seat_prompt_refuses_no_chat_reading(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Arriving-seat refusals name no harvest or interlocutor chat read."""
+    _arrival_root(tmp_path, monkeypatch)
+    caller = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "thread_id: 12286\n"
+        f"successor_birth_id: {'a' * 32}\n"
+        "trigger: golden-fixture\n"
+    )
+    sidecar = (
+        "## CURRENT LEG\n"
+        "### OWED / NEXT\nfixture owed line\n"
+        "### HOUSE RULES\n- K1 golden-rule\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(
+        caller,
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+        journal_text="",
+        register_text="",
+        execution_id="exec-golden",
+    )
+    refusals = out.split(_HOP_REFUSALS_MARKER, 1)[1]
+    for needle in (
+        'cse_session(op="harvest")',
+        "interlocutor(",
+        "not this seat's own",
+        "another seat's",
+    ):
+        assert needle not in refusals
+    assert len([ln for ln in refusals.splitlines() if ln.startswith("- ")]) == 11

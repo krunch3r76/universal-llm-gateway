@@ -232,15 +232,18 @@ async def _bind_or_drop(
     chat_url: str,
     page: Any,
     pw: Any,
+    page_only_attach: bool = False,
 ) -> tuple[str | None, str | None, str | None, bool]:
     """Bind, or close *page* and return ``(error, prior, bound, page_only)``.
 
     ``page_only`` keeps the opened page without a row write. Teardown closes
-    that page; this helper does not.
+    that page; this helper does not. *page_only_attach* skips the bind.
     """
     prior = (
         cdp_registry.chat_url_for_registration(registration_id) or ""
     ).strip() or None
+    if page_only_attach:
+        return None, prior, None, True
     err = _bind_chat_url(registration_id, chat_url)
     if err == _PAGE_ONLY:
         return None, prior, None, True
@@ -513,6 +516,7 @@ async def ensure_cse_attached(
     allow_mint: bool = True,
     restrict_to_registration_id: str | None = None,
     allow_k44_superseded_page_only: bool = False,
+    page_only_attach: bool = False,
 ) -> ReattachOutcome:
     """Attach a registry Chrome host and navigate to *chat_url* when needed.
 
@@ -524,6 +528,8 @@ async def ensure_cse_attached(
     When *allow_k44_superseded_page_only* is true, a superseded dormant predecessor
     may open *chat_url* on its live successor host without registry seat/url writes;
     followup and harvest attach opt in; resume and poll recovery do not.
+    With *page_only_attach* the caller only reads: no dormant seat is woken, no
+    row is bound, and a successful outcome is a page-only borrow.
 
     Chat URL is bound without seating. The lane seat snapshot is taken before
     navigation; ``commit_reattach_driving_seat`` re-reads the holder at commit
@@ -612,9 +618,10 @@ async def ensure_cse_attached(
             )
             return _done(k44_outcome, refresh_seat=False)
 
-    woken = await _wake_dormant_seat(chat_url, holder=holder)
-    if woken is not None:
-        return _done(woken, refresh_seat=True)
+    if not page_only_attach:
+        woken = await _wake_dormant_seat(chat_url, holder=holder)
+        if woken is not None:
+            return _done(woken, refresh_seat=True)
 
     lanes = list(cdp_registry.list_active())
     if restrict_to_registration_id:
@@ -644,7 +651,7 @@ async def ensure_cse_attached(
         if found is not None:
             page, pw = found
             err, prior, bound, page_only = await _bind_or_drop(
-                lane.registration_id, chat_url, page, pw
+                lane.registration_id, chat_url, page, pw, page_only_attach
             )
             if err:
                 logger.info(
@@ -674,7 +681,7 @@ async def ensure_cse_attached(
             continue
         page, pw = opened
         err, prior, bound, page_only = await _bind_or_drop(
-            lane.registration_id, chat_url, page, pw
+            lane.registration_id, chat_url, page, pw, page_only_attach
         )
         if err:
             logger.info(
@@ -731,7 +738,7 @@ async def ensure_cse_attached(
         )
     page, pw = opened
     err, prior, bound, page_only = await _bind_or_drop(
-        reg.registration_id, chat_url, page, pw
+        reg.registration_id, chat_url, page, pw, page_only_attach
     )
     if err:
         cdp_registry.deregister_lane(reg.registration_id)
