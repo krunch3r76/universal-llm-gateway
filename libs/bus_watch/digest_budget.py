@@ -108,9 +108,9 @@ POLICY_DEFAULTS: dict[str, Any] = {
     # Pattern A critic when cdp/opus-5.5 is paused (liaison policy key: critic_model).
     "critic_model": "anthropic/claude-sonnet-5-5",
     "critic_model_knobs": {"effort": "high"},
-    "hop_model_query": "Grok 4.7",
-    # Glass createAgent: extra-high (xhigh) and fast. Per-house tick overrides merge on top.
-    "hop_model_knobs": {"effort": "xhigh", "fast": "true"},
+    "hop_model_query": "Opus 5.5",
+    # Glass createAgent: high effort; fast is a Grok/Composer knob. Per-house tick overrides merge on top.
+    "hop_model_knobs": {"effort": "high", "fast": "false"},
     "under_pattern": "grok-advisor-opus-check",
     # Default distributed posture (operator ruling 2026-10-19); explicit house override only.
     "judgment_posture": "distributed",

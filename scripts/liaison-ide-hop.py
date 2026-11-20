@@ -207,7 +207,7 @@ def main() -> int:
         "--model-query",
         default=None,
         help=(
-            "override policy.hop_model_query for this hop (default: 'Grok 4.7'; "
+            "override policy.hop_model_query for this hop (default: 'Opus 5.5'; "
             "pass '' to keep last-used model)"
         ),
     )

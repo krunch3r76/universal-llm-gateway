@@ -94,7 +94,7 @@ KEYSTROKE_SCRIPT = "scripts/orchestrator_tab_keystroke.py"
 # qualifying reply (a:33284; hop 15 ARM: none live while G6 was in_flight).
 LIVE_WATCHER_STATUSES = frozenset({"polling", "running", "predicate_unmet"})
 DEFAULT_REMOTE_REPO = os.environ.get("ORCHESTRATOR_REPO", str(_REPO))
-DEFAULT_HOP_MODEL_QUERY = "Grok 4.7"
+DEFAULT_HOP_MODEL_QUERY = "Opus 5.5"
 _CHECKPOINT_TIMEOUT_S = 15.0
 _WAIT_SLICE_S = 55.0
 
@@ -135,7 +135,7 @@ def policy_focus_title(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
 
 
 def policy_hop_model_query(root_id: str, watch_dir: Path = WATCH_DIR) -> str:
-    """``policy.hop_model_query`` — Ctrl+/ filter after Glass ``Ctrl+N``; default Grok 4.7.
+    """``policy.hop_model_query`` — Ctrl+/ filter after Glass ``Ctrl+N``; default Opus 5.5.
 
     Missing key → ``DEFAULT_HOP_MODEL_QUERY``. An explicit empty string in policy
     disables ``--model-query`` so the tab keeps the operator's last model pick.
@@ -153,13 +153,13 @@ _ALLOWED_HOP_MODEL_EFFORT = frozenset({"low", "medium", "high", "xhigh"})
 def policy_hop_model_knobs(root_id: str, watch_dir: Path = WATCH_DIR) -> dict[str, str]:
     """``policy.hop_model_knobs`` — Glass ``createAgent`` effort/fast after catalog resolve.
 
-    Merges per-root tick overrides onto ``POLICY_DEFAULTS`` (xhigh, fast). House
+    Merges per-root tick overrides onto ``POLICY_DEFAULTS`` (high, not fast). House
     knobs override label-derived effort and catalog parameters on hop.
     """
     state = read_state(watch_dir / f"liaison-{root_id}.tick.json")
     defaults_raw = POLICY_DEFAULTS.get("hop_model_knobs") or {
-        "effort": "xhigh",
-        "fast": "true",
+        "effort": "high",
+        "fast": "false",
     }
     merged = {str(k): str(v) for k, v in defaults_raw.items()}
     raw = effective_policy(state).get("hop_model_knobs")

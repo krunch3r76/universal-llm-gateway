@@ -187,11 +187,11 @@ def test_build_ide_hop_message_includes_hop_xvfb_line() -> None:
     assert "createAgent on :8 and orion-node" in msg
 
 
-def test_policy_hop_model_knobs_defaults_xhigh_without_tick(tmp_path: Path) -> None:
+def test_policy_hop_model_knobs_defaults_high_without_tick(tmp_path: Path) -> None:
     with patch("bus_watch.ide_hop.WATCH_DIR", tmp_path):
-        assert policy_hop_model_knobs("18528") == {
-            "effort": "xhigh",
-            "fast": "true",
+        assert policy_hop_model_knobs("18528", watch_dir=tmp_path) == {
+            "effort": "high",
+            "fast": "false",
         }
 
 

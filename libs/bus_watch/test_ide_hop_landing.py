@@ -97,11 +97,11 @@ def test_remote_launch_command_locks_compositor_activate() -> None:
     assert "--message-file /repo/tmp/watchers/handoff-messages/m.md" in cmd
     assert "--raise-uri" not in cmd
     assert "--palette-query" not in cmd
-    assert "--model-query 'Grok 4.7'" in cmd
+    assert "--model-query 'Opus 5.5'" in cmd
     defaulted = remote_launch_command("/repo/m.md", remote_repo="/repo")
     assert "glass-launch" in defaulted
     assert "--raise-uri" not in defaulted
-    assert "--model-query 'Grok 4.7'" in defaulted
+    assert "--model-query 'Opus 5.5'" in defaulted
     custom = remote_launch_command(
         "/repo/m.md", remote_repo="/repo", model_query="Custom Model"
     )
