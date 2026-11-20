@@ -671,6 +671,82 @@ def test_quarantined_lane_refused(
     assert snap_after["salvage_refusal_count"] == snap_before["salvage_refusal_count"]
 
 
+def test_lane_head_on_other_branch_refused(
+    source_repo: Path,
+    worktree_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    thread_id = "t-head-other"
+    wt, old_tip = _landed_behind_patch_equivalent(source_repo, worktree_root, thread_id)
+    branch = lane_branch_name(thread_id)
+    lane_tip_before = _git("rev-parse", branch, cwd=source_repo)
+    assert lane_tip_before == old_tip
+    _git("checkout", "-b", "other-branch", cwd=wt)
+    other_tip_before = _lane_tip(wt)
+    dispatch_id = "head-other2"
+    events = _capture_lane_b_events(monkeypatch)
+    with pytest.raises(StaleLaneError):
+        _binding(
+            source_repo,
+            worktree_root,
+            _req(
+                thread_id=thread_id,
+                dispatch_id=dispatch_id,
+                execution_id="exec-head-other2",
+            ),
+        )
+    assert _git("rev-parse", branch, cwd=source_repo) == lane_tip_before
+    assert _lane_tip(wt) == other_tip_before
+    assert lookup_archive_tag(repo=source_repo, branch_name=branch) is None
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.signal == "sdk.lane_b.base_refreshed"
+    assert ev.payload["outcome"] == "refused"
+    assert ev.payload["old_tip"] == old_tip
+    assert ev.payload["new_tip"] == old_tip
+    assert ev.payload["thread_id"] == thread_id
+    assert ev.payload["dispatch_id"] == dispatch_id
+    assert ev.payload["behind_by"] >= 1
+
+
+def test_lane_head_detached_refused(
+    source_repo: Path,
+    worktree_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    thread_id = "t-head-detach"
+    wt, old_tip = _landed_behind_patch_equivalent(source_repo, worktree_root, thread_id)
+    branch = lane_branch_name(thread_id)
+    lane_tip_before = _git("rev-parse", branch, cwd=source_repo)
+    assert lane_tip_before == old_tip
+    _git("checkout", "--detach", "HEAD", cwd=wt)
+    detached_tip_before = _lane_tip(wt)
+    dispatch_id = "head-detach2"
+    events = _capture_lane_b_events(monkeypatch)
+    with pytest.raises(StaleLaneError):
+        _binding(
+            source_repo,
+            worktree_root,
+            _req(
+                thread_id=thread_id,
+                dispatch_id=dispatch_id,
+                execution_id="exec-head-detach2",
+            ),
+        )
+    assert _git("rev-parse", branch, cwd=source_repo) == lane_tip_before
+    assert _lane_tip(wt) == detached_tip_before
+    assert lookup_archive_tag(repo=source_repo, branch_name=branch) is None
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.signal == "sdk.lane_b.base_refreshed"
+    assert ev.payload["outcome"] == "refused"
+    assert ev.payload["old_tip"] == old_tip
+    assert ev.payload["new_tip"] == old_tip
+    assert ev.payload["thread_id"] == thread_id
+    assert ev.payload["dispatch_id"] == dispatch_id
+    assert ev.payload["behind_by"] >= 1
+
+
 def test_stale_lane_route_mapping(
     tmp_path: Path,
     source_repo: Path,
