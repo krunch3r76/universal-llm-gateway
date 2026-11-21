@@ -432,6 +432,24 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         context_window_tokens=300_000,
         probed_at="2026-10-16",
     ),
+    # Cursor Grok 4.5. Live catalog GET :8091/api/v1/cursor/catalog 2026-11-21:
+    # effort low|medium|high (no xhigh), fast; no context knob. Cursor docs +
+    # forum: fixed 256k window (not the native xAI 500k). ListModels default
+    # variant is fast=true; team_dispatch pins fast=false (same omit-path as
+    # grok-4.7). Effort default high per cursor.com/docs/models/grok-4-5.
+    "grok-4.5": ModelCapability(
+        knobs={
+            "effort": KnobSpec(accepted=("low", "medium", "high"), default="high"),
+            "fast": KnobSpec(accepted=("false", "true"), default="false"),
+        },
+        default_variant={
+            "effort": "high",
+            "fast": "false",
+        },
+        instruction_profile="reasoner",
+        context_window_tokens=256_000,
+        probed_at="2026-11-21",
+    ),
     # Cursor Grok 4.7. ListModels accepts context=256k|500k and its default
     # variant is 500k (long-context, 2× the standard rate). team_dispatch pins
     # 256k unless the caller sets context=500k. Effort's live parameter id is

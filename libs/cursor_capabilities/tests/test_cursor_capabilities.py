@@ -31,6 +31,7 @@ _GOVERNED_INSTRUCTION_PROFILES: dict[str, str] = {
     "claude-fable-5-2": "reasoner",
     "gpt-5.5": "reasoner",
     "glm-5.2": "reasoner",
+    "grok-4.5": "reasoner",
     "grok-4.7": "reasoner",
     "gemini-4-argon": "reasoner",
     "gemini-4-carbon": "reasoner",
@@ -100,8 +101,22 @@ def test_model_capability_default_instruction_profile_is_mechanical() -> None:
     assert cap.instruction_profile == "mechanical"
 
 
+def test_grok_4_5_stamped_from_live_catalog() -> None:
+    """Production card: live catalog GET :8091/api/v1/cursor/catalog 2026-11-21."""
+    cap = CURSOR_MODEL_CAPABILITIES["grok-4.5"]
+    assert cap.probed_at == "2026-11-21"
+    assert set(cap.knobs) == {"effort", "fast"}
+    assert cap.knobs["effort"].accepted == ("low", "medium", "high")
+    assert cap.knobs["effort"].default == "high"
+    assert cap.knobs["fast"].accepted == ("false", "true")
+    assert cap.knobs["fast"].default == "false"
+    assert cap.default_variant == {"effort": "high", "fast": "false"}
+    assert cap.instruction_profile == "reasoner"
+    assert cap.context_window_tokens == 256_000
+
+
 def test_governed_rows_carry_instruction_profile_classifications() -> None:
-    assert len(CURSOR_MODEL_CAPABILITIES) == 27
+    assert len(CURSOR_MODEL_CAPABILITIES) == 28
     opus55 = CURSOR_MODEL_CAPABILITIES["claude-opus-5-5"]
     assert set(opus55.knobs) == {"context", "effort", "fast"}
     assert opus55.fixed_params == {"cyber": "false"}
@@ -114,7 +129,11 @@ def test_governed_rows_carry_instruction_profile_classifications() -> None:
     assert opus55.probed_at == "2026-11-16"
     fable52 = CURSOR_MODEL_CAPABILITIES["claude-fable-5-2"]
     assert set(fable52.knobs) == {"context", "effort", "fast"}
-    assert fable52.default_variant == {"context": "1m", "effort": "high", "fast": "false"}
+    assert fable52.default_variant == {
+        "context": "1m",
+        "effort": "high",
+        "fast": "false",
+    }
     assert fable52.probed_at == "2026-11-16"
     sonnet5 = CURSOR_MODEL_CAPABILITIES["claude-sonnet-5"]
     sonnet55 = CURSOR_MODEL_CAPABILITIES["claude-sonnet-5-5"]

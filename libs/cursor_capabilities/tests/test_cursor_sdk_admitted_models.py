@@ -102,6 +102,12 @@ def test_explicit_pin_admits_gemini_4_neon_other_models_pool() -> None:
     assert is_cursor_sdk_model_admitted("cursor/gemini-4-neon") is False
 
 
+def test_explicit_pin_admits_grok_4_5_cursor_models_pool() -> None:
+    assert is_cursor_sdk_model_admitted("cursor/grok-4.5", explicit_pin=True) is True
+    # Omit path stays the composer/grok-4.7 pair allowlist.
+    assert is_cursor_sdk_model_admitted("cursor/grok-4.5") is False
+
+
 @pytest.mark.parametrize("bare_id", sorted(OTHER_MODELS_BARE))
 def test_explicit_pin_admits_every_other_models_pool_card(bare_id: str) -> None:
     assert is_cursor_sdk_model_admitted(f"cursor/{bare_id}", explicit_pin=True) is True

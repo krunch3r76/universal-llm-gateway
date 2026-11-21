@@ -51,8 +51,10 @@ def test_other_models_pool_membership(model_id: str) -> None:
     "model_id",
     [
         "cursor/grok-4.7",
+        "cursor/grok-4.5",
         "cursor/composer-2.5",
         "grok-4.7",
+        "grok-4.5",
         "composer-2.5",
         "cursor/auto",
         "auto",
