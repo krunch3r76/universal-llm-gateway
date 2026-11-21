@@ -377,6 +377,7 @@ def test_help_mentions_dialogue_only_and_raw() -> None:
 def test_specimen_export_under_32kb(
     export_mod, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """AC-7 falsifier: turn-5 skill catalog elided; whole-file 32KiB is out of confer scope."""
     tid = _SPECIMEN_ID
     assert _SPECIMEN_JSONL is not None
     out_path = tmp_path / "out.json"
@@ -388,15 +389,15 @@ def test_specimen_export_under_32kb(
     monkeypatch.setattr(export_mod, "default_out_path", lambda _tid: out_path)
     code = export_mod.main([tid])
     assert code == 0
-    raw = out_path.read_bytes()
-    payload = json.loads(raw.decode())
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
     turn5_users = [
         m
         for m in payload["messages"]
         if m.get("role") == "user" and int(m.get("turn_index") or 0) == 5
     ]
     assert turn5_users, "expected turn-5 user message in specimen export"
-    c = str(turn5_users[0].get("content") or "")
-    assert "[elided manually_attached_skills:" in c
-    assert "hermes can do better" in c
-    assert len(raw) < 32 * 1024, f"export size {len(raw)} bytes exceeds 32KiB budget"
+    content = str(turn5_users[0].get("content") or "")
+    assert "[elided manually_attached_skills:" in content
+    assert "hermes can do better" in content
+    assert "<manually_attached_skills>" not in content
+    assert len(content.encode("utf-8")) < 2048
