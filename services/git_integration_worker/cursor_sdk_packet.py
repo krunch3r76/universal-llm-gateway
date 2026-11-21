@@ -91,10 +91,9 @@ _DELIVERABLE_ROUTING_PREAMBLE = (
 
 _LEAN_DISPATCH_PREAMBLE = (
     "Use the lean-dispatch skill: hold diagnosis and land only; ≤2 targeted reads "
-    "to formulate a packet; 0 in-seat ssh/host mutations or pytest runs; read "
-    'closeout sidecars via fs(op="md_read", sections=["executive_envelope", '
-    '"executive_envelope/effects_manifest"]) on tmp/reviews/closeouts/<dispatch_id>.md '
-    "(md_list first when ids differ)."
+    "to formulate a packet; 0 in-seat ssh/host mutations or pytest runs; "
+    "closeout harvest per cortex://notes/system/templates/lean-dispatch-ladder.md "
+    "§ Selective reading of closeouts (md tooling only)."
 )
 
 # Deterministic in-seat budgets surfaced in Tier-B preambles (instruction tripwire).
