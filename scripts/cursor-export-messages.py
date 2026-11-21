@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Export a Cursor tab (agent-transcripts JSONL) to ulg.continuity.messages/1.
 
+Default export is **dialogue-only**: ``strict_dialogue`` extraction, then
+``exclude_ide_catalog_turns`` and ``elide_ide_catalog_blocks`` (same ordering as
+tape pour, without turn-one excise), then re-seal ``messages_sha256`` and
+``message_count``. Pass ``--raw`` to skip that cleaning and match the pre-change
+wrapper export (extract seal only; no catalog eliders).
+
 Resolves ``~/.cursor/projects/*/agent-transcripts/<id>/<id>.jsonl`` via
 ``cortex_store.transcript_assembly.locate_cursor_transcript_jsonl``, then
 ``continuity_tape.extract_jsonl.extract_turns_from_jsonl``.
@@ -13,6 +19,7 @@ Examples::
 
   scripts/cursor-export-messages.py <uuid> --tools marker
   scripts/cursor-export-messages.py <uuid> --stdout --messages-only | jq '.[0]'
+  scripts/cursor-export-messages.py <uuid> --raw  # full extract, no catalog elision
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ import json
 import os
 import sys
 from pathlib import Path  # noqa: E402 — re-exec below before heavy imports
+from typing import Any
 
 _REPO = Path(__file__).resolve().parents[1]
 _LIBS = _REPO / "libs"
@@ -33,8 +41,16 @@ _VENV_PYTHON = _VENV_ROOT / "bin/python"
 if _VENV_PYTHON.is_file() and Path(sys.prefix).resolve() != _VENV_ROOT.resolve():
     os.execv(str(_VENV_PYTHON), [str(_VENV_PYTHON), *sys.argv])
 
+from agent_bus_store.tape_catalog_elide import (  # noqa: E402
+    elide_ide_catalog_blocks,
+    exclude_ide_catalog_turns,
+)
 from continuity_tape.extract_jsonl import extract_turns_from_jsonl  # noqa: E402
-from continuity_tape.messages import Tools  # noqa: E402
+from continuity_tape.messages import (  # noqa: E402
+    ContinuityMessagesEnvelope,
+    Tools,
+    seal_messages_sha256,
+)
 from cortex_store.transcript_assembly import locate_cursor_transcript_jsonl  # noqa: E402
 
 # Ephemeral exports under CORTEX_FILES_ROOT so MCP fs(cortex://…) can read them on
@@ -93,7 +109,38 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Minified JSON (default: indented)",
     )
+    p.add_argument(
+        "--raw",
+        action="store_true",
+        help="Skip dialogue-only cleaning (strict_dialogue off; no catalog eliders)",
+    )
     return p.parse_args(argv)
+
+
+def apply_dialogue_only_clean(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Exclude catalog-only turns, then elide in-message catalog blocks."""
+    cleaned = exclude_ide_catalog_turns(messages)
+    return elide_ide_catalog_blocks(cleaned)
+
+
+def reseal_envelope(
+    envelope: ContinuityMessagesEnvelope,
+    messages: list[dict[str, Any]],
+) -> ContinuityMessagesEnvelope:
+    """Update messages and meta digest after dialogue-only cleaning."""
+    return envelope.model_copy(
+        update={
+            "messages": messages,
+            "meta": envelope.meta.model_copy(
+                update={
+                    "message_count": len(messages),
+                    "messages_sha256": seal_messages_sha256(messages),
+                }
+            ),
+        }
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -111,11 +158,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2 if err == "checkpoint.window_ambiguous" else 1
 
     tools: Tools = args.tools
+    strict_dialogue = not args.raw
     envelope = extract_turns_from_jsonl(
         jsonl_path,
         tools=tools,
         transcript_id=tid,
+        strict_dialogue=strict_dialogue,
     )
+    if not args.raw:
+        messages = apply_dialogue_only_clean(list(envelope.messages))
+        envelope = reseal_envelope(envelope, messages)
     if args.messages_only:
         payload: object = envelope.messages
     else:
