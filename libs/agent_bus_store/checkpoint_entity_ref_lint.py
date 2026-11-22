@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 
 from .body_briefing_advisory import BriefingAdvisory
+from .checkpoint_projection import advisory_body_char_counts
 from .checkpoint_projection import is_checkpoint_subject
 from .enrollment_guard import ENROLLMENT_TAG
 
@@ -64,8 +65,10 @@ def entity_ref_drop_advisory(
         return None
     if entity_ref_rows(body):
         return None
+    stored, authored = advisory_body_char_counts(body, subject=subject)
     return BriefingAdvisory(
-        body_chars=len(body),
+        body_chars=stored,
+        authored_chars=authored,
         target_chars=0,
         reason="tip_missing_entity_refs",
         suggestion=_SUGGESTION,

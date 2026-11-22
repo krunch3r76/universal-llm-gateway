@@ -215,6 +215,31 @@ def test_hop_cdp_caller_undeliverable_explicit_returns_none() -> None:
     assert resolve_hop_cdp_caller_agent("team") is None
 
 
+@pytest.mark.offline
+def test_hop_dispatch_refuses_invalid_caller_before_relay() -> None:
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay") as relay_mock,
+        ):
+            result = await _hop_dispatch(
+                thread="77",
+                reason="x",
+                from_agent="web-anthropic",
+                caller_agent="team",
+            )
+            relay_mock.assert_not_called()
+            return result
+
+    result = asyncio.run(run())
+    assert result["reason"] == "hop_caller_agent_invalid"
+
+
 def test_hop_dispatch_refuses_web_anthropic_without_explicit_caller() -> None:
     async def run() -> dict[str, Any]:
         with (

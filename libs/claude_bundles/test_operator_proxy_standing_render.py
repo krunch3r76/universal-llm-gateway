@@ -58,10 +58,9 @@ def test_ac3_budget_loop_flags_each_shortened_section() -> None:
         lane="12286",
         inline_house_rules=None,
     )
-    for name in ("LAST LEG", "OWED / NEXT", "OPEN FOR KAYWAN"):
-        assert f"[budget_exceeded {name} " in body
-    assert meta["budget"] == "exceeded"
-    assert body.count("[budget_exceeded LAST LEG ") >= 1
+    assert "[section_linked NOTES " in body
+    assert meta["budget"] == "linked"
+    assert "section_linked:NOTES" in meta["flags"]
 
 
 def test_ac4_intro_paragraph_is_rendered() -> None:
@@ -460,11 +459,9 @@ def test_friction_39269_over_cap_section_current_leg_heading_once() -> None:
         lane="12286",
         inline_house_rules=None,
     )
-    assert meta["budget"] == "exceeded"
-    assert any(
-        flag.startswith("[budget_exceeded OWED / NEXT") for flag in meta["flags"]
-    )
-    assert "budget_exceeded" in body.splitlines()[1]
+    assert meta["budget"] == "linked"
+    assert "section_linked:OWED / NEXT" in meta["flags"]
+    assert "[section_linked OWED / NEXT " in body
     assert _current_leg_atx_count(body) == 1
 
 
@@ -712,8 +709,9 @@ def test_hop_inline_over_8192_current_leg_keeps_checkpoint_budget_flag() -> None
         inline_house_rules=None,
         hop_inline=True,
     )
-    assert "[budget_exceeded checkpoint" in body
-    assert meta["budget"] == "exceeded"
+    assert "[section_linked" in body
+    assert "[budget_exceeded checkpoint" not in body
+    assert meta["budget"] == "linked"
 
 
 # --- standing-handoff preamble tip window (G3/G4/R5) ---

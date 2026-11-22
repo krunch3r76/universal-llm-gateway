@@ -109,6 +109,28 @@ cortex://notes/system/threads/1-charter-scoreboard.md
     assert "bound objective" in advisory.suggestion
 
 
+def test_mailbox_thread_skips_charter_binding() -> None:
+    assert not requires_orchestration_charter_binding(
+        subject="CHECKPOINT — birth",
+        thread_tags=["mailbox", "houseless"],
+        supersedes_turn=None,
+    )
+    assert orchestration_charter_advisory(
+        body="TYPE: CHECKPOINT\n",
+        subject="CHECKPOINT — birth",
+        thread_tags=["mailbox"],
+        supersedes_turn=None,
+    ) is None
+
+
+def test_role_root_mailbox_stays_eligible() -> None:
+    assert requires_orchestration_charter_binding(
+        subject="CHECKPOINT — birth",
+        thread_tags=["mailbox", "role:root"],
+        supersedes_turn=None,
+    )
+
+
 def test_continuity_doc_satisfies_manual_pointer() -> None:
     body = """\
 TYPE: CHECKPOINT

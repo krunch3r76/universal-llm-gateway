@@ -32,7 +32,7 @@ Standing handoff URI: cortex://notes/system/threads/12286-standing-handoff.md ·
 
 ## Housekeeping acts
 
-1. Use the cdp-operator-proxy and reasoning-posture skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
+1. Use the lean-dispatch and reasoning-posture skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
 2. Rewrite the checkpoint per journal-166 schema from the arriving checkpoint; agent_bus_read fetch thread 12286, last 5, compact.
 3. Rules file: new bullets ≤600 B, superseded wording to the archive, tightened wording where over budget; **proposed** absorb/retire lines only.
 4. Runbook K-index refresh when a K-row moved; monthly archive folder roll when due.

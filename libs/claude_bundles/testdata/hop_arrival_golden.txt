@@ -29,7 +29,7 @@ declared_in_flight: 0
 
 ## Your first acts, in order
 
-1. Use the cdp-operator-proxy, lean-dispatch, reasoning-posture and hypothesize-simulate skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
+1. Use the lean-dispatch, reasoning-posture and hypothesize-simulate skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
 2. Read the house rules as the pointer above says and quote that `read_sha256`; take the standing handoff's `read_sha256` from the `handoff sha256` line in the rendered checkpoint above (do not `fs(op="read")` `12286-standing-handoff.md`).
 3. The checkpoint and in-flight rows above are the arrival projection; use the live leg for bus-derived open items. House rules are not inlined — read them per the pointer above.
 4. Read what the standing handoff names, in the order it gives them: the hop packet, the continuity card, the reasoning ledger. Read each once (`md_list`, then `md_read`) and quote its `read_sha256`. What the handoff does not name, this lane does not have: say so, and do not invent a card, a ledger or a mailbox.

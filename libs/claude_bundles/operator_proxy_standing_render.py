@@ -10,6 +10,13 @@ from typing import Any
 
 from hop_handoff.standing_handoff import standing_handoff_uri
 
+from claude_bundles.checkpoint_render_events import publish_checkpoint_sections_linked
+from claude_bundles.checkpoint_section_shed import (
+    SECTION_LINKED_MARKER,
+    legacy_checkpoint_link,
+    section_md_read_link,
+    shed_sections_to_budget,
+)
 from claude_bundles.runbook_excerpt import extract_sections
 
 _KB = 1024
@@ -277,11 +284,14 @@ def _extract_current_leg_block(sidecar: str) -> str | None:
 
 
 def _neutralize_budget_literals(sections: dict[str, str]) -> dict[str, str]:
-    return {
-        key: value.replace("[budget_exceeded", "(budget_exceeded")
-        for key, value in sections.items()
-        if value
-    }
+    out: dict[str, str] = {}
+    for key, value in sections.items():
+        if not value:
+            continue
+        text = value.replace("[budget_exceeded", "(budget_exceeded")
+        text = text.replace(SECTION_LINKED_MARKER, "(section_linked")
+        out[key] = text
+    return out
 
 
 def _elided_preamble_range_line(k: int, m: int, n: int) -> str:
@@ -524,7 +534,7 @@ def _legacy_checkpoint_body(sidecar: str, *, house_rules_body: str | None) -> st
     return trimmed
 
 
-def _cap_section(name: str, body: str) -> tuple[str, str | None]:
+def _cap_section(name: str, body: str, *, uri: str) -> tuple[str, str | None]:
     caps = {
         "OWED / NEXT": SECTION_OWED_CAP_B,
         "OPEN FOR KAYWAN": SECTION_OPEN_CAP_B,
@@ -537,8 +547,8 @@ def _cap_section(name: str, body: str) -> tuple[str, str | None]:
     size = _utf8_len(body)
     if size <= cap:
         return body, None
-    flag = f"[budget_exceeded {name} {size}/{cap} — read standing handoff]"
-    return _truncate_utf8(body, cap) + "\n" + flag, flag
+    link = section_md_read_link(uri=uri, section=name, size_b=size)
+    return link, f"section_linked:{name}"
 
 
 def _assemble_checkpoint(sections: dict[str, str]) -> str:
@@ -577,7 +587,8 @@ def _apply_checkpoint_budget(
     *,
     uri: str,
     max_budget: int = CHECKPOINT_BUDGET_B,
-) -> tuple[str, list[str], bool]:
+    lane: str = "",
+) -> tuple[str, list[str], bool, frozenset[str]]:
     """Render checkpoint excluding HOUSE RULES; IN FLIGHT is never truncated."""
     flags: list[str] = []
     working = dict(sections)
@@ -585,9 +596,9 @@ def _apply_checkpoint_budget(
 
     first_acts = working.get("FIRST ACTS", "")
     if first_acts:
-        capped, flag = _cap_section("FIRST ACTS", first_acts)
+        capped, flag = _cap_section("FIRST ACTS", first_acts, uri=uri)
         if flag:
-            flags.append(flag.replace("standing handoff", uri))
+            flags.append(flag)
         working["FIRST ACTS"] = capped
 
     caps = {
@@ -597,50 +608,56 @@ def _apply_checkpoint_budget(
     }
     for name in _TRUNCATABLE_SECTIONS:
         sec = working.get(name, "")
-        if not sec:
+        if not sec or sec.startswith(SECTION_LINKED_MARKER):
             continue
         cap = caps[name]
         sec_size = _utf8_len(sec)
         if sec_size > cap:
-            flag = f"[budget_exceeded {name} {sec_size}/{cap} — read {uri}]"
-            flags.append(flag)
-            working[name] = _truncate_utf8(sec, cap) + "\n" + flag
+            flags.append(f"section_linked:{name}")
+            working[name] = section_md_read_link(uri=uri, section=name, size_b=sec_size)
+
+    known = {
+        "__preamble__",
+        "IN FLIGHT",
+        "OWED / NEXT",
+        "OPEN FOR KAYWAN",
+        "LAST LEG",
+        "FIRST ACTS",
+        "HOUSE RULES",
+    }
+    for heading, sec in list(working.items()):
+        if heading in known or heading == "IN FLIGHT" or heading.startswith("__"):
+            continue
+        sec_size = _utf8_len(sec or "")
+        if sec_size > max_budget:
+            flags.append(f"section_linked:{heading}")
+            working[heading] = section_md_read_link(
+                uri=uri, section=heading, size_b=sec_size
+            )
 
     working = _window_sections(working, max_budget)
-    exceeded = _checkpoint_budget_body_len(working) > max_budget
+    linked: frozenset[str] = frozenset()
+    if _checkpoint_budget_body_len(working) > max_budget:
+        no_inflight = {k: v for k, v in working.items() if k != "IN FLIGHT"}
 
-    while _checkpoint_budget_body_len(working) > max_budget:
-        exceeded = True
-        trimmed = False
-        for name in _TRUNCATABLE_SECTIONS:
-            sec = working.get(name, "")
-            sec_size = _utf8_len(sec)
-            if sec and sec_size > 80:
-                new_cap = max(80, sec_size // 2)
-                flag = f"[budget_exceeded {name} {sec_size}/{new_cap} — read {uri}]"
-                flags.append(flag)
-                shortened = _truncate_utf8(sec, new_cap)
-                if _utf8_len(shortened) >= sec_size:
-                    break
-                working[name] = shortened
-                trimmed = True
-                break
-        if not trimmed:
-            break
+        def _measure(parts: dict[str, str]) -> str:
+            return _assemble_checkpoint(
+                {k: v for k, v in parts.items() if k != "IN FLIGHT"}
+            )
+
+        working, linked = shed_sections_to_budget(
+            working,
+            budget_b=max_budget,
+            uri=uri,
+            assemble=_measure,
+        )
+        flags.extend(f"section_linked:{name}" for name in sorted(linked))
 
     no_inflight = {k: v for k, v in working.items() if k != "IN FLIGHT"}
     tail = _assemble_checkpoint(no_inflight)
-    tail_len = _utf8_len(tail)
-    if tail_len > max_budget:
-        exceeded = True
-        flag = f"[budget_exceeded checkpoint {tail_len}/{max_budget} — read {uri}]"
-        if flag not in flags:
-            flags.append(flag)
-        tail = _truncate_utf8(tail, max_budget) + "\n" + flag
 
     joined_parts: list[str] = []
     if inflight:
-        # IN FLIGHT sits after preamble inside the checkpoint block
         pre = working.get("__preamble__", "")
         if pre:
             joined_parts.append(pre)
@@ -653,7 +670,18 @@ def _apply_checkpoint_budget(
     else:
         joined_parts.append(tail)
     joined = "\n\n".join(p for p in joined_parts if p)
-    return joined, flags, exceeded or bool(flags)
+    rendered_len = _utf8_len(joined)
+    exceeded = bool(linked) or any(
+        f.startswith("section_linked:") for f in flags
+    )
+    if linked and lane:
+        publish_checkpoint_sections_linked(
+            lane=lane,
+            linked_sections=linked,
+            rendered_bytes=rendered_len,
+            budget_b=max_budget,
+        )
+    return joined, flags, exceeded, linked
 
 
 @dataclass
@@ -1003,23 +1031,29 @@ def render_checkpoint_block(
             if "HOUSE RULES" not in k and not (hop_inline and k == "IN FLIGHT")
         }
         inline_cap = CHECKPOINT_HOP_INLINE_B if hop_inline else CHECKPOINT_BUDGET_B
-        body, flags, exceeded = _apply_checkpoint_budget(
-            render_sections, uri=uri, max_budget=inline_cap
+        budget_for_body = (
+            inline_cap - SHA_RESERVE_B if hop_inline else inline_cap
+        )
+        body, flags, exceeded, linked = _apply_checkpoint_budget(
+            render_sections,
+            uri=uri,
+            max_budget=budget_for_body,
+            lane=lane,
         )
         meta["flags"].extend(flags)
+        meta["linked_sections"] = sorted(linked)
         if exceeded:
-            meta["budget"] = "exceeded"
+            meta["budget"] = "linked"
+        else:
+            meta["budget"] = "ok"
     elif sections.get("__legacy__"):
         legacy = sections["__legacy__"]
         size = _utf8_len(legacy)
         if size > CHECKPOINT_BUDGET_B:
-            meta["budget"] = "exceeded"
-            flag = (
-                f"[budget_exceeded checkpoint {size}/{CHECKPOINT_BUDGET_B}"
-                f" — read {uri}]"
-            )
-            meta["flags"].append(flag)
-            body = _truncate_utf8(legacy, CHECKPOINT_BUDGET_B) + "\n" + flag
+            meta["budget"] = "linked"
+            link = legacy_checkpoint_link(uri=uri, size_b=size)
+            meta["flags"].append("section_linked:legacy")
+            body = link
         else:
             body = legacy
     else:
@@ -1093,9 +1127,22 @@ def runbook_refuse_steps_bytes(body: str | None) -> int | None:
 
 
 def first_act_call1_line(*, lane: str, checkpoint_block: str) -> str:
-    """Act 2 line for the arriving-seat hop template."""
+    """Act 2 line for the arriving-seat hop template (three states)."""
     ck = checkpoint_block or ""
-    in_budget = "handoff sha256 " in ck and "[budget_exceeded" not in ck
+    prefix = "## CURRENT LEG (rendered checkpoint)\n"
+    has_checkpoint = ck.startswith(prefix) and len(ck) > len(prefix)
+    if not has_checkpoint:
+        return (
+            "Read the house rules as the pointer above says and quote that "
+            f"`read_sha256`; read `{lane}-standing-handoff.md` whole (`md_list`, "
+            'then `md_read`) and quote its `read_sha256`.'
+        )
+    linked = SECTION_LINKED_MARKER in ck
+    in_budget = (
+        "handoff sha256 " in ck
+        and "[budget_exceeded" not in ck
+        and not linked
+    )
     if in_budget:
         return (
             "Read the house rules as the pointer above says and quote that "
@@ -1105,8 +1152,10 @@ def first_act_call1_line(*, lane: str, checkpoint_block: str) -> str:
         )
     return (
         "Read the house rules as the pointer above says and quote that "
-        f"`read_sha256`; read `{lane}-standing-handoff.md` whole (`md_list`, "
-        'then `md_read`) and quote its `read_sha256`.'
+        "`read_sha256`; use the `handoff sha256` line above and read only the "
+        "linked section(s) named in the rendered checkpoint (`md_read` each "
+        "quoted section on the standing handoff path); do not re-read whole "
+        "sections that appear byte-identical above."
     )
 
 
@@ -1123,6 +1172,7 @@ def checkpoint_in_budget(
         budget_bytes is not None
         and budget_bytes <= CHECKPOINT_BUDGET_B
         and "[budget_exceeded" not in rendered_checkpoint
+        and SECTION_LINKED_MARKER not in rendered_checkpoint
     )
 
 

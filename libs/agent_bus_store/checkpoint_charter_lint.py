@@ -10,13 +10,14 @@ from __future__ import annotations
 import re
 
 from .body_briefing_advisory import BriefingAdvisory
+from .checkpoint_projection import advisory_body_char_counts
 from .checkpoint_kind_detector import (
     is_birth_shaped_checkpoint,
     is_bootstrap_structural_checkpoint,
 )
 from .checkpoint_projection import is_checkpoint_subject
 from .enrollment_guard import ENROLLMENT_TAG
-from .thread_classification import ROLE_ROOT_TAG
+from .thread_classification import ROLE_ROOT_TAG, orchestration_charter_eligible
 
 _CHARTER_SCOREBOARD_URI = re.compile(
     r"charter-scoreboard\.md",
@@ -54,6 +55,8 @@ def requires_orchestration_charter_binding(
     supersedes_turn: int | None,
 ) -> bool:
     """True when this CHECKPOINT promotes or births an orchestration spine."""
+    if not orchestration_charter_eligible(thread_tags):
+        return False
     if subject is None or not is_checkpoint_subject(subject):
         return False
     if is_birth_shaped_checkpoint(
@@ -133,8 +136,10 @@ def orchestration_charter_advisory(
     if not has_objective:
         missing.append("bound objective (Objective:/## Anchor/Primary OPEN)")
     reason_detail = "; missing " + " and ".join(missing)
+    stored, authored = advisory_body_char_counts(body, subject=subject)
     return BriefingAdvisory(
-        body_chars=len(body),
+        body_chars=stored,
+        authored_chars=authored,
         target_chars=0,
         reason="root_missing_charter",
         suggestion=_CHARTER_ADVISORY_SUGGESTION + reason_detail,

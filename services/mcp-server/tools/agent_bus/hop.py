@@ -24,7 +24,9 @@ from mcp_events import record
 from .._agent_bus_author import resolve_dispatch_from_agent
 from .hop_cdp_caller import (
     hop_caller_agent_required_response,
+    hop_invalid_caller_agent_response,
     resolve_hop_cdp_caller_agent,
+    resolve_hop_work_key,
 )
 from .request import _resolve_hop_seat_request_refusal
 from .request_intake import resolve_request_id_intake
@@ -134,6 +136,7 @@ def hop_generate_payload(
     predecessor_registration_id: str | None = None,
     reasoning_effort: str | None = None,
     caller_agent: str,
+    work_key: str | None = None,
     project_uuid: str | None = None,
     project_binding: str | None = None,
     claude_project_name: str | None = None,
@@ -156,6 +159,9 @@ def hop_generate_payload(
         payload["predecessor_registration_id"] = reg
     if reasoning_effort:
         payload["reasoning_effort"] = reasoning_effort
+    wk = (work_key or "").strip()
+    if wk:
+        payload["work_key"] = wk
     for project_key, project_val in (
         ("project_uuid", project_uuid),
         ("project_binding", project_binding),
@@ -229,6 +235,7 @@ async def _hop_dispatch(
     after_turn: int = 0,
     subject: str | None = None,
     caller_agent: str | None = None,
+    work_key: str | None = None,
     project_uuid: str | None = None,
     project_binding: str | None = None,
     claude_project_name: str | None = None,
@@ -435,6 +442,14 @@ async def _hop_dispatch(
     )
     effort = (desired_effort or "").strip()
     wire_effort = effort if effort and effort != "auto" else None
+    caller_raw = (caller_agent or "").strip()
+    if caller_raw and not resolve_hop_cdp_caller_agent(caller_raw):
+        record(
+            "mcp.agentbus.hop.rejected",
+            reason="hop_caller_agent_invalid",
+            thread=thread_id,
+        )
+        return hop_invalid_caller_agent_response(caller_raw)
     wire_caller = resolve_hop_cdp_caller_agent(caller_agent)
     if wire_caller is None:
         record(
@@ -443,6 +458,8 @@ async def _hop_dispatch(
             thread=thread_id,
         )
         return hop_caller_agent_required_response()
+
+    resolved_work_key = resolve_hop_work_key(thread_id, work_key)
 
     payload = hop_generate_payload(
         model=model,
@@ -453,6 +470,7 @@ async def _hop_dispatch(
         predecessor_registration_id=cse_registration_id,
         reasoning_effort=wire_effort,
         caller_agent=wire_caller,
+        work_key=resolved_work_key,
         project_uuid=project_uuid,
         project_binding=project_binding,
         claude_project_name=claude_project_name,

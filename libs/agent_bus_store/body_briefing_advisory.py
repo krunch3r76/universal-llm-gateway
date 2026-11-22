@@ -52,6 +52,7 @@ class BriefingAdvisory:
     suggestion: str
     turn_kind: str = "default"
     suppressed_by_profile: bool = False
+    authored_chars: int | None = None
 
 
 def _first_nonempty_line(body: str) -> str:
@@ -109,6 +110,7 @@ def briefing_advisory(
         supersedes_turn=supersedes_turn,
     )
     metered = _metered_body_chars(body, subject=subject)
+    stored = len(body)
 
     if profile == "birth_silent":
         return None
@@ -118,7 +120,8 @@ def briefing_advisory(
             return None
         if metered >= CHECKPOINT_PROFILE_SCHEMA_ADVISORY_MIN:
             return BriefingAdvisory(
-                body_chars=metered,
+                body_chars=stored,
+                authored_chars=metered,
                 target_chars=CHECKPOINT_PROFILE_SCHEMA_ADVISORY_MIN,
                 reason="checkpoint_schema_shape",
                 suggestion=_SCHEMA_SHAPE_SUGGESTION,
@@ -132,7 +135,8 @@ def briefing_advisory(
     if allow_long_body or has_sidecar or _has_inline_contract_envelope(body):
         return None
     return BriefingAdvisory(
-        body_chars=metered,
+        body_chars=stored,
+        authored_chars=metered if subject and is_checkpoint_subject(subject) else stored,
         target_chars=BRIEFING_TARGET_CHARS,
         reason="over_briefing_target",
         suggestion=_SIDECAR_SUGGESTION,
