@@ -52,6 +52,42 @@ def _stderr_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _cortex_files_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Keep cortex mirroring off the live mount unless a test opts in."""
+    root = tmp_path / "cortex-isolated"
+    root.mkdir()
+    monkeypatch.setattr(tap_mod, "cortex_files_root", lambda: root)
+    return root
+
+
+@pytest.fixture
+def cortex_ephemeral_root(_cortex_files_isolated: Path) -> Path:
+    """Temporary cortex files root with pre-existing ``ephemeral/``."""
+    (_cortex_files_isolated / "ephemeral").mkdir()
+    return _cortex_files_isolated
+
+
+def _expected_cortex_uri(dispatch_id: str) -> str:
+    return (
+        "cortex://ephemeral/logs/git-integration-worker/"
+        f"bridge-stderr/{dispatch_id}.log"
+    )
+
+
+def _cortex_log_path(root: Path, dispatch_id: str) -> Path:
+    return (
+        root
+        / "ephemeral"
+        / "logs"
+        / "git-integration-worker"
+        / "bridge-stderr"
+        / f"{dispatch_id}.log"
+    )
+
+
+@pytest.fixture(autouse=True)
 def _captured_exits(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     """Intercept the exit signal so tests never publish to the event bus."""
     emitted: list[dict[str, Any]] = []
@@ -141,6 +177,114 @@ def test_drain_head_cap_retains_tail(monkeypatch: pytest.MonkeyPatch) -> None:
     assert tap.byte_count() == 200 * len("line-000\n")
     assert tap.tail()[-1] == "line-199"
     assert len(tap.tail()) == 40
+
+
+def test_dual_write_emits_cortex_uri_when_ephemeral_present(
+    cortex_ephemeral_root: Path,
+    _captured_exits: list[dict[str, Any]],
+) -> None:
+    proc = _spawn(
+        "import sys; sys.stderr.write('mirror-me\\n'); sys.stderr.flush(); sys.exit(4)"
+    )
+    dispatch_id = "d-dual-uri"
+    tap = start_bridge_stderr_drain(
+        dispatch_id=dispatch_id,
+        thread_id="t-dual",
+        client=_FakeClient(proc),
+    )
+    assert tap is not None
+    _await_drain(tap)
+
+    host_path = str(tap.log_path)
+    uri = _expected_cortex_uri(dispatch_id)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_stderr_log"] == uri
+    assert snapshot["bridge_stderr_log_host"] == host_path
+    assert _captured_exits[0]["log_path"] == uri
+    assert _captured_exits[0]["log_path_host"] == host_path
+    assert _cortex_log_path(cortex_ephemeral_root, dispatch_id).read_text(
+        encoding="utf-8"
+    ) == tap.log_path.read_text(encoding="utf-8")
+
+
+def test_dual_write_head_cap_same_bytes(
+    cortex_ephemeral_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tap_mod, "_MAX_HEAD_BYTES", 64)
+    proc = _spawn(
+        "import sys\n"
+        "for i in range(200): sys.stderr.write('line-%03d\\n' % i)\n"
+        "sys.stderr.flush()\n"
+    )
+    dispatch_id = "d-dual-cap"
+    tap = start_bridge_stderr_drain(
+        dispatch_id=dispatch_id,
+        thread_id="t-dual-cap",
+        client=_FakeClient(proc),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    host_bytes = tap.log_path.read_bytes()
+    cortex_bytes = _cortex_log_path(cortex_ephemeral_root, dispatch_id).read_bytes()
+    assert host_bytes == cortex_bytes
+
+
+def test_cortex_open_failure_host_continues(
+    cortex_ephemeral_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _captured_exits: list[dict[str, Any]],
+) -> None:
+    dispatch_id = "d-cortex-open-fail"
+
+    def _prepare_fail(did: str):
+        bad = _cortex_log_path(cortex_ephemeral_root, did)
+        bad.parent.mkdir(parents=True, exist_ok=True)
+        bad.mkdir()
+        uri = _expected_cortex_uri(did)
+        return bad, uri
+
+    monkeypatch.setattr(tap_mod, "_prepare_cortex_stderr_log", _prepare_fail)
+    proc = _spawn(
+        "import sys; sys.stderr.write('still-here\\n'); sys.stderr.flush(); sys.exit(5)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id=dispatch_id,
+        thread_id="t-open-fail",
+        client=_FakeClient(proc),
+    )
+    assert tap is not None
+    _await_drain(tap)
+
+    host_path = str(tap.log_path)
+    assert tap.log_path.read_text(encoding="utf-8") == "still-here\n"
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_stderr_log"] == host_path
+    assert "bridge_stderr_log_host" not in snapshot
+    assert _captured_exits[0]["log_path"] == host_path
+    assert _captured_exits[0].get("log_path_host") is None
+
+
+def test_absent_ephemeral_top_level_not_created(
+    _cortex_files_isolated: Path,
+    _captured_exits: list[dict[str, Any]],
+) -> None:
+    root = _cortex_files_isolated
+    proc = _spawn(
+        "import sys; sys.stderr.write('host-only\\n'); sys.stderr.flush(); sys.exit(0)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-no-ephemeral",
+        thread_id="t-no-ephemeral",
+        client=_FakeClient(proc),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    assert not (root / "ephemeral").exists()
+    assert not (root / "tmp").exists()
+    host_path = str(tap.log_path)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_stderr_log"] == host_path
 
 
 def test_start_returns_none_without_owned_bridge() -> None:

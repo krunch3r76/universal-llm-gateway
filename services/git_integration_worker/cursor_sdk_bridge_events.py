@@ -25,6 +25,7 @@ def FrontierSdkBridgeExited(  # noqa: N802
     stderr_bytes: int,
     stderr_tail: list[str],
     log_path: str,
+    log_path_host: str | None = None,
     exit_code: int | None = None,
     signal_name: str | None = None,
     bridge_death_class: str | None = None,
@@ -46,6 +47,8 @@ def FrontierSdkBridgeExited(  # noqa: N802
         "stderr_tail": stderr_tail,
         "log_path": log_path,
     }
+    if log_path_host is not None:
+        payload["log_path_host"] = log_path_host
     if exit_code is not None:
         payload["exit_code"] = exit_code
     if signal_name is not None:
@@ -77,6 +80,7 @@ def emit_sdk_bridge_exited(
     stderr_bytes: int,
     stderr_tail: list[str],
     log_path: str,
+    log_path_host: str | None = None,
     exit_code: int | None = None,
     signal_name: str | None = None,
     bridge_death_class: str | None = None,
@@ -95,6 +99,7 @@ def emit_sdk_bridge_exited(
             stderr_bytes=stderr_bytes,
             stderr_tail=stderr_tail,
             log_path=log_path,
+            log_path_host=log_path_host,
             exit_code=exit_code,
             signal_name=signal_name,
             bridge_death_class=bridge_death_class,

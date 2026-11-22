@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from implement_admission.closeout_helpers import cortex_files_root
+from implement_admission.share_uri_emit import to_share_uri
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_sdk_bridge_events import (
@@ -41,6 +43,7 @@ _STDERR_DIR = Path(
         "/tmp/logs/git-integration-worker/bridge-stderr",
     )
 )
+_CORTEX_STDERR_REL = Path("ephemeral/logs/git-integration-worker/bridge-stderr")
 # Head bytes written verbatim; beyond this only the rolling tail is retained so
 # a chatty bridge cannot fill /tmp.
 _MAX_HEAD_BYTES = 1_048_576
@@ -90,6 +93,8 @@ class BridgeStderrTap:
     log_path: Path
     process: subprocess.Popen[str]
     started_at: float
+    cortex_log_path: Path | None = None
+    share_log_uri: str | None = None
     spawn_cwd: str | None = None
     thread: threading.Thread | None = None
     expected_exit: bool = False
@@ -220,6 +225,72 @@ def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
     return snapshot
 
 
+def _prepare_cortex_stderr_log(dispatch_id: str) -> tuple[Path | None, str | None]:
+    """Open a cortex mirror log when ``ephemeral/`` already exists at the files root."""
+    root = cortex_files_root()
+    if not (root / "ephemeral").is_dir():
+        return None, None
+    path = root / _CORTEX_STDERR_REL / f"{dispatch_id}.log"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.open("a", encoding="utf-8", errors="replace").close()
+    except OSError as exc:
+        logger.warning(
+            "cursor sdk bridge stderr cortex log unavailable: dispatch_id=%s err=%s",
+            dispatch_id,
+            exc,
+        )
+        return None, None
+    try:
+        uri = to_share_uri("cortex", path, cortex_root=root)
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "cursor sdk bridge stderr cortex uri unavailable: dispatch_id=%s err=%s",
+            dispatch_id,
+            exc,
+        )
+        return None, None
+    return path, uri
+
+
+def _stderr_log_pointers(tap: BridgeStderrTap) -> dict[str, str]:
+    """Agent-visible log pointers: cortex URI when mirrored, else host path."""
+    host = str(tap.log_path)
+    if tap.share_log_uri:
+        return {
+            "bridge_stderr_log": tap.share_log_uri,
+            "bridge_stderr_log_host": host,
+            "log_path": tap.share_log_uri,
+            "log_path_host": host,
+        }
+    return {"bridge_stderr_log": host, "log_path": host}
+
+
+def _write_head_lines(
+    handles: list[Any],
+    *,
+    line: str,
+    encoded: int,
+    written: int,
+    max_head: int,
+) -> int:
+    """Append one stderr line under the head cap to every open handle."""
+    if written >= max_head or not handles:
+        return written
+    for handle in handles:
+        handle.write(line)
+        handle.flush()
+    written += encoded
+    if written >= max_head:
+        cap = (
+            f"--- head cap {max_head} bytes reached; retaining tail only ---\n"
+        )
+        for handle in handles:
+            handle.write(cap)
+            handle.flush()
+    return written
+
+
 def _decode_exit(returncode: int | None) -> tuple[int | None, str | None]:
     """Split a Popen returncode into (exit_code, signal_name)."""
     if returncode is None:
@@ -237,10 +308,24 @@ def _drain(tap: BridgeStderrTap) -> None:
     stream = tap.process.stderr
     if stream is None:
         return
-    handle = None
+    host_handle = None
+    cortex_handle = None
     written = 0
     try:
-        handle = tap.log_path.open("a", encoding="utf-8", errors="replace")
+        host_handle = tap.log_path.open("a", encoding="utf-8", errors="replace")
+        if tap.cortex_log_path is not None:
+            try:
+                cortex_handle = tap.cortex_log_path.open(
+                    "a", encoding="utf-8", errors="replace"
+                )
+            except OSError as exc:
+                logger.warning(
+                    "cursor sdk bridge stderr cortex open failed: dispatch_id=%s err=%s",
+                    tap.dispatch_id,
+                    exc,
+                )
+                tap.cortex_log_path = None
+                tap.share_log_uri = None
         while True:
             line = stream.readline()
             if not line:
@@ -249,16 +334,33 @@ def _drain(tap: BridgeStderrTap) -> None:
             with tap._lock:
                 tap._bytes += encoded
                 tap._tail.append(line.rstrip("\n"))
-            if written < _MAX_HEAD_BYTES:
-                handle.write(line)
-                handle.flush()
-                written += encoded
-                if written >= _MAX_HEAD_BYTES:
-                    handle.write(
-                        f"--- head cap {_MAX_HEAD_BYTES} bytes reached; "
-                        "retaining tail only ---\n"
-                    )
-                    handle.flush()
+            handles = [host_handle]
+            if cortex_handle is not None:
+                handles.append(cortex_handle)
+            try:
+                written = _write_head_lines(
+                    handles,
+                    line=line,
+                    encoded=encoded,
+                    written=written,
+                    max_head=_MAX_HEAD_BYTES,
+                )
+            except OSError as exc:
+                if cortex_handle is None:
+                    raise
+                logger.warning(
+                    "cursor sdk bridge stderr cortex write failed: "
+                    "dispatch_id=%s err=%s",
+                    tap.dispatch_id,
+                    exc,
+                )
+                try:
+                    cortex_handle.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                cortex_handle = None
+                tap.cortex_log_path = None
+                tap.share_log_uri = None
     except Exception as exc:  # noqa: BLE001 — forensics must never break dispatch
         logger.warning(
             "cursor sdk bridge stderr drain failed: dispatch_id=%s err=%s",
@@ -266,7 +368,9 @@ def _drain(tap: BridgeStderrTap) -> None:
             exc,
         )
     finally:
-        if handle is not None:
+        for handle in (host_handle, cortex_handle):
+            if handle is None:
+                continue
             try:
                 if tap.byte_count() > written:
                     handle.write("--- retained tail ---\n")
@@ -298,6 +402,7 @@ def _on_eof(tap: BridgeStderrTap) -> None:
     exit_code, signal_name = _decode_exit(tap.process.returncode)
     death_class = classify_bridge_stderr(tail=tap.tail())
     cwd_fields = bridge_spawn_cwd_forensics(tap)
+    pointers = _stderr_log_pointers(tap)
     emit_sdk_bridge_exited(
         dispatch_id=tap.dispatch_id,
         thread_id=tap.thread_id,
@@ -306,7 +411,8 @@ def _on_eof(tap: BridgeStderrTap) -> None:
         elapsed_s=round(time.monotonic() - tap.started_at, 1),
         stderr_bytes=tap.byte_count(),
         stderr_tail=tap.tail(),
-        log_path=str(tap.log_path),
+        log_path=pointers["log_path"],
+        log_path_host=pointers.get("log_path_host"),
         bridge_death_class=death_class,
         bridge_spawn_cwd=cwd_fields.get("bridge_spawn_cwd"),
         bridge_spawn_cwd_exists=cwd_fields.get("bridge_spawn_cwd_exists"),
@@ -340,10 +446,13 @@ def start_bridge_stderr_drain(
             exc,
         )
         return None
+    cortex_path, share_uri = _prepare_cortex_stderr_log(dispatch_id)
     tap = BridgeStderrTap(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
         log_path=_STDERR_DIR / f"{dispatch_id}.log",
+        cortex_log_path=cortex_path,
+        share_log_uri=share_uri,
         process=process,
         started_at=time.monotonic(),
         spawn_cwd=spawn_cwd,
@@ -369,7 +478,7 @@ def bridge_exit_snapshot(tap: BridgeStderrTap | None) -> dict[str, Any]:
         "bridge_signal": signal_name,
         "bridge_alive": tap.process.poll() is None,
         "bridge_stderr_bytes": tap.byte_count(),
-        "bridge_stderr_log": str(tap.log_path),
+        **_stderr_log_pointers(tap),
     }
     tail = tap.tail()
     if tail:
