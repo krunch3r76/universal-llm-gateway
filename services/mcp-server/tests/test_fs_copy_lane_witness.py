@@ -355,3 +355,137 @@ def test_lane_copy_verify_fail_leaves_dest_intact(
     assert "status" not in result
     assert dest.read_bytes() == prior
     assert sha256_hex_of_file(dest) == prior_sha
+
+
+def test_lane_copy_parent_traversal_outside_worktree_refuses(
+    copy_roots: tuple[Path, Path, Path],
+) -> None:
+    """AC4 — parent-directory segments must not escape the lane worktree root."""
+    cortex_root, workspaces_root, lane = copy_roots
+    escape_rel = "docs/parent-escape.md"
+    escape_src = workspaces_root / "universal-llm-gateway" / escape_rel
+    escape_src.parent.mkdir(parents=True, exist_ok=True)
+    payload = "outside-lane-by-traversal\n"
+    escape_src.write_text(payload, encoding="utf-8")
+    assert not (lane / escape_rel).exists()
+    traversal_path = f"../../universal-llm-gateway/{escape_rel}"
+    dest_rel = "notes/tmp/lane-copy-proof/parent-escape.json"
+
+    with patch("lane_branch_root.relay", side_effect=_lane_relay):
+        result = fs_impl(
+            **_fs_kwargs(
+                sandbox="workspaces",
+                path=traversal_path,
+                target=f"cortex://{dest_rel}",
+                thread=LANE_THREAD,
+            )
+        )
+
+    assert "error" in result, result
+    assert "traversal" in result["error"]
+    assert escape_src.read_text(encoding="utf-8") == payload
+    assert not (cortex_root / dest_rel).exists()
+
+
+def test_lane_copy_symlink_outside_worktree_refuses(
+    copy_roots: tuple[Path, Path, Path],
+) -> None:
+    """AC4 — symlinks resolving outside the lane root must refuse."""
+    cortex_root, workspaces_root, lane = copy_roots
+    outside = workspaces_root / "outside_lane_payload.bin"
+    outside.write_bytes(b"symlink-escape-payload")
+    link_rel = "tmp/symlink-escape.bin"
+    link = lane / link_rel
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(outside)
+    dest_rel = "notes/tmp/lane-copy-proof/symlink-escape.bin"
+
+    with patch("lane_branch_root.relay", side_effect=_lane_relay):
+        result = fs_impl(
+            **_fs_kwargs(
+                sandbox="workspaces",
+                path=link_rel,
+                target=f"cortex://{dest_rel}",
+                thread=LANE_THREAD,
+            )
+        )
+
+    assert "error" in result, result
+    assert "traversal rejected" in result["error"]
+    assert outside.read_bytes() == b"symlink-escape-payload"
+    assert not (cortex_root / dest_rel).exists()
+
+
+def test_lane_copy_emits_copied_event_lane_thread_and_digest(
+    copy_roots: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC9 — success path records mcp.tool.file.copied with lane + read_sha256."""
+    recorded: list[tuple[str, dict[str, Any]]] = []
+
+    def _capture(name: str, **kwargs: Any) -> None:
+        recorded.append((name, kwargs))
+
+    monkeypatch.setattr("tools.filesystem._cross_sandbox.record", _capture)
+    cortex_root, _ws, lane = copy_roots
+    src_rel = "tmp/event-emit-ok.bin"
+    payload = b"event-wire-ok\n"
+    (lane / src_rel).parent.mkdir(parents=True, exist_ok=True)
+    (lane / src_rel).write_bytes(payload)
+    dest_rel = "notes/tmp/lane-copy-proof/event-emit-ok.bin"
+
+    with patch("lane_branch_root.relay", side_effect=_lane_relay):
+        result = fs_impl(
+            **_fs_kwargs(
+                sandbox="workspaces",
+                path=src_rel,
+                target=f"cortex://{dest_rel}",
+                thread=LANE_THREAD,
+                if_absent=True,
+            )
+        )
+
+    assert result.get("status") == "copied", result
+    copied = [item for item in recorded if item[0] == "mcp.tool.file.copied"]
+    assert len(copied) == 1, recorded
+    _name, fields = copied[0]
+    assert fields.get("lane_thread") == LANE_THREAD
+    assert fields.get("read_sha256") == result["read_sha256"]
+    assert (cortex_root / dest_rel).read_bytes() == payload
+
+
+def test_lane_copy_rejected_emits_event_lane_thread_and_reason(
+    copy_roots: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC9 — refusal path records mcp.tool.file.copy_rejected with lane + reason."""
+    recorded: list[tuple[str, dict[str, Any]]] = []
+
+    def _capture(name: str, **kwargs: Any) -> None:
+        recorded.append((name, kwargs))
+
+    monkeypatch.setattr("tools.filesystem._cross_sandbox.record", _capture)
+    cortex_root, _ws, lane = copy_roots
+    src_rel = "tmp/event-emit-reject.bin"
+    (lane / src_rel).parent.mkdir(parents=True, exist_ok=True)
+    (lane / src_rel).write_bytes(b"pin\n")
+    dest_rel = "notes/tmp/lane-copy-proof/event-emit-reject.bin"
+
+    with patch("lane_branch_root.relay", side_effect=_lane_relay):
+        result = fs_impl(
+            **_fs_kwargs(
+                sandbox="workspaces",
+                path=src_rel,
+                target=f"cortex://{dest_rel}",
+                thread=LANE_THREAD,
+                expected_read_sha256="0" * 64,
+            )
+        )
+
+    assert result.get("reason") == "source_sha256.mismatch", result
+    rejected = [item for item in recorded if item[0] == "mcp.tool.file.copy_rejected"]
+    assert len(rejected) == 1, recorded
+    _name, fields = rejected[0]
+    assert fields.get("lane_thread") == LANE_THREAD
+    assert fields.get("reason") == "source_sha256.mismatch"
+    assert not (cortex_root / dest_rel).exists()
