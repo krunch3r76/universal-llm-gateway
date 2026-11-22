@@ -596,6 +596,41 @@ def test_steer_native_hook_untested_sdk_strips_entry(
     assert steer_native_hook_command() not in commands
 
 
+def test_native_helper_hook_installed_on_dispatch_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = _fake_real_home(tmp_path)
+    root = tmp_path / "homes"
+    hook = tmp_path / "scripts" / "cursor_sdk_native_helper_hook.py"
+    hook.parent.mkdir(parents=True)
+    hook.write_text("# stub\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.installed_cursor_sdk_version",
+        lambda: "1.0.31",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_native_helper_policy.native_helper_hook_script_path",
+        lambda: hook,
+    )
+    from services.git_integration_worker.cursor_sdk_native_helper_policy import (
+        NativeHelperPolicy,
+    )
+
+    home = setup_cursor_dispatch_home(
+        "d-native-helper",
+        real_home=real,
+        root=root,
+        native_helper_policy=NativeHelperPolicy(
+            allow_kinds=frozenset(),
+            enforcement="enforced",
+        ),
+    )
+    data = json.loads((home / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
+    pre = data["hooks"]["preToolUse"][0]
+    assert pre["failClosed"] is True
+    assert pre.get("matcher") == "Task"
+
+
 def test_steer_native_hook_tested_set_includes_host_pin() -> None:
     """requirements.host.txt cursor-sdk pin stays in STEER_NATIVE_HOOK_TESTED_SDK_VERSIONS."""
     from services.git_integration_worker.cursor_home import (

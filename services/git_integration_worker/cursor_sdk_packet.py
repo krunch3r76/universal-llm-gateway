@@ -877,6 +877,27 @@ def _skill_invoke_block(
     return "\n".join([_CALLER_SKILLS_HEADER, *lines])
 
 
+def _append_run_limits_line(
+    parts: list[str],
+    *,
+    run_limits_line: str | None,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_native_helper_policy import (
+        resolve_native_helper_enforcement,
+    )
+    from services.git_integration_worker.cursor_sdk_run_limits import (
+        format_run_limits_preamble_line,
+        undeclared_run_limits,
+    )
+
+    limits_line = run_limits_line or format_run_limits_preamble_line(
+        undeclared_run_limits(
+            native_helper_enforcement=resolve_native_helper_enforcement()
+        )
+    )
+    parts.append(limits_line)
+
+
 def resolve_prompt_preamble(
     *,
     handoff_contract: str | None,
@@ -898,6 +919,7 @@ def resolve_prompt_preamble(
     resolved_model: str | None = None,
     nest_under: str | None = None,
     delegation_tier: DelegationTier | None = None,
+    run_limits_line: str | None = None,
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
@@ -1021,6 +1043,7 @@ def resolve_prompt_preamble(
             existing_text,
             resolved_model=resolved_model,
         )
+        _append_run_limits_line(parts_bare, run_limits_line=run_limits_line)
         if not parts_bare:
             return ""
         return "\n\n".join(parts_bare) + "\n\n"
@@ -1081,6 +1104,7 @@ def resolve_prompt_preamble(
             existing_text=existing_text,
             prompt_preamble=prompt_preamble,
         )
+        _append_run_limits_line(parts, run_limits_line=run_limits_line)
         if not parts:
             return ""
         return "\n\n".join(parts) + "\n\n"
@@ -1231,4 +1255,5 @@ def resolve_prompt_preamble(
         existing_text=existing_text,
         prompt_preamble=prompt_preamble,
     )
+    _append_run_limits_line(parts, run_limits_line=run_limits_line)
     return "\n\n".join(parts) + "\n\n"

@@ -142,6 +142,14 @@ def finalize_closeout_body(
         reduced["work_outcome"] = payload["work_outcome"]
     if payload.get("status_incomplete_class") is not None:
         reduced["status_incomplete_class"] = payload["status_incomplete_class"]
+    for key in (
+        "stop_cause",
+        "run_limits",
+        "native_helper_enforcement",
+        "native_helper_attempts",
+    ):
+        if payload.get(key) is not None:
+            reduced[key] = payload[key]
     if payload.get("capture_status") is not None:
         reduced["capture_status"] = payload["capture_status"]
     if payload.get("evidence_uris"):
@@ -207,6 +215,15 @@ def finalize_closeout_body(
         minimal["work_outcome"] = payload["work_outcome"]
     if payload.get("status_incomplete_class") is not None:
         minimal["status_incomplete_class"] = payload["status_incomplete_class"]
+    for key in (
+        "stop_cause",
+        "run_limits",
+        "native_helper_enforcement",
+    ):
+        if payload.get(key) is not None:
+            minimal[key] = payload[key]
+    if payload.get("native_helper_attempts"):
+        minimal["native_helper_attempts"] = list(payload["native_helper_attempts"][:3])
     if kept_verification:
         minimal["verification"] = kept_verification
     if residue:

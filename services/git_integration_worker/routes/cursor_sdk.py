@@ -993,6 +993,21 @@ def _resolve_prompt(
         nest_under=req.nest_under,
         lane=ctx.lane if ctx is not None else lane,
     )
+    run_limits_line = None
+    with CursorDispatchLedger.instance()._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    if row is not None:
+        from services.git_integration_worker.cursor_sdk_run_limits import (
+            format_run_limits_preamble_line,
+            read_run_limits,
+        )
+
+        resolved_limits = read_run_limits(str(row["record_json"] or ""))
+        if resolved_limits is not None:
+            run_limits_line = format_run_limits_preamble_line(resolved_limits)
     preamble = resolve_prompt_preamble(
         handoff_contract=req.handoff_contract,
         prompt_preamble=req.prompt_preamble,
@@ -1013,6 +1028,7 @@ def _resolve_prompt(
         resolved_model=req.model,
         nest_under=req.nest_under,
         delegation_tier=delegation_tier,
+        run_limits_line=run_limits_line,
     )
     return f"{preamble}{packet_text}"
 
@@ -1330,12 +1346,28 @@ def _run_sdk_sync(
         )
         dispatch_home = dispatch_home_path(store_bearing_id)
         if not dispatch_home.is_dir():
+            with CursorDispatchLedger.instance()._connect() as conn:
+                policy_row = conn.execute(
+                    "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                    (ctx.dispatch_id,),
+                ).fetchone()
+            record_json = (
+                str(policy_row["record_json"] or "") if policy_row is not None else ""
+            )
+            from services.git_integration_worker.cursor_sdk_native_helper_policy import (
+                load_native_helper_policy_from_record,
+            )
+
             dispatch_home = setup_cursor_dispatch_home(
                 store_bearing_id,
                 real_home=real_home,
                 bare=is_bare,
                 delegation_tier=delegation_tier,
                 lane=ctx.lane,
+                native_helper_policy=load_native_helper_policy_from_record(
+                    record_json,
+                    contract=ctx.handoff_contract,
+                ),
             )
         parent = load_parent_row(
             CursorDispatchLedger.instance(), parent_id=resume_ctx.resume_of
@@ -1347,12 +1379,28 @@ def _run_sdk_sync(
         )
         bridge_state = Path(store_path or resume_ctx.state_root)
     else:
+        with CursorDispatchLedger.instance()._connect() as conn:
+            policy_row = conn.execute(
+                "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (ctx.dispatch_id,),
+            ).fetchone()
+        record_json = (
+            str(policy_row["record_json"] or "") if policy_row is not None else ""
+        )
+        from services.git_integration_worker.cursor_sdk_native_helper_policy import (
+            load_native_helper_policy_from_record,
+        )
+
         dispatch_home = setup_cursor_dispatch_home(
             ctx.dispatch_id,
             real_home=real_home,
             bare=is_bare,
             delegation_tier=delegation_tier,
             lane=ctx.lane,
+            native_helper_policy=load_native_helper_policy_from_record(
+                record_json,
+                contract=ctx.handoff_contract,
+            ),
         )
         bridge_state = dispatch_home / "bridge-state"
         bridge_state.mkdir(parents=True, exist_ok=True)
@@ -1492,6 +1540,17 @@ def _run_sdk_sync(
             dispatch_id=ctx.dispatch_id,
             user_text=prompt,
         )
+        from services.git_integration_worker.cursor_sdk_run_budget_meter import (
+            CombinedToolCallStreamHooks,
+            RunBudgetStreamHook,
+            maybe_tick_run_budget_meter,
+        )
+
+        run_budget_harness = RunBudgetStreamHook(dispatch_id=ctx.dispatch_id)
+        stream_tool_hooks = CombinedToolCallStreamHooks(
+            density_harness,
+            run_budget_harness,
+        )
 
         def _on_tool_call(observation: object = None) -> None:
             live_counter.note_progress(observation)
@@ -1519,6 +1578,10 @@ def _run_sdk_sync(
                     dispatch_id=ctx.dispatch_id,
                     tool_call_count=live_counter.value(),
                 )
+            maybe_tick_run_budget_meter(
+                dispatch_id=ctx.dispatch_id,
+                tool_call_count=live_counter.value(),
+            )
             touch_bridge_read_deadline(
                 client,
                 idle_budget_s=outer_idle_s,
@@ -1647,7 +1710,7 @@ def _run_sdk_sync(
                 execution_id=execution_id,
                 on_tool_call=_on_tool_call,
                 on_usage=_on_usage,
-                density_harness=density_harness,
+                density_harness=stream_tool_hooks,
             )
             result = run.wait()
             usage_record = finalize_dispatch_usage(
@@ -4432,6 +4495,44 @@ async def admit_cursor_dispatch(
             detail_summary="read_only=true is incompatible with contract=implement",
             invalid_fields=["read_only"],
         )
+    from services.git_integration_worker.cursor_sdk_native_helper_policy import (
+        native_helper_policy_record,
+        resolve_native_helper_enforcement,
+        resolve_native_helper_policy,
+    )
+    from services.git_integration_worker.cursor_sdk_run_limits import (
+        RunLimitsRefusal,
+        resolve_run_limits,
+    )
+    from services.git_integration_worker.cursor_sdk_run_limits_events import (
+        emit_run_budget_declared,
+    )
+
+    native_enforcement = resolve_native_helper_enforcement()
+    try:
+        admitted_run_limits = resolve_run_limits(
+            packet_text=packet_text or "",
+            native_helper_enforcement=native_enforcement,
+        )
+    except RunLimitsRefusal as exc:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="RUN_LIMITS_OUT_OF_BOUNDS",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=str(exc),
+            invalid_fields=["packet_path", "message"],
+            retryable=False,
+            extra_data={
+                "floor": exc.bounds.floor,
+                "ceiling": exc.bounds.ceiling,
+            },
+        )
+    native_helper_policy = resolve_native_helper_policy(
+        packet_text=packet_text or "",
+        contract=contract,
+        enforcement=native_enforcement,
+    )
     candidate_source_ref = req.source_ref or extract_source_ref_from_packet(packet_text)
     packet_kind = (
         extract_packet_kind_from_packet(packet_text) if packet_text else None
@@ -5235,6 +5336,21 @@ async def admit_cursor_dispatch(
     ledger.merge_record_json(
         dispatch_id=req.dispatch_id,
         patch={"sdk_mode": resolved_sdk_mode},
+    )
+    run_limits_record = admitted_run_limits.to_record()
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "run_limits": run_limits_record,
+            "native_helper_policy": native_helper_policy_record(native_helper_policy),
+        },
+    )
+    admission.run_limits = run_limits_record
+    emit_run_budget_declared(
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        tool_call_budget=admitted_run_limits.tool_call_budget,
+        warn_at=admitted_run_limits.warn_at,
     )
 
     from services.git_integration_worker.cursor_sdk_work_registry_admit import (

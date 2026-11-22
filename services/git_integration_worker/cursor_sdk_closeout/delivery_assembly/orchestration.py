@@ -231,8 +231,67 @@ def _assemble_closeout_delivery(
                 commits_ahead_presence=meter_presence,
                 git_land_plane_uncomputable=plane_uncomputable,
             )
-    from services.git_integration_worker.cursor_sdk_mode import sdk_mode_for_dispatch
+    import json
 
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.cursor_sdk_mode import sdk_mode_for_dispatch
+    from services.git_integration_worker.cursor_sdk_native_helper_policy import (
+        emit_native_helper_breaches_for_harvest,
+        harvest_native_helper_attempts,
+        load_native_helper_policy_from_record,
+    )
+    from services.git_integration_worker.cursor_sdk_run_limits import (
+        classify_stop_from_closeout_row,
+        read_run_limits,
+    )
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        ledger_row = conn.execute(
+            "SELECT record_json, status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    record_json = str(ledger_row["record_json"] or "") if ledger_row else ""
+    park_blob: dict[str, Any] = {}
+    record_ctrl: dict[str, Any] = {}
+    try:
+        rec_data = json.loads(record_json) if record_json else {}
+        if isinstance(rec_data, dict):
+            raw_park = rec_data.get("park")
+            if isinstance(raw_park, dict):
+                park_blob = raw_park
+            raw_ctrl = rec_data.get("run_budget_control")
+            if isinstance(raw_ctrl, dict):
+                record_ctrl = raw_ctrl
+    except json.JSONDecodeError:
+        park_blob = {}
+        record_ctrl = {}
+    harvest_row: dict[str, Any] = {
+        "status": str(outcome.status or ""),
+        "record_json": record_json,
+        "park": park_blob,
+    }
+    if outcome.stream_tool_call_count is not None:
+        harvest_row["stream_tool_call_count"] = outcome.stream_tool_call_count
+    elif "stream_tool_call_count" in record_ctrl:
+        harvest_row["stream_tool_call_count"] = int(record_ctrl["stream_tool_call_count"])
+    stop_cause = classify_stop_from_closeout_row(harvest_row)
+    limits = read_run_limits(record_json)
+    run_limits_echo = limits.to_record() if limits is not None else None
+    native_helper_enforcement = limits.native_helper_enforcement if limits else None
+    native_helper_attempts = harvest_native_helper_attempts(dispatch_id)
+    native_helper_policy = load_native_helper_policy_from_record(
+        record_json,
+        packet_text=packet_text or "",
+    )
+    emit_native_helper_breaches_for_harvest(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        policy=native_helper_policy,
+        attempts=native_helper_attempts,
+        manifest=manifest,
+    )
     resolved_sdk_mode = sdk_mode_for_dispatch(dispatch_id)
     body = implement_body.build_implement_closeout_body(
         dispatch_id=dispatch_id,
@@ -283,6 +342,10 @@ def _assemble_closeout_delivery(
         hub_repo=binding.receipt_tree if binding is not None else source_repo,
         sdk_transcript_ref=sdk_transcript_ref,
         sdk_transcript_sha256=sdk_transcript_sha256,
+        stop_cause=stop_cause,
+        run_limits=run_limits_echo,
+        native_helper_enforcement=native_helper_enforcement,
+        native_helper_attempts=native_helper_attempts,
     )
     return receipt_finalization.finalize_closeout_receipt(
         source_repo=write_tree,
