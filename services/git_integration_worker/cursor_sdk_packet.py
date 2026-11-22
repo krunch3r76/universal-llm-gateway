@@ -1071,6 +1071,11 @@ def resolve_prompt_preamble(
             prompt_preamble=prompt_preamble,
             allow_restate=allow_fixed_restate,
         )
+        review_appendix = review_dispatch_system_appendix(
+            contract, packet_text=existing_text or ""
+        )
+        if review_appendix:
+            parts.append(review_appendix)
         _append_work_registry_rule(
             parts,
             existing_text=existing_text,
