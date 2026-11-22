@@ -188,6 +188,10 @@ def test_grok_host_preflight_worktree_isolation_contract() -> None:
         "lookup roots",
         "not default write",
         "cursor-sdk/lane-",
+        "rule:share-uri-local-map_ulg",
+        "share-uri-local-map_ulg.mdc",
+        "Visible mount ≠ grant",
+        "read/lookup",
     ):
         assert needle in text, f"missing isolation needle {needle!r} in runbook"
     for forbidden in (
