@@ -1,5 +1,5 @@
 ---
-description: Cursor seats map Share URIs to local mounts for cheap read/lookup only; durable writes and write-bearing exec stay in the verified assigned worktree; cite Share URIs in reports.
+description: Cursor seats know Share URI → local mount maps for batch/script work; MCP on Share URIs stays the normal doc-nav path; durable writes stay in the verified assigned worktree.
 alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate
@@ -13,7 +13,9 @@ trigger_match_terms:
 ---
 # Share URI ↔ local map (Cursor)
 
-On Cursor IDE and cursor-sdk hosts that mount the ULG shares, resolve Share URIs to local paths when direct file tools are cheaper for **read-only** work. Mounts may change; **durable prose cites Share URIs only**.
+**Invariant:** `map(ShareURI → local mount) = awareness for batch/script host work` · `¬ substitute for MCP on Share URIs` · durable prose cites Share URIs only.
+
+On Cursor IDE and cursor-sdk hosts that mount the ULG shares, agents know these equivalences so they can author scripts, batch jobs, and host-side loops against the mounts. Mounts may change; **durable prose cites Share URIs only**.
 
 | Share | Local mount (Cursor / cursor_sdk) |
 |---|---|
@@ -22,22 +24,32 @@ On Cursor IDE and cursor-sdk hosts that mount the ULG shares, resolve Share URIs
 
 Examples: `cortex://notes/system/specs/foo.md` → `/mnt/torus/mcp-data/files/notes/system/specs/foo.md` · `workspaces://universal-llm-gateway/libs/x.py` → `/mnt/torus/projects/universal-llm-gateway/libs/x.py`.
 
+## MCP stays normal (do not replace)
+
+**Default for document work:** call MCP on the Share URI (`fs` / `fs_read` / `md_list` / section-scoped `md_read`, `cortex`, …). Those tools supply metadata, lease/CAS, section scoping, and context-window protection that a raw mount read does not.
+
+| Use | Path |
+|---|---|
+| Navigate / read / edit Markdown and Share-backed docs | MCP on `cortex://…` / `workspaces://…` (normal) |
+| Batch scripts, host loops, one-shot lookup when MCP is the wrong tool | Local mount under the table above (awareness only) |
+
+`¬` drop MCP for `Read`/`Grep`/shell on the mount just because the map exists. Local section APIs (`libs/markdown_sections`) are for in-process/script use of the same mounts — not a seat substitute for MCP `md_*`.
+
 ## Access policy
 
-**Mapped mounts = cheap reads / lookup only.** A visible host path under these roots is **not** a write grant.
+**Mapped mounts = host read/lookup affordance, not a write grant.** A visible path under these roots does not authorize durable mutation.
 
 | Class | Where |
 |---|---|
-| **Reads / lookup** | Share URI mounts; IDE `Read` / `Grep` / bounded shell **read-only** on mapped paths when hops or context cost favor local tools |
+| **Doc / Share I/O (default)** | MCP tools with Share URIs |
+| **Batch / script host reads** | Share URI mounts when the work is offline batch or scripted against the filesystem |
 | **Writes** and write-bearing repo shell (`pytest`, `ruff` on tracked tree, `git` that mutates state) | **Verified assigned worktree only** — path `{GIT_INTEGRATION_WORKTREE_ROOT}/{repo_basename}/lane-{thread_id}` (repo name appears exactly once; branch `cursor-sdk/lane-{thread_id}`). SoT: `runbook:grok-host-preflight` (`cortex://notes/system/runbooks/grok-host-preflight.md`) § Assigned worktree resolution · § Checkout isolation |
 | **Raw IDE/shell writes** without verified lane-B assignment (including hub / lane-A shared checkout under `workspaces://universal-llm-gateway/…`) | **Refuse** — commission **Composer** via `team_dispatch` `seat=cursor-sdk` `lane=B`; do not write on hub |
-
-**Markdown navigation** (read-only): choose by cost/hops — local section APIs (`libs/markdown_sections`: `list_sections` / `read_section`) **or** MCP `fs` `md_list` / section-scoped `md_read` on **either** sandbox. Not MCP-only; do not claim path-mapping alone saves tokens without measurement.
 
 **Durable Markdown edits** (cortex or workspaces): managed `fs` `md_*` with lease/CAS (`expected_sha256` where required), or a CLI that invokes the same managed op — not unverified shell `Write` against Share mount roots.
 
 ## Citation
 
-Reports, closeouts, assertions, packets, and handoffs reference `cortex://…` / `workspaces://…` — ¬ bake `/mnt/torus/…` into durable text. Local paths are a read/lookup affordance, not the public address.
+Reports, closeouts, assertions, packets, and handoffs reference `cortex://…` / `workspaces://…` — ¬ bake `/mnt/torus/…` into durable text. Local paths are a batch/script affordance, not the public address.
 
 Companion (Grok Bot / host shell): `runbook:grok-bot-boot` · `a:44683`. Checkout/write isolation for host grants: `runbook:grok-host-preflight` · `cortex://notes/system/runbooks/grok-host-preflight.md`.
