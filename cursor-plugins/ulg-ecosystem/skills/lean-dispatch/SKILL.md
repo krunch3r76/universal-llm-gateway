@@ -51,6 +51,8 @@ Balance load across bot, cursor-sdk, CDP — ¬ outsource everything. "Maestro" 
 
 **Parallel steps (temporary):** `cortex://notes/system/runbooks/grok-parallel-steps-guide.md` — Leg 4 single-context / no-subagents default takes precedence unless the commissioning packet names that URI.
 
+- **Host-command route (A/B/C):** `box shell` (Grok Bot VM) ≠ `host grant` (registered host channel) ≠ `lane B` (repo edits). Per arc, run `runbook:grok-host-preflight` and route from the PREFLIGHT bus receipt — **A** no grant → lane B only; **B** grant without verified checkout/interpreter → probes only, execution as A; **C** all PASS → bounded host diagnostics + named pytest on host checkout. ¬ `CAPABILITY_TOKENS` host token; ¬ `grok_routing_*` as grant.
+
 ## Duty → wire
 
 Labels are routing shorthand. Address a child with its **packet**, never its label; never costume a child. Bare **Composer** (`cursor/composer-2.5`) is a wire string, ¬ a duty name.
