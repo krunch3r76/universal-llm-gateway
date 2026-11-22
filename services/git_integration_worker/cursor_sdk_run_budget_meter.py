@@ -394,7 +394,11 @@ def maybe_park_budget_exhausted(
     merge_run_budget_control(
         CursorDispatchLedger.instance(),
         dispatch_id=dispatch_id,
-        patch={"budget_exhausted": True, "budget_parked": True},
+        patch={
+            "budget_exhausted": True,
+            "budget_parked": True,
+            "stop_cause": "budget_exhausted",
+        },
     )
     thread_id = str(row.get("thread_id") or "")
     emit_run_budget_exhausted(

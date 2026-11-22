@@ -22,6 +22,7 @@ _BRIDGE_DEATH_PARTIAL_REL = (
     "notes/system/threads/{thread_id}-bridge-death-partial-{dispatch_id}.md"
 )
 _PARK_PARTIAL_REL = "notes/system/threads/{thread_id}-park-partial-{dispatch_id}.md"
+_DISCARD_METHODS = frozenset({"idle_discard", "cancel_discard"})
 
 
 def bridge_death_partial_uri(*, thread_id: str, dispatch_id: str) -> str:
@@ -70,6 +71,7 @@ def _sidecar_body(
     resume_eligible: bool,
     status: str = "partial",
     degraded_reason: str = "bridge_read_timeout",
+    stop_cause: str | None = None,
 ) -> str:
     payload: dict[str, Any] = {
         "status": status,
@@ -81,9 +83,69 @@ def _sidecar_body(
         "resume_eligible": resume_eligible,
         "degraded_reason": degraded_reason,
     }
+    if stop_cause:
+        payload["stop_cause"] = stop_cause
     if forensics:
         payload["forensics"] = forensics
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+
+def read_sidecar_payload(uri: str) -> dict[str, Any] | None:
+    rel = uri[len("cortex://") :]
+    path = cortex_files_root() / rel
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _merge_discard_onto_prior_stop_sidecar(
+    prior: dict[str, Any],
+    *,
+    method: str,
+    tool_call_count: int,
+    last_tools: list[dict[str, str]] | None,
+    forensics: dict[str, Any] | None,
+) -> tuple[int, str | None, dict[str, Any]]:
+    """Keep budget-stop evidence; record the discard leg without zeroing the park stop."""
+    prior_stop = prior.get("stop_cause")
+    stop_cause = str(prior_stop) if isinstance(prior_stop, str) and prior_stop else None
+    prior_count = prior.get("tool_call_count")
+    try:
+        prior_n = int(prior_count) if prior_count is not None else 0
+    except (TypeError, ValueError):
+        prior_n = 0
+    merged_count = max(prior_n, tool_call_count)
+    merged_forensics = dict(prior.get("forensics") or {})
+    if isinstance(forensics, dict):
+        merged_forensics.update(forensics)
+    discard_log = merged_forensics.get("discard_records")
+    if not isinstance(discard_log, list):
+        discard_log = []
+    discard_log.append(
+        {
+            "method": method,
+            "tool_call_count": tool_call_count,
+            "observed_at_discard": True,
+        }
+    )
+    merged_forensics["discard_records"] = discard_log
+    last = list(last_tools or ())
+    if not last and prior.get("last_tool_calls"):
+        raw = prior.get("last_tool_calls")
+        if isinstance(raw, list):
+            last = [
+                {
+                    "tool_name": str(t.get("tool_name", "")),
+                    "status": str(t.get("status", "")),
+                }
+                for t in raw
+                if isinstance(t, dict)
+            ]
+    return merged_count, stop_cause, {"last_tools": last, "forensics": merged_forensics}
 
 
 def _write_sidecar(uri: str, body: str) -> None:
@@ -101,6 +163,7 @@ def emit_partial_harvest_on_park(
     method: str,
     tool_call_count: int,
     last_tools: list[dict[str, str]] | None = None,
+    stop_cause: str | None = None,
 ) -> dict[str, Any]:
     """Write the park partial sidecar (steer-restart D6) and emit the harvest event.
 
@@ -110,26 +173,46 @@ def emit_partial_harvest_on_park(
     owns the ``record_json.park`` block that carries the sidecar URI.
     """
     uri = park_partial_uri(thread_id=thread_id, dispatch_id=dispatch_id)
+    forensics: dict[str, Any] = {
+        "cause": "park_for_restart",
+        "intent_id": intent_id,
+        "method": method,
+    }
+    resolved_count = tool_call_count
+    resolved_last = last_tools
+    resolved_stop = stop_cause
+    if method in _DISCARD_METHODS:
+        prior = read_sidecar_payload(uri)
+        if prior is not None:
+            merged_count, merged_stop, merged = _merge_discard_onto_prior_stop_sidecar(
+                prior,
+                method=method,
+                tool_call_count=tool_call_count,
+                last_tools=last_tools,
+                forensics=forensics,
+            )
+            resolved_count = merged_count
+            resolved_stop = merged_stop or resolved_stop
+            resolved_last = merged.get("last_tools")
+            forensics = merged.get("forensics") or forensics
+            forensics["cause"] = "discard_after_park"
     body = _sidecar_body(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
-        tool_call_count=tool_call_count,
-        last_tools=last_tools,
+        tool_call_count=resolved_count,
+        last_tools=resolved_last,
         cortex_writes_observed=[],
-        forensics={
-            "cause": "park_for_restart",
-            "intent_id": intent_id,
-            "method": method,
-        },
+        forensics=forensics,
         resume_eligible=True,
         status="parked",
         degraded_reason="park_for_restart",
+        stop_cause=resolved_stop,
     )
     _write_sidecar(uri, body)
     emit_sdk_bridge_partial_harvest(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
-        tool_call_count=tool_call_count,
+        tool_call_count=resolved_count,
         sidecar_uri=uri,
         resume_eligible=True,
     )
@@ -207,4 +290,5 @@ __all__ = [
     "emit_partial_harvest_on_bridge_death",
     "emit_partial_harvest_on_park",
     "park_partial_uri",
+    "read_sidecar_payload",
 ]

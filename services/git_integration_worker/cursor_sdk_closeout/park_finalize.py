@@ -65,6 +65,9 @@ from services.git_integration_worker.cursor_sdk_park_ledger import (
     PARK_KIND_DISCARD,
     mark_parked,
 )
+from services.git_integration_worker.cursor_sdk_run_limits import (
+    resolve_park_harvest_stop_cause,
+)
 from services.git_integration_worker.cursor_sdk_worktree_prune import (
     maybe_prune_worktree_on_terminal,
 )
@@ -99,6 +102,18 @@ def _tool_summary(
         ]
         return int(forensics.get("stream_tool_call_count") or 0), last
     return 0, []
+
+
+def _record_json_for_dispatch(dispatch_id: str) -> str:
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None:
+        return ""
+    return str(row["record_json"] or "")
 
 
 def _is_conductor_row(dispatch_id: str) -> bool:
@@ -199,6 +214,11 @@ async def _finalize_discarded_common(
     )
 
     tool_call_count, last_tools = _tool_summary(outcome, exc)
+    record_json = await asyncio.to_thread(_record_json_for_dispatch, dispatch_id)
+    stop_cause = resolve_park_harvest_stop_cause(
+        record_json=record_json,
+        park_reason=reason,
+    )
     harvest = await asyncio.to_thread(
         emit_partial_harvest_on_park,
         dispatch_id,
@@ -207,8 +227,21 @@ async def _finalize_discarded_common(
         method=method,
         tool_call_count=tool_call_count,
         last_tools=last_tools,
+        stop_cause=stop_cause,
     )
     sidecar_uri = harvest.get("sidecar_uri")
+    sidecar_count = tool_call_count
+    if sidecar_uri:
+        from services.git_integration_worker.cursor_sdk_closeout.bridge_death_harvest import (
+            read_sidecar_payload,
+        )
+
+        payload = await asyncio.to_thread(read_sidecar_payload, sidecar_uri)
+        if payload is not None:
+            try:
+                sidecar_count = int(payload.get("tool_call_count") or tool_call_count)
+            except (TypeError, ValueError):
+                sidecar_count = tool_call_count
     park_row = await asyncio.to_thread(
         mark_parked,
         dispatch_id=dispatch_id,
@@ -218,7 +251,7 @@ async def _finalize_discarded_common(
         reason=reason,
         requested_at=requested_at,
         method=method,
-        tool_call_count=tool_call_count,
+        tool_call_count=sidecar_count,
         last_tool_calls=last_tools,
         sidecar_uri=sidecar_uri,
         park_kind=PARK_KIND_DISCARD,
@@ -391,6 +424,11 @@ async def finalize_parked(
     del source_repo  # the park never touches the tree; retention keeps it pinned
     dispatch_id = req.dispatch_id
     tool_call_count, last_tools = _tool_summary(outcome, exc)
+    record_json = await asyncio.to_thread(_record_json_for_dispatch, dispatch_id)
+    stop_cause = resolve_park_harvest_stop_cause(
+        record_json=record_json,
+        park_reason=mark.reason,
+    )
     # friction 37490: harvest / mark_parked / bus.reply sit before promote;
     # a raise must not leave the dispatch non-terminal (same locality as 37404).
     harvest: dict[str, Any] = {}
@@ -403,6 +441,7 @@ async def finalize_parked(
             method=mark.method,
             tool_call_count=tool_call_count,
             last_tools=last_tools,
+            stop_cause=stop_cause,
         )
     except Exception:  # noqa: BLE001 — park closeout always marks terminal
         logger.exception("emit_partial_harvest_on_park raised dispatch=%s", dispatch_id)

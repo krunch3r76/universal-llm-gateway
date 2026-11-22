@@ -245,11 +245,45 @@ def classify_stop_cause(
     return "unknown"
 
 
+def stored_stop_cause_from_record(record_json: str) -> str | None:
+    data = _parse_record_data(record_json)
+    ctrl = data.get(RUN_BUDGET_CONTROL_KEY) or {}
+    stored = ctrl.get("stop_cause")
+    if isinstance(stored, str) and stored:
+        return stored
+    return None
+
+
+def resolve_park_harvest_stop_cause(
+    *,
+    record_json: str,
+    park_reason: str | None,
+) -> str | None:
+    """Serialized stop cause for a park partial sidecar write."""
+    stored = stored_stop_cause_from_record(record_json)
+    if stored:
+        return stored
+    data = _parse_record_data(record_json)
+    ctrl = data.get(RUN_BUDGET_CONTROL_KEY) or {}
+    budget_exhausted = bool(ctrl.get("budget_exhausted"))
+    if park_reason == RUN_BUDGET_EXHAUSTED_REASON or budget_exhausted:
+        return "budget_exhausted"
+    if park_reason:
+        return classify_stop_cause(
+            park_reason=park_reason,
+            budget_exhausted=budget_exhausted,
+        )
+    return None
+
+
 def classify_stop_from_closeout_row(row: Mapping[str, Any]) -> str:
-    """Replay classifier for specimen / harvest rows without a stored stop_cause."""
+    """Prefer a durable stop_cause; replay classifier only when absent."""
     record_json = str(row.get("record_json") or "")
     data = _parse_record_data(record_json)
     ctrl = data.get(RUN_BUDGET_CONTROL_KEY) or {}
+    stored = ctrl.get("stop_cause")
+    if isinstance(stored, str) and stored:
+        return stored
     budget_exhausted = bool(ctrl.get("budget_exhausted"))
     park = row.get("park") if isinstance(row.get("park"), dict) else {}
     park_reason = str(park.get("reason") or "") or None
@@ -279,6 +313,8 @@ __all__ = [
     "UPSTREAM_LIMITS_STAMP",
     "classify_stop_cause",
     "classify_stop_from_closeout_row",
+    "resolve_park_harvest_stop_cause",
+    "stored_stop_cause_from_record",
     "compute_warn_at",
     "extract_native_helper_allow_from_packet",
     "extract_tool_call_budget_from_packet",
