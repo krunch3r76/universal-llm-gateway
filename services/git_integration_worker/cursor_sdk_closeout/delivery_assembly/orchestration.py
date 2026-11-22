@@ -231,22 +231,24 @@ def _assemble_closeout_delivery(
                 commits_ahead_presence=meter_presence,
                 git_land_plane_uncomputable=plane_uncomputable,
             )
+    import json
+
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
     )
     from services.git_integration_worker.cursor_sdk_mode import sdk_mode_for_dispatch
     from services.git_integration_worker.cursor_sdk_native_helper_policy import (
+        emit_native_helper_breaches_for_harvest,
         harvest_native_helper_attempts,
+        load_native_helper_policy_from_record,
+    )
+    from services.git_integration_worker.cursor_sdk_run_budget_meter import (
+        read_run_budget_meter,
     )
     from services.git_integration_worker.cursor_sdk_run_limits import (
         classify_stop_cause,
         read_run_limits,
     )
-    from services.git_integration_worker.cursor_sdk_run_budget_meter import (
-        read_run_budget_meter,
-    )
-
-    import json
 
     with CursorDispatchLedger.instance()._connect() as conn:
         ledger_row = conn.execute(
@@ -275,6 +277,17 @@ def _assemble_closeout_delivery(
     run_limits_echo = limits.to_record() if limits is not None else None
     native_helper_enforcement = limits.native_helper_enforcement if limits else None
     native_helper_attempts = harvest_native_helper_attempts(dispatch_id)
+    native_helper_policy = load_native_helper_policy_from_record(
+        record_json,
+        packet_text=packet_text or "",
+    )
+    emit_native_helper_breaches_for_harvest(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        policy=native_helper_policy,
+        attempts=native_helper_attempts,
+        manifest=manifest,
+    )
     resolved_sdk_mode = sdk_mode_for_dispatch(dispatch_id)
     body = implement_body.build_implement_closeout_body(
         dispatch_id=dispatch_id,

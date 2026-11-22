@@ -877,6 +877,27 @@ def _skill_invoke_block(
     return "\n".join([_CALLER_SKILLS_HEADER, *lines])
 
 
+def _append_run_limits_line(
+    parts: list[str],
+    *,
+    run_limits_line: str | None,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_native_helper_policy import (
+        resolve_native_helper_enforcement,
+    )
+    from services.git_integration_worker.cursor_sdk_run_limits import (
+        format_run_limits_preamble_line,
+        undeclared_run_limits,
+    )
+
+    limits_line = run_limits_line or format_run_limits_preamble_line(
+        undeclared_run_limits(
+            native_helper_enforcement=resolve_native_helper_enforcement()
+        )
+    )
+    parts.append(limits_line)
+
+
 def resolve_prompt_preamble(
     *,
     handoff_contract: str | None,
@@ -1024,6 +1045,7 @@ def resolve_prompt_preamble(
         )
         if not parts_bare:
             return ""
+        _append_run_limits_line(parts_bare, run_limits_line=run_limits_line)
         return "\n\n".join(parts_bare) + "\n\n"
 
     if contract_is_freeform(contract):
@@ -1084,6 +1106,7 @@ def resolve_prompt_preamble(
         )
         if not parts:
             return ""
+        _append_run_limits_line(parts, run_limits_line=run_limits_line)
         return "\n\n".join(parts) + "\n\n"
 
     parts = [_DELIVERABLE_ROUTING_PREAMBLE, _TRANSCRIPT_READ_PREAMBLE]
@@ -1232,18 +1255,5 @@ def resolve_prompt_preamble(
         existing_text=existing_text,
         prompt_preamble=prompt_preamble,
     )
-    from services.git_integration_worker.cursor_sdk_run_limits import (
-        format_run_limits_preamble_line,
-        undeclared_run_limits,
-    )
-    from services.git_integration_worker.cursor_sdk_native_helper_policy import (
-        resolve_native_helper_enforcement,
-    )
-
-    limits_line = run_limits_line or format_run_limits_preamble_line(
-        undeclared_run_limits(
-            native_helper_enforcement=resolve_native_helper_enforcement()
-        )
-    )
-    parts.append(limits_line)
+    _append_run_limits_line(parts, run_limits_line=run_limits_line)
     return "\n\n".join(parts) + "\n\n"

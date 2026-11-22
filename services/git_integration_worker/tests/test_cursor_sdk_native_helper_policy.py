@@ -74,6 +74,106 @@ def test_unenforced_stated_when_sdk_outside_probe_set(
     assert resolve_native_helper_enforcement() == "unenforced"
 
 
+def test_breach_emitted_for_disallowed_harvested_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from implement_admission.closeout_models import (
+        EffectEntry,
+        EffectsManifest,
+        SurfaceSection,
+    )
+
+    from services.git_integration_worker import cursor_sdk_native_helper_policy as mod
+    from services.git_integration_worker.cursor_sdk_subagent_capture import (
+        SUBAGENTS_SURFACE,
+    )
+
+    events: list = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_run_limits_events.emit_frontier_event",
+        lambda event: events.append(event),
+    )
+    policy = NativeHelperPolicy(
+        allow_kinds=frozenset({"explore"}),
+        enforcement="enforced",
+    )
+    manifest = EffectsManifest(
+        dispatch_id="d-breach",
+        thread_id="24956",
+        surfaces={
+            SUBAGENTS_SURFACE: SurfaceSection(
+                surface=SUBAGENTS_SURFACE,
+                source="stream",
+                entries=[
+                    EffectEntry(
+                        op="Task",
+                        target="generalPurpose",
+                        identity="tc-1",
+                    )
+                ],
+            )
+        },
+    )
+    mod.emit_native_helper_breaches_for_harvest(
+        dispatch_id="d-breach",
+        thread_id="24956",
+        policy=policy,
+        attempts=[],
+        manifest=manifest,
+    )
+    breach = [e for e in events if e.signal == "frontier.sdk.native.helper.breach"]
+    assert len(breach) == 1
+    assert breach[0].payload["kind"] == "generalpurpose"
+
+
+def test_breach_skipped_when_unenforced(monkeypatch: pytest.MonkeyPatch) -> None:
+    from implement_admission.closeout_models import (
+        EffectEntry,
+        EffectsManifest,
+        SurfaceSection,
+    )
+
+    from services.git_integration_worker import cursor_sdk_native_helper_policy as mod
+    from services.git_integration_worker.cursor_sdk_subagent_capture import (
+        SUBAGENTS_SURFACE,
+    )
+
+    events: list = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_run_limits_events.emit_frontier_event",
+        lambda event: events.append(event),
+    )
+    policy = NativeHelperPolicy(
+        allow_kinds=frozenset({"explore"}),
+        enforcement="unenforced",
+    )
+    manifest = EffectsManifest(
+        dispatch_id="d-no-breach",
+        thread_id="1",
+        surfaces={
+            SUBAGENTS_SURFACE: SurfaceSection(
+                surface=SUBAGENTS_SURFACE,
+                source="stream",
+                entries=[
+                    EffectEntry(
+                        op="Task",
+                        target="generalPurpose",
+                        identity="tc-1",
+                    )
+                ],
+            )
+        },
+    )
+    mod.emit_native_helper_breaches_for_harvest(
+        dispatch_id="d-no-breach",
+        thread_id="1",
+        policy=policy,
+        attempts=[],
+        manifest=manifest,
+    )
+    assert not [e for e in events if e.signal == "frontier.sdk.native.helper.breach"]
+
+
 def test_install_writes_policy_file(tmp_path: Path) -> None:
     from services.git_integration_worker.cursor_sdk_native_helper_policy import (
         install_native_helper_hook,

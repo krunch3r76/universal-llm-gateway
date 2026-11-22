@@ -46,25 +46,27 @@ def test_admit_echoes_run_limits_undeclared() -> None:
 def test_preamble_includes_run_limits_line() -> None:
     undeclared = undeclared_run_limits(native_helper_enforcement="enforced")
     line = format_run_limits_preamble_line(undeclared)
-    preamble = resolve_prompt_preamble(
-        handoff_contract="implement",
-        prompt_preamble=None,
-        inferred_contract="implement",
-        run_limits_line=line,
-    )
-    assert line in preamble
+    for handoff in ("implement", "bare", "freeform"):
+        preamble = resolve_prompt_preamble(
+            handoff_contract=handoff,
+            prompt_preamble=None,
+            inferred_contract=handoff,
+            run_limits_line=line,
+        )
+        assert line in preamble, handoff
     declared = resolve_run_limits(
         packet_text="tool_call_budget: 40\n",
         native_helper_enforcement="enforced",
     )
     declared_line = format_run_limits_preamble_line(declared)
-    preamble_declared = resolve_prompt_preamble(
-        handoff_contract="implement",
-        prompt_preamble=None,
-        inferred_contract="implement",
-        run_limits_line=declared_line,
-    )
-    assert "tool_call_budget=40" in preamble_declared
+    for handoff in ("implement", "bare", "freeform"):
+        preamble_declared = resolve_prompt_preamble(
+            handoff_contract=handoff,
+            prompt_preamble=None,
+            inferred_contract=handoff,
+            run_limits_line=declared_line,
+        )
+        assert "tool_call_budget=40" in preamble_declared, handoff
 
 
 def test_budget_bounds_refuse_no_clamp() -> None:

@@ -8,7 +8,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from universal_logging import get_logger
 
@@ -24,6 +24,9 @@ from services.git_integration_worker.cursor_sdk_run_limits import (
 )
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from implement_admission.closeout_models import EffectsManifest
 
 NATIVE_HELPER_SPOOL_DIR_ENV = "ULG_NATIVE_HELPER_SPOOL_DIR"
 GIW_NATIVE_HELPER_ALLOWLIST: frozenset[str] = frozenset({"explore"})
@@ -200,6 +203,82 @@ def harvest_native_helper_attempts(dispatch_id: str) -> list[dict[str, Any]]:
     return out
 
 
+def _normalize_helper_kind(kind: str | None) -> str:
+    return (kind or "").strip().lower() or "unspecified"
+
+
+def harvested_task_kinds(
+    *,
+    attempts: list[dict[str, Any]],
+    manifest: EffectsManifest | None = None,
+) -> set[str]:
+    """Kinds from spool entries and subagents-surface Task effects (started/harvested)."""
+    kinds: set[str] = set()
+    for attempt in attempts:
+        if attempt.get("denied"):
+            continue
+        kinds.add(_normalize_helper_kind(str(attempt.get("kind") or "")))
+    if manifest is not None:
+        from services.git_integration_worker.cursor_sdk_subagent_capture import (
+            SUBAGENTS_SURFACE,
+        )
+
+        section = manifest.surfaces.get(SUBAGENTS_SURFACE)
+        if section is not None:
+            for entry in section.entries:
+                if (entry.op or "").strip().lower() != "task":
+                    continue
+                if isinstance(entry.target, str) and entry.target.strip():
+                    kinds.add(_normalize_helper_kind(entry.target))
+                detail = entry.detail
+                if isinstance(detail, dict):
+                    st = detail.get("subagent_type")
+                    if isinstance(st, str) and st.strip():
+                        kinds.add(_normalize_helper_kind(st))
+    return kinds
+
+
+def detect_native_helper_breach_kinds(
+    *,
+    policy: NativeHelperPolicy,
+    attempts: list[dict[str, Any]],
+    manifest: EffectsManifest | None = None,
+) -> frozenset[str]:
+    if policy.enforcement != "enforced":
+        return frozenset()
+    kinds = harvested_task_kinds(attempts=attempts, manifest=manifest)
+    return frozenset(k for k in kinds if not policy.allows(k))
+
+
+def emit_native_helper_breaches_for_harvest(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    policy: NativeHelperPolicy,
+    attempts: list[dict[str, Any]],
+    manifest: EffectsManifest | None = None,
+) -> frozenset[str]:
+    """Emit ``frontier.sdk.native.helper.breach`` once per disallowed harvested kind."""
+    breached = detect_native_helper_breach_kinds(
+        policy=policy,
+        attempts=attempts,
+        manifest=manifest,
+    )
+    if not breached:
+        return breached
+    from services.git_integration_worker.cursor_sdk_run_limits_events import (
+        emit_native_helper_breach,
+    )
+
+    for kind in sorted(breached):
+        emit_native_helper_breach(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            kind=kind,
+        )
+    return breached
+
+
 def is_task_tool_name(tool_name: str) -> bool:
     return tool_name.strip().lower() in {"task"}
 
@@ -296,7 +375,10 @@ __all__ = [
     "GIW_NATIVE_HELPER_ALLOWLIST",
     "NativeHelperPolicy",
     "append_native_helper_attempt",
+    "detect_native_helper_breach_kinds",
+    "emit_native_helper_breaches_for_harvest",
     "harvest_native_helper_attempts",
+    "harvested_task_kinds",
     "install_native_helper_hook",
     "is_task_tool_name",
     "native_helper_hook_command",
