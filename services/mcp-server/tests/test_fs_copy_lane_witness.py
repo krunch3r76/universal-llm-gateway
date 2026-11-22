@@ -354,6 +354,40 @@ def test_lane_copy_unassociated_thread_refuses(
     assert not (cortex_root / dest_rel).exists()
 
 
+def test_lane_copy_mid_path_failure_leaves_absent_dest(
+    copy_roots: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC6 — when dest is absent, a mid-copy failure must not create dest or temps."""
+    cortex_root, _ws, lane = copy_roots
+    src_rel = "tmp/midfail-absent-src.bin"
+    (lane / src_rel).parent.mkdir(parents=True, exist_ok=True)
+    (lane / src_rel).write_bytes(b"source-for-absent-dest\n")
+    dest_rel = "notes/tmp/lane-copy-proof/midfail-absent.bin"
+    dest = cortex_root / dest_rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    assert not dest.exists()
+
+    def _abort_mid_copy(*_args: Any, **_kwargs: Any) -> tuple[str, int]:
+        raise OSError("simulated mid-copy failure")
+
+    monkeypatch.setattr("tools.filesystem._ops_paths.durable_copy_file", _abort_mid_copy)
+    with patch("lane_branch_root.relay", side_effect=_lane_relay):
+        result = fs_impl(
+            **_fs_kwargs(
+                sandbox="workspaces",
+                path=src_rel,
+                target=f"cortex://{dest_rel}",
+                thread=LANE_THREAD,
+            )
+        )
+
+    assert "error" in result, result
+    assert "status" not in result
+    assert not dest.exists()
+    assert not any(dest.parent.glob("*.tmp-*"))
+
+
 def test_lane_copy_verify_fail_leaves_dest_intact(
     copy_roots: tuple[Path, Path, Path],
     monkeypatch: pytest.MonkeyPatch,
