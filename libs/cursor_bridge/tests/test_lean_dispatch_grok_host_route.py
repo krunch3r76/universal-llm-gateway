@@ -192,6 +192,10 @@ def test_grok_host_preflight_worktree_isolation_contract() -> None:
         "share-uri-local-map_ulg.mdc",
         "Visible mount ≠ grant",
         "read/lookup",
+        "also bind Cursor host execution",
+        "access preference chooses tools",
+        "governs writes for Cursor and Grok alike",
+        "cortex://` durable edits go through MCP `fs`",
     ):
         assert needle in text, f"missing isolation needle {needle!r} in runbook"
     for forbidden in (
