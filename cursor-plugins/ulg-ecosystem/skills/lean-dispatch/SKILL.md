@@ -51,7 +51,7 @@ Balance load across bot, cursor-sdk, CDP — ¬ outsource everything. "Maestro" 
 
 **Parallel steps (temporary):** `cortex://notes/system/runbooks/grok-parallel-steps-guide.md` — Leg 4 single-context / no-subagents default takes precedence unless the commissioning packet names that URI.
 
-- **Host-command route (A/B/C):** `box shell` (Grok Bot VM) ≠ `host grant` (registered host channel) ≠ `lane B` (repo edits). Before host exec or assigning host diagnostics, **`fs_read` / `md_read` load `runbook:grok-host-preflight`** (`cortex://notes/system/runbooks/grok-host-preflight.md`) — single SoT; route from the PREFLIGHT bus receipt — **A** no grant → lane B only; **B** grant without verified checkout/interpreter → probes only, execution as A; **C** all PASS → bounded host diagnostics + named pytest on host checkout. ¬ `CAPABILITY_TOKENS` host token; ¬ `grok_routing_*` as grant.
+- **Host-command route (A/B/C):** `box shell` (Grok Bot VM) ≠ `host grant` (registered host channel) ≠ `lane B` (repo edits). Before host exec or assigning host diagnostics, **`fs_read` / `md_read` load `runbook:grok-host-preflight`** (`cortex://notes/system/runbooks/grok-host-preflight.md`) — single SoT; route from the PREFLIGHT bus receipt — **A** no grant → lane B only; **B** grant without verified checkout/interpreter → probes only, execution as A; **C** all PASS → bounded host diagnostics + named pytest on the **assigned lane-B worktree** (¬ hub/lane A writes). ¬ `CAPABILITY_TOKENS` host token; ¬ `grok_routing_*` as grant.
 
 ## Duty → wire
 

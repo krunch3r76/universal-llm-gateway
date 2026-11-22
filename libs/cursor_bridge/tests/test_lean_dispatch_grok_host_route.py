@@ -60,6 +60,7 @@ def test_lean_dispatch_grok_host_route_skill() -> None:
         "box shell",
         "host grant",
         "lane B",
+        "assigned lane-B worktree",
         "runbook:grok-host-preflight",
         "grok-host-preflight",
         "fs_read",
@@ -100,6 +101,8 @@ def test_grok_host_preflight_runbook_headings() -> None:
         "Host checkout execution",
         "Project venv",
         "Share URI",
+        "Assigned worktree resolution",
+        "Checkout isolation",
         "Temporary scripts",
         "Entry-point loaders",
         "route-C host grant",
@@ -121,8 +124,33 @@ def test_grok_host_preflight_runbook_headings() -> None:
         "lean-dispatch",
         "lean-ladder",
         "grok-bot-boot",
+        "GIT_INTEGRATION_WORKTREE_ROOT",
+        "lane-{thread",
     ):
         assert heading in text, f"missing {heading!r} in runbook"
+
+
+def test_grok_host_preflight_worktree_isolation_contract() -> None:
+    path = _first_existing(_RUNBOOK_CANDIDATES)
+    if path is None:
+        pytest.skip("grok-host-preflight.md not on disk; cortex runbook check deferred")
+    text = path.read_text(encoding="utf-8")
+    for needle in (
+        "lane A",
+        "refuse",
+        "team_dispatch",
+        "outside Git",
+        "lookup roots",
+        "not default write",
+        "cursor-sdk/lane-",
+    ):
+        assert needle in text, f"missing isolation needle {needle!r} in runbook"
+    for forbidden in (
+        "hash mismatch vs hub read",
+        "sha256sum",
+        "hub checkout or the commissioned lane-B",
+    ):
+        assert forbidden not in text, f"forbidden hub-scoped phrase {forbidden!r} still in runbook"
 
 
 def test_lean_dispatch_ladder_grok_host_preflight_step() -> None:
