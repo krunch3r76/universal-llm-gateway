@@ -38,7 +38,9 @@ def test_packet_opt_in_intersect_allowlist() -> None:
     assert policy.allows("generalPurpose") is False
 
 
-def test_denial_recorded_harmless(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_denial_recorded_harmless(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from services.git_integration_worker import cursor_sdk_native_helper_policy as mod
 
     events: list = []
@@ -198,4 +200,34 @@ def test_install_writes_policy_file(tmp_path: Path) -> None:
         install_native_helper_hook(cursor_dir, policy=policy)
     data = json.loads((cursor_dir / "hooks.json").read_text(encoding="utf-8"))
     assert "preToolUse" in data["hooks"]
-    assert data["hooks"]["preToolUse"][0]["failClosed"] is True
+    entry = data["hooks"]["preToolUse"][0]
+    assert entry["failClosed"] is True
+    assert entry.get("matcher") == "task"
+
+
+def test_spool_append_harvest_uses_operator_home_under_dispatch_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hook runs with dispatch HOME; GIW harvest uses operator_real_home spool."""
+    import services.git_integration_worker.cursor_home as home_mod
+    from services.git_integration_worker import cursor_sdk_native_helper_policy as mod
+
+    dispatch_root = tmp_path / "cursor-dispatch-homes"
+    dispatch_home = dispatch_root / "d-spool-home"
+    dispatch_home.mkdir(parents=True)
+    operator_home = tmp_path / "operator"
+    operator_home.mkdir()
+    monkeypatch.setenv("HOME", str(dispatch_home))
+    monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(dispatch_root))
+    monkeypatch.setattr(home_mod, "_DISPATCH_HOME_ROOT", dispatch_root)
+    monkeypatch.setattr(home_mod, "_passwd_home", lambda: operator_home)
+
+    mod.append_native_helper_attempt(
+        "d-spool",
+        {"kind": "generalPurpose", "denied": True},
+    )
+    attempts = mod.harvest_native_helper_attempts("d-spool")
+    assert len(attempts) == 1
+    spool = operator_home / ".gateway" / "native-helper-spool" / "d-spool.jsonl"
+    assert spool.is_file()
+    assert not (dispatch_home / ".gateway").exists()

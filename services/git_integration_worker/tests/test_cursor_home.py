@@ -628,7 +628,7 @@ def test_native_helper_hook_installed_on_dispatch_home(
     data = json.loads((home / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
     pre = data["hooks"]["preToolUse"][0]
     assert pre["failClosed"] is True
-    assert pre.get("matcher") == "Task"
+    assert pre.get("matcher") == "task"
 
 
 def test_steer_native_hook_tested_set_includes_host_pin() -> None:

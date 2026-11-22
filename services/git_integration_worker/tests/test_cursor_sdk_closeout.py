@@ -4218,6 +4218,28 @@ def test_closeout_seal_refuses_undeclared_bare_scalar() -> None:
         seal_closeout_payload(payload)
 
 
+def test_closeout_seal_qualifies_run_limits_echo() -> None:
+    """run_limits echo from RunLimits.to_record() must publish without UnqualifiedScalarError."""
+    from services.git_integration_worker.cursor_sdk_closeout_seal import (
+        seal_closeout_payload,
+    )
+
+    payload = {
+        "schema_version": 1,
+        "public_api_changed": False,
+        "run_limits": {
+            "tool_call_budget": 40,
+            "warn_at": 34,
+            "upstream_tool_call_limits": "unknown",
+            "native_helper_enforcement": "enforced",
+        },
+    }
+    sealed = seal_closeout_payload(payload)
+    assert sealed["run_limits"]["tool_call_budget"] == 40
+    assert sealed["run_limits"]["tool_call_budget_authority"] == "recorded"
+    assert "tool-call budget" in sealed["run_limits"]["tool_call_budget_scope"]
+
+
 def test_closeout_seal_qualifies_dense_spec_valid() -> None:
     """Plan closeouts publish dense_spec_valid without a 15th plain slot."""
     from services.git_integration_worker.cursor_sdk_closeout_seal import (

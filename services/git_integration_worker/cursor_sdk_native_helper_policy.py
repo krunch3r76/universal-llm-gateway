@@ -15,6 +15,7 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_home import (
     STEER_NATIVE_HOOK_TESTED_SDK_VERSIONS,
     installed_cursor_sdk_version,
+    operator_real_home,
 )
 from services.git_integration_worker.cursor_sdk_breadth_recon import (
     packet_owes_breadth_recon,
@@ -59,7 +60,11 @@ def resolve_native_helper_enforcement() -> NativeHelperEnforcement:
 
 
 def native_helper_hook_script_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "scripts" / "cursor_sdk_native_helper_hook.py"
+    return (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "cursor_sdk_native_helper_hook.py"
+    )
 
 
 def native_helper_hook_command() -> str:
@@ -130,7 +135,7 @@ def native_helper_spool_dir() -> Path:
     raw = os.environ.get(NATIVE_HELPER_SPOOL_DIR_ENV, "").strip()
     if raw:
         return Path(raw).expanduser()
-    return Path.home() / ".gateway" / "native-helper-spool"
+    return operator_real_home() / ".gateway" / "native-helper-spool"
 
 
 def native_helper_attempts_path(dispatch_id: str) -> Path:
@@ -288,7 +293,8 @@ def _native_helper_hook_entry(command: str) -> dict[str, Any]:
         "command": command,
         "failClosed": True,
         "timeout": _NATIVE_HELPER_HOOK_TIMEOUT_S,
-        "matcher": "Task",
+        # SDK preToolUse tool_call name is lowercase ``task`` (AC14 live).
+        "matcher": "task",
     }
 
 

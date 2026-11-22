@@ -21,6 +21,8 @@ from services.git_integration_worker.cursor_sdk_events import emit_frontier_even
 
 _USAGE_SCOPE = "this dispatch token accounting"
 _USAGE_AUTHORITY = "recorded"
+_RUN_LIMITS_SCOPE = "tool-call budget admitted for this dispatch"
+_RUN_LIMITS_AUTHORITY = "recorded"
 
 # a:36755 / arc closeout-files-fields-need-a-scope-token — files_* answer
 # authorship/ambient repo attribution; effects[] answers dispatch action movement.
@@ -266,6 +268,17 @@ def CloseoutSealRefused(path: str, surface: str) -> Event:  # noqa: N802
     )
 
 
+def _qualify_run_limits(payload: dict[str, Any]) -> None:
+    """Qualify ``run_limits`` echo ints from ``RunLimits.to_record()`` at seal-prep."""
+    blob = payload.get("run_limits")
+    if isinstance(blob, dict):
+        _qualify_bare_ints(
+            blob,
+            scope=_RUN_LIMITS_SCOPE,
+            authority=_RUN_LIMITS_AUTHORITY,
+        )
+
+
 def _qualify_run_progress(payload: dict[str, Any]) -> None:
     """Qualify run-progress numbers. The plain census is already at the halt.
 
@@ -308,6 +321,7 @@ def seal_closeout_payload(payload: dict[str, Any]) -> dict[str, Any]:
     _qualify_read_inventory(payload)
     _qualify_open_forks(payload)
     _qualify_dense_spec_valid(payload)
+    _qualify_run_limits(payload)
     _qualify_run_progress(payload)
     try:
         return seal(payload, closeout_surface_decl())
