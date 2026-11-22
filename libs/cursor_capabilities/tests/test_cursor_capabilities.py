@@ -109,8 +109,8 @@ def test_grok_4_5_stamped_from_live_catalog() -> None:
     assert cap.knobs["effort"].accepted == ("low", "medium", "high")
     assert cap.knobs["effort"].default == "high"
     assert cap.knobs["fast"].accepted == ("false", "true")
-    assert cap.knobs["fast"].default == "false"
-    assert cap.default_variant == {"effort": "high", "fast": "false"}
+    assert cap.knobs["fast"].default == "true"
+    assert cap.default_variant == {"effort": "high", "fast": "true"}
     assert cap.instruction_profile == "reasoner"
     assert cap.context_window_tokens == 256_000
 
@@ -209,12 +209,12 @@ def test_suggest_effort_knobs_accepted_and_empty() -> None:
     assert suggest_effort_knobs("composer-2.5", "low") == {}
 
 
-def test_effective_knobs_grok_omit_path_fast_false() -> None:
-    """Grok caller omits fast → stamp includes descriptor default fast=false."""
+def test_effective_knobs_grok_omit_path_fast_true() -> None:
+    """Grok caller omits fast → stamp includes descriptor default fast=true."""
     assert effective_knobs("grok-4.7", {"effort": "xhigh"}) == {
         "context": "256k",
         "effort": "xhigh",
-        "fast": "false",
+        "fast": "true",
     }
 
 
@@ -248,7 +248,7 @@ def test_effective_knobs_warns_invalid_effort_value(
     caplog.set_level(logging.WARNING, logger="cursor_capabilities.cursor_capabilities")
     assert effective_knobs("grok-4.7", {"effort": "max"}) == {
         "context": "256k",
-        "fast": "false",
+        "fast": "true",
     }
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1

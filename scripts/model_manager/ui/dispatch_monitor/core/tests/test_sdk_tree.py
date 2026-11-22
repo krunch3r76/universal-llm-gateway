@@ -155,7 +155,7 @@ def test_fast_cond_omit_rules() -> None:
 
 
 def test_fold_grok_omit_path_fast_from_effective_stamp() -> None:
-    """IDE grok admit omitting fast folds fast=false from effective stamp."""
+    """IDE grok stamp with fast=false folds as fast=no on the live line."""
     model = Model()
     dispatch_id = "disp-grok-omit-fast"
     model.apply(

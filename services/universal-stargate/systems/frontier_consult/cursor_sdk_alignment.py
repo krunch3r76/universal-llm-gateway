@@ -242,15 +242,10 @@ def align_cursor_knobs(
                 knob_resolution=knob_resolution,
                 aligned_knobs=aligned_knobs,
             )
-    if model_id == "composer-2.5" and "fast" not in wire and "fast" in card:
-        _fill_policy_knob(
-            model_id=model_id,
-            name="fast",
-            value="true",
-            knob_resolution=knob_resolution,
-            aligned_knobs=aligned_knobs,
-        )
-    if model_id == "grok-4.7" and "fast" not in wire and "fast" in card:
+    # Composer + Grok omit-path: fill card fast default (true) so
+    # knob_resolution reports policy_default and the wire matches
+    # build_model_selection (a:35451). Explicit model_knobs.fast wins above.
+    if "fast" not in wire and "fast" in card and card["fast"].default is not None:
         _fill_policy_knob(
             model_id=model_id,
             name="fast",
