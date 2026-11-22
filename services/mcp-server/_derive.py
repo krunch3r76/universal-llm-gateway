@@ -53,16 +53,21 @@ def validate_primary_tools_coherence(
     primary_tools: set[str],
     canonical_yaml_path: Path = _DEFAULT_CANONICAL,
 ) -> list[str]:
-    """Return list of tools in primary_tools not found as domains in canonical.yaml.
+    """Return primary tool names absent from the canonical tool registry.
 
-    ∀ t ∈ primary_tools: t ∈ registry_domains ∨ violation.
+    ∀ t ∈ primary_tools: t ∈ canonical_tool_names ∨ violation.
+
+    Primary sets are **tool** names (``derive_surface_primary_tools`` maps
+    ``surface_primary_domains`` through the Claude manifest). Comparing to
+    dispatcher **domains** false-fails when domain ≠ tool_name (e.g.
+    ``grok_routing`` → ``grok_routing_read``).
 
     Used for Risk-4 startup-time check in server.py:
       violations = validate_primary_tools_coherence(_PRIMARY_TOOLS)
       if violations: raise RuntimeError(...)
     """
-    registry_domains = derive_mcp_dispatcher_domain_set(canonical_yaml_path)
-    return sorted(primary_tools - registry_domains)
+    canonical_tool_names = derive_all_canonical_tool_names(canonical_yaml_path)
+    return sorted(primary_tools - canonical_tool_names)
 
 
 def derive_all_canonical_tool_names(

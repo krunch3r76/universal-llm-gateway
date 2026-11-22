@@ -30,8 +30,19 @@ def _stargate_unreachable_envelope(exc: BaseException) -> dict[str, Any]:
 
 
 def fetch_grok_routing_read(*, stargate_url: str | None = None) -> dict[str, Any]:
-    """GET the host routing snapshot via Stargate (no local bindings I/O)."""
-    base = (stargate_url or os.environ.get("STARGATE_URL") or DEFAULT_STARGATE_URL).strip()
+    """GET the host routing snapshot from cdp_ask (no local bindings I/O).
+
+    Owner surface is cdp_ask ``GET /v1/grok/window-routing`` (not Stargate).
+    Base URL preference: explicit arg → ``PROJECT_ASK_URL`` / ``CDP_ASK_URL``
+    → ``STARGATE_URL`` → ``DEFAULT_STARGATE_URL`` (last two are legacy fallbacks).
+    """
+    base = (
+        stargate_url
+        or os.environ.get("PROJECT_ASK_URL")
+        or os.environ.get("CDP_ASK_URL")
+        or os.environ.get("STARGATE_URL")
+        or DEFAULT_STARGATE_URL
+    ).strip()
     try:
         with make_sync_client(base, timeout=_TIMEOUT) as client:
             response = client.get(_ROUTE)
