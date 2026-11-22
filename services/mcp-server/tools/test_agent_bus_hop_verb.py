@@ -34,6 +34,7 @@ from tools.agent_bus.hop import (
 )
 from tools.agent_bus.hop_cdp_caller import (
     hop_caller_agent_required_response,
+    hop_invalid_caller_agent_response,
     resolve_hop_cdp_caller_agent,
 )
 from tools.agent_bus.request_intake import reset_request_id_registry_for_tests
@@ -281,7 +282,8 @@ def test_hop_dispatch_refuses_undeliverable_explicit_caller() -> None:
             )
 
     result = asyncio.run(run())
-    assert result["code"] == hop_caller_agent_required_response()["code"]
+    assert result["code"] == hop_invalid_caller_agent_response("team")["code"]
+    assert result["reason"] == "hop_caller_agent_invalid"
 
 
 def test_hop_generate_payload_explicit_caller_passthrough() -> None:
