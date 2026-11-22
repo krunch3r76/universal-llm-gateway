@@ -7,6 +7,9 @@ import json
 import pytest
 
 from services.git_integration_worker.cursor_sdk_packet import resolve_prompt_preamble
+from services.git_integration_worker.cursor_sdk_work_registry_admit import (
+    WORK_REGISTRY_RULE,
+)
 from services.git_integration_worker.cursor_sdk_run_limits import (
     RunLimitsRefusal,
     classify_stop_cause,
@@ -122,4 +125,48 @@ def test_classify_stop_cause_budget_exhausted() -> None:
             budget_exhausted=True,
         )
         == "budget_exhausted"
+    )
+
+
+def test_preamble_run_limits_when_floor_blocks_already_present() -> None:
+    declared = resolve_run_limits(
+        packet_text="tool_call_budget: 40\n",
+        native_helper_enforcement="enforced",
+    )
+    line = format_run_limits_preamble_line(declared)
+    existing = (
+        f"{WORK_REGISTRY_RULE}\n"
+        "forward_only: never move a shared branch backward\n"
+        "LANE-B WORKTREE mandatory path\n"
+    )
+    for handoff in ("bare", "freeform"):
+        preamble = resolve_prompt_preamble(
+            handoff_contract=handoff,
+            prompt_preamble=None,
+            inferred_contract=handoff,
+            existing_text=existing,
+            run_limits_line=line,
+            lane="B",
+            lane_worktree="/tmp/lane-b-worktree",
+        )
+        assert "tool_call_budget=40" in preamble, handoff
+
+
+def test_classify_stop_cause_all_four_taxonomy_values() -> None:
+    assert classify_stop_cause(budget_exhausted=True) == "budget_exhausted"
+    assert classify_stop_cause(park_reason="idle-timeout") == "parked:idle-timeout"
+    assert (
+        classify_stop_cause(run_status="failed", executor_voluntary=False)
+        == "run_status:failed"
+    )
+    assert (
+        classify_stop_cause(run_status="finished", executor_voluntary=True)
+        == "executor_ended"
+    )
+    assert classify_stop_cause(run_status="finished") == "unknown"
+    assert (
+        classify_stop_from_closeout_row(
+            {"status": "finished", "record_json": json.dumps({})}
+        )
+        == "unknown"
     )

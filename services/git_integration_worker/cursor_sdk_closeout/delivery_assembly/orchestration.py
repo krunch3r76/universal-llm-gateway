@@ -242,11 +242,8 @@ def _assemble_closeout_delivery(
         harvest_native_helper_attempts,
         load_native_helper_policy_from_record,
     )
-    from services.git_integration_worker.cursor_sdk_run_budget_meter import (
-        read_run_budget_meter,
-    )
     from services.git_integration_worker.cursor_sdk_run_limits import (
-        classify_stop_cause,
+        classify_stop_from_closeout_row,
         read_run_limits,
     )
 
@@ -257,22 +254,29 @@ def _assemble_closeout_delivery(
         ).fetchone()
     record_json = str(ledger_row["record_json"] or "") if ledger_row else ""
     park_blob: dict[str, Any] = {}
+    record_ctrl: dict[str, Any] = {}
     try:
         rec_data = json.loads(record_json) if record_json else {}
         if isinstance(rec_data, dict):
             raw_park = rec_data.get("park")
             if isinstance(raw_park, dict):
                 park_blob = raw_park
+            raw_ctrl = rec_data.get("run_budget_control")
+            if isinstance(raw_ctrl, dict):
+                record_ctrl = raw_ctrl
     except json.JSONDecodeError:
         park_blob = {}
-    budget_reading = read_run_budget_meter(record_json)
-    park_reason = str(park_blob.get("reason") or "") if isinstance(park_blob, dict) else None
-    stop_cause = classify_stop_cause(
-        park_reason=park_reason or None,
-        run_status=str(outcome.status or ""),
-        budget_exhausted=budget_reading.budget_exhausted,
-        executor_voluntary=not budget_reading.budget_exhausted and not park_reason,
-    )
+        record_ctrl = {}
+    harvest_row: dict[str, Any] = {
+        "status": str(outcome.status or ""),
+        "record_json": record_json,
+        "park": park_blob,
+    }
+    if outcome.stream_tool_call_count is not None:
+        harvest_row["stream_tool_call_count"] = outcome.stream_tool_call_count
+    elif "stream_tool_call_count" in record_ctrl:
+        harvest_row["stream_tool_call_count"] = int(record_ctrl["stream_tool_call_count"])
+    stop_cause = classify_stop_from_closeout_row(harvest_row)
     limits = read_run_limits(record_json)
     run_limits_echo = limits.to_record() if limits is not None else None
     native_helper_enforcement = limits.native_helper_enforcement if limits else None

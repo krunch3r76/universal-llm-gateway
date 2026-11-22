@@ -1043,9 +1043,9 @@ def resolve_prompt_preamble(
             existing_text,
             resolved_model=resolved_model,
         )
+        _append_run_limits_line(parts_bare, run_limits_line=run_limits_line)
         if not parts_bare:
             return ""
-        _append_run_limits_line(parts_bare, run_limits_line=run_limits_line)
         return "\n\n".join(parts_bare) + "\n\n"
 
     if contract_is_freeform(contract):
@@ -1104,9 +1104,9 @@ def resolve_prompt_preamble(
             existing_text=existing_text,
             prompt_preamble=prompt_preamble,
         )
+        _append_run_limits_line(parts, run_limits_line=run_limits_line)
         if not parts:
             return ""
-        _append_run_limits_line(parts, run_limits_line=run_limits_line)
         return "\n\n".join(parts) + "\n\n"
 
     parts = [_DELIVERABLE_ROUTING_PREAMBLE, _TRANSCRIPT_READ_PREAMBLE]
