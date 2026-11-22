@@ -19,6 +19,7 @@ from agent_bus_store.enrollment_guard import (
 )
 
 ROLE_ROOT_TAG = "role:root"
+MAILBOX_TAG = "mailbox"
 _ROLE_PREFIX = "role:"
 LANE_LIAISON_TAG = "lane:liaison"
 TYPE_MONITOR_TAG = "type:monitor"
@@ -42,6 +43,18 @@ class ThreadClassificationError(ValueError):
         super().__init__(detail)
         self.detail = detail
         self.error_code = error_code
+
+
+def orchestration_charter_eligible(thread_tags: list[str] | None) -> bool:
+    """Negative-with-override: skip messaging-only mailboxes unless root/enrolled."""
+    cleaned = {
+        t.strip().lower() for t in (thread_tags or []) if t and str(t).strip()
+    }
+    if ROLE_ROOT_TAG in cleaned or ENROLLMENT_TAG in cleaned:
+        return True
+    if MAILBOX_TAG in cleaned:
+        return False
+    return True
 
 
 def resolve_spine(
@@ -204,7 +217,9 @@ def classification_denied_http(
 
 __all__ = [
     "LANE_LIAISON_TAG",
+    "MAILBOX_TAG",
     "ROLE_ROOT_TAG",
+    "orchestration_charter_eligible",
     "Spine",
     "LiaisonMonitorKind",
     "ThreadClassification",

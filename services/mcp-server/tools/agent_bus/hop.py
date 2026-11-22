@@ -24,7 +24,9 @@ from mcp_events import record
 from .._agent_bus_author import resolve_dispatch_from_agent
 from .hop_cdp_caller import (
     hop_caller_agent_required_response,
+    hop_invalid_caller_agent_response,
     resolve_hop_cdp_caller_agent,
+    resolve_hop_work_key,
 )
 from .request import _resolve_hop_seat_request_refusal
 from .request_intake import resolve_request_id_intake
@@ -36,6 +38,29 @@ _VERB_SOURCE = "agent-bus-hop-verb"
 _DEFAULT_SUCCESSOR_MODEL = "cdp/opus-5.5-high"
 _HOP_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+/-]*$")
 _THREAD_DETAIL_RESUME = "false"
+
+
+def _hop_event_fields(
+    thread_id: str | None = None,
+    *,
+    explicit_work_key: str | None = None,
+    caller_agent: str | None = None,
+    include_work_key: bool = True,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Observability kwargs for ``mcp.agentbus.hop.posted`` / ``hop.rejected``."""
+    fields: dict[str, Any] = dict(extra)
+    tid = (thread_id or "").strip()
+    if tid:
+        fields.setdefault("thread", tid)
+        if include_work_key:
+            resolved = resolve_hop_work_key(tid, explicit_work_key)
+            if resolved:
+                fields["work_key"] = resolved
+    raw_caller = (caller_agent or "").strip()
+    if raw_caller:
+        fields["caller_agent"] = raw_caller
+    return fields
 
 
 def _fetch_thread_detail_for_responsibility(thread_id: str) -> dict[str, Any]:
@@ -134,6 +159,7 @@ def hop_generate_payload(
     predecessor_registration_id: str | None = None,
     reasoning_effort: str | None = None,
     caller_agent: str,
+    work_key: str | None = None,
     project_uuid: str | None = None,
     project_binding: str | None = None,
     claude_project_name: str | None = None,
@@ -156,6 +182,9 @@ def hop_generate_payload(
         payload["predecessor_registration_id"] = reg
     if reasoning_effort:
         payload["reasoning_effort"] = reasoning_effort
+    wk = (work_key or "").strip()
+    if wk:
+        payload["work_key"] = wk
     for project_key, project_val in (
         ("project_uuid", project_uuid),
         ("project_binding", project_binding),
@@ -229,6 +258,7 @@ async def _hop_dispatch(
     after_turn: int = 0,
     subject: str | None = None,
     caller_agent: str | None = None,
+    work_key: str | None = None,
     project_uuid: str | None = None,
     project_binding: str | None = None,
     claude_project_name: str | None = None,
@@ -255,7 +285,14 @@ async def _hop_dispatch(
             "reason": "hop_thread_required",
         }
     if not trigger:
-        record("mcp.agentbus.hop.rejected", reason="reason_required")
+        record(
+            "mcp.agentbus.hop.rejected",
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                reason="reason_required",
+            ),
+        )
         return {
             "error": "hop: reason is required",
             "reason": "hop_reason_required",
@@ -286,8 +323,11 @@ async def _hop_dispatch(
     if resolved_hop_kind not in VALID_HOP_KINDS:
         record(
             "mcp.agentbus.hop.rejected",
-            reason="hop_kind_invalid",
-            thread=thread_id,
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                reason="hop_kind_invalid",
+            ),
         )
         return {
             "error": "hop: hop_kind must be mission or housekeeping",
@@ -297,7 +337,14 @@ async def _hop_dispatch(
     try:
         model = resolve_hop_successor_model(desired_model)
     except ValueError:
-        record("mcp.agentbus.hop.rejected", reason="model_invalid", thread=thread_id)
+        record(
+            "mcp.agentbus.hop.rejected",
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                reason="model_invalid",
+            ),
+        )
         return {
             "error": "hop: desired_model is not a model id",
             "reason": "hop_model_invalid",
@@ -319,9 +366,12 @@ async def _hop_dispatch(
         env = ban_verdict.reject_envelope or {}
         record(
             "mcp.agentbus.hop.rejected",
-            reason=str(env.get("code") or "model_banned"),
-            thread=thread_id,
-            model=model,
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                reason=str(env.get("code") or "model_banned"),
+                model=model,
+            ),
         )
         return {
             "error": str(env.get("reason") or "hop: model is banned"),
@@ -435,14 +485,31 @@ async def _hop_dispatch(
     )
     effort = (desired_effort or "").strip()
     wire_effort = effort if effort and effort != "auto" else None
+    caller_raw = (caller_agent or "").strip()
+    if caller_raw and not resolve_hop_cdp_caller_agent(caller_raw):
+        record(
+            "mcp.agentbus.hop.rejected",
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                caller_agent=caller_raw,
+                reason="hop_caller_agent_invalid",
+            ),
+        )
+        return hop_invalid_caller_agent_response(caller_raw)
     wire_caller = resolve_hop_cdp_caller_agent(caller_agent)
     if wire_caller is None:
         record(
             "mcp.agentbus.hop.rejected",
-            reason="hop_caller_agent_required",
-            thread=thread_id,
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                reason="hop_caller_agent_required",
+            ),
         )
         return hop_caller_agent_required_response()
+
+    resolved_work_key = resolve_hop_work_key(thread_id, work_key)
 
     payload = hop_generate_payload(
         model=model,
@@ -453,6 +520,7 @@ async def _hop_dispatch(
         predecessor_registration_id=cse_registration_id,
         reasoning_effort=wire_effort,
         caller_agent=wire_caller,
+        work_key=resolved_work_key,
         project_uuid=project_uuid,
         project_binding=project_binding,
         claude_project_name=claude_project_name,
@@ -478,8 +546,12 @@ async def _hop_dispatch(
     if not commissioned["posted"]:
         record(
             "mcp.agentbus.hop.rejected",
-            reason=commissioned["reason"],
-            thread=thread_id,
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                caller_agent=wire_caller,
+                reason=commissioned["reason"],
+            ),
         )
         return {
             "posted": False,
@@ -498,9 +570,13 @@ async def _hop_dispatch(
     successor_chat_url = (str(raw_url).strip() or None) if raw_url is not None else None
     record(
         "mcp.agentbus.hop.posted",
-        thread=thread_id,
-        reason=trigger,
-        execution_id=execution_id,
+        **_hop_event_fields(
+            thread_id,
+            explicit_work_key=work_key,
+            caller_agent=wire_caller,
+            reason=trigger,
+            execution_id=execution_id,
+        ),
     )
     stamped = dict(result) if isinstance(result, dict) else {"result": result}
     stamped["continuity_hop"] = True

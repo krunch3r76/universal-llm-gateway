@@ -170,8 +170,12 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
     "retrieval-before-authoring",
 )
 
-# Hop arrival profile (C1): first act names these four; the other four load on trigger.
-MISSION_ARRIVAL_SKILL_SLUGS: tuple[str, ...] = MISSION_SKILL_SLUGS[:4]
+# Hop arrival profile (C1): explicit slugs — not a slice of MISSION_SKILL_SLUGS.
+MISSION_ARRIVAL_SKILL_SLUGS: tuple[str, ...] = (
+    "lean-dispatch",
+    "reasoning-posture",
+    "hypothesize-simulate",
+)
 MISSION_TRIGGER_SKILL_SLUGS: tuple[str, ...] = MISSION_SKILL_SLUGS[4:]
 
 
@@ -341,12 +345,12 @@ You are the housekeeping successor for lane {lane}. Your birth record: successor
 
 ## Housekeeping acts
 
-1. Use the cdp-operator-proxy and reasoning-posture skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
+1. Use the lean-dispatch and reasoning-posture skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
 2. Rewrite the checkpoint per journal-166 schema from the arriving checkpoint; agent_bus_read fetch thread {lane}, last 5, compact.
 3. Rules file: new bullets ≤600 B, superseded wording to the archive, tightened wording where over budget; **proposed** absorb/retire lines only.
 4. Runbook K-index refresh when a K-row moved; monthly archive folder roll when due.
 5. Post TYPE: HOUSEKEEPING_DONE on {lane} to cursor with before/after bytes per surface, K-ids added/removed/proposed, shas.
-6. agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model={maestro_self_hop_model}{maestro_self_hop_effort_arg}, hop_kind=mission, reason="housekeeping done; resume").
+6. agent_bus(hop, thread={lane}, from_agent=web-anthropic, caller_agent=cursor, desired_model={maestro_self_hop_model}{maestro_self_hop_effort_arg}, hop_kind=mission, reason="housekeeping done; resume").
 
 ## Hard refusals (housekeeping — these bind; they are last on purpose)
 
@@ -431,16 +435,12 @@ def _enforce_hop_render_max(
     hop_kind: str,
     standing_handoff_text: str | None,
 ) -> None:
-    """Keep the hop UTF-8 envelope under HOP_RENDER_MAX_B without trimming an in-cap leg."""
+    """Keep the hop UTF-8 envelope under HOP_RENDER_MAX_B; checkpoint uses section shed."""
     if hop_kind != "mission":
         return
-    from hop_handoff.standing_handoff import standing_handoff_uri
-
     from claude_bundles.operator_proxy_standing_render import (
-        CHECKPOINT_BUDGET_B,
         HOP_RENDER_MAX_B,
-        _truncate_utf8,
-        measure_checkpoint_budget_bytes,
+        render_checkpoint_block,
     )
 
     def _total_bytes() -> int:
@@ -453,101 +453,20 @@ def _enforce_hop_render_max(
     if _total_bytes() <= HOP_RENDER_MAX_B:
         return
 
-    checkpoint_pref = fields.get("checkpoint_block") or ""
-    rendered_ck_bytes: int | None = None
-    if checkpoint_pref.startswith(_CHECKPOINT_RENDER_PREFIX):
-        rendered_ck_bytes = len(
-            checkpoint_pref[len(_CHECKPOINT_RENDER_PREFIX) :].encode("utf-8")
+    lane = fields.get("lane", "")
+    sidecar = standing_handoff_text or ""
+    if sidecar and lane:
+        rerendered, _meta = render_checkpoint_block(
+            sidecar,
+            lane=lane,
+            inline_house_rules=None,
+            hop_inline=True,
         )
-
-    leg_bytes = measure_checkpoint_budget_bytes(standing_handoff_text or "")
-    if leg_bytes is not None and leg_bytes <= CHECKPOINT_BUDGET_B:
-        hop_trim_floor = CHECKPOINT_BUDGET_B
-    elif rendered_ck_bytes is not None and rendered_ck_bytes <= CHECKPOINT_BUDGET_B:
-        hop_trim_floor = HOP_LEG_FLOOR_B
-    else:
-        hop_trim_floor = HOP_LEG_FLOOR_B
-
-    initial_size: int | None = None
-    last_target: int | None = None
-
-    while _total_bytes() > HOP_RENDER_MAX_B:
-        checkpoint = fields.get("checkpoint_block") or ""
-        if not checkpoint.startswith(_CHECKPOINT_RENDER_PREFIX):
-            break
-        body = checkpoint[len(_CHECKPOINT_RENDER_PREFIX) :]
-        size = len(body.encode("utf-8"))
-        if size <= hop_trim_floor:
-            break
-        shrink = max(128, (size - hop_trim_floor) // 5)
-        target = max(hop_trim_floor, size - shrink)
-        if target >= size:
-            break
-        if target < size:
-            if initial_size is None:
-                initial_size = size
-            last_target = target
-            fields["checkpoint_block"] = _CHECKPOINT_RENDER_PREFIX + _truncate_utf8(
-                body, target
-            )
+        if rerendered:
+            fields["checkpoint_block"] = rerendered
             fields["first_act_call1_line"] = first_act_call1_line(
-                lane=fields["lane"],
-                checkpoint_block=fields["checkpoint_block"],
-            )
-
-    if last_target is not None and initial_size is not None:
-        uri = standing_handoff_uri(fields["lane"])
-        flag = (
-            f"[budget_exceeded checkpoint {initial_size}/{last_target} "
-            f"\u2014 read {uri}]"
-        )
-        flag_suffix = "\n" + flag
-        bytes_before_flag = _total_bytes()
-        fields["checkpoint_block"] = fields["checkpoint_block"] + flag_suffix
-        fields["first_act_call1_line"] = first_act_call1_line(
-            lane=fields["lane"],
-            checkpoint_block=fields["checkpoint_block"],
-        )
-        if bytes_before_flag <= HOP_RENDER_MAX_B:
-            while _total_bytes() > HOP_RENDER_MAX_B:
-                checkpoint = fields.get("checkpoint_block") or ""
-                if not checkpoint.startswith(_CHECKPOINT_RENDER_PREFIX):
-                    break
-                body = checkpoint[len(_CHECKPOINT_RENDER_PREFIX) :]
-                if body.endswith(flag_suffix):
-                    body = body[: -len(flag_suffix)]
-                size = len(body.encode("utf-8"))
-                if size <= hop_trim_floor:
-                    break
-                over = _total_bytes() - HOP_RENDER_MAX_B
-                trim = max(64, min(size, int(over) + 32))
-                target = max(hop_trim_floor, size - trim)
-                if target >= size:
-                    break
-                trimmed = _CHECKPOINT_RENDER_PREFIX + _truncate_utf8(body, target)
-                fields["checkpoint_block"] = trimmed + flag_suffix
-                fields["first_act_call1_line"] = first_act_call1_line(
-                    lane=fields["lane"],
-                    checkpoint_block=fields["checkpoint_block"],
-                )
-
-        checkpoint = fields.get("checkpoint_block") or ""
-        if checkpoint.startswith(_CHECKPOINT_RENDER_PREFIX) and checkpoint.endswith(
-            flag_suffix
-        ):
-            body = checkpoint[len(_CHECKPOINT_RENDER_PREFIX) : -len(flag_suffix)]
-            measured = len(body.encode("utf-8"))
-            flag = (
-                f"[budget_exceeded checkpoint {initial_size}/{measured} "
-                f"\u2014 read {uri}]"
-            )
-            flag_suffix = "\n" + flag
-            fields["checkpoint_block"] = (
-                _CHECKPOINT_RENDER_PREFIX + body + flag_suffix
-            )
-            fields["first_act_call1_line"] = first_act_call1_line(
-                lane=fields["lane"],
-                checkpoint_block=fields["checkpoint_block"],
+                lane=lane,
+                checkpoint_block=rerendered,
             )
 
 

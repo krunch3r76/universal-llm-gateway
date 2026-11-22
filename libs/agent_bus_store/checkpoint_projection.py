@@ -219,6 +219,14 @@ def authored_residue_char_count(body: str) -> int:
     return len(extract_authored_residue(body))
 
 
+def advisory_body_char_counts(body: str, *, subject: str | None) -> tuple[int, int]:
+    """Stored UTF-16 length vs authored residue count for CHECKPOINT advisories."""
+    stored = len(body)
+    if subject is not None and is_checkpoint_subject(subject):
+        return stored, authored_residue_char_count(body)
+    return stored, stored
+
+
 def _normalize_artifact_uri(raw: str) -> str:
     return raw.rstrip(_URI_TRAIL_JUNK)
 
@@ -432,7 +440,7 @@ def _assemble_body(
         raise CheckpointBodyTooLargeError(
             body_chars=len(body),
             limit_chars=MAX_TURN_BODY_CHARS,
-            authored_chars=len(residue) + len(resume_footer),
+            authored_chars=authored_residue_char_count(residue + resume_footer),
             derived_chars=len(derived),
             cited_row_count=len(rows),
             lane_row_count=len(all_lanes),
@@ -464,6 +472,7 @@ __all__ = [
     "EntityAssertionRow",
     "ProducerDispatchRow",
     "ProjectionResolvers",
+    "advisory_body_char_counts",
     "authored_residue_char_count",
     "extract_authored_residue",
     "extract_authored_resume_footer",

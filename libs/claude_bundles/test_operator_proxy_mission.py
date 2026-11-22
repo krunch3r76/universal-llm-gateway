@@ -93,7 +93,7 @@ def test_ensure_injects_briefing_without_slash_prefix() -> None:
     assert not out.startswith("/cdp-operator-proxy")
     assert out.startswith("# Hop on agent-bus:")
     _assert_section_order(out, _SECTION_ORDER)
-    assert "cdp-operator-proxy" in out
+    assert "cdp-operator-proxy" not in out.split("## Your first acts", 1)[0]
     assert "hypothesize-simulate" in out
     assert out.index("## Hop request (data)") < out.index("# Mission\nDo the thing.")
     assert out.index("# Mission\nDo the thing.") < out.index("## Hard refusals")
@@ -512,7 +512,7 @@ def test_hop_refusal_forward_only_cites_git_posture_section() -> None:
 def test_enforce_hop_render_max_sha_inflated_checkpoint_appends_flag_after_loop() -> (
     None
 ):
-    """Hop cap trim stops at 8 KB leg floor; budget_exceeded marker follows the loop."""
+    """Over-budget leg sheds to section links; no mid-body budget_exceeded checkpoint."""
     from hop_handoff.standing_handoff import standing_handoff_uri
 
     from claude_bundles.operator_proxy_standing_render import (
@@ -538,9 +538,7 @@ def test_enforce_hop_render_max_sha_inflated_checkpoint_appends_flag_after_loop(
         inline_house_rules=None,
         hop_inline=True,
     )
-    initial_size = len(pre_render[len(prefix) :].encode("utf-8"))
-    assert initial_size > CHECKPOINT_BUDGET_B
-    assert "handoff sha256" in pre_render
+    assert "[section_linked" in pre_render
     assert "[budget_exceeded checkpoint" not in pre_render
 
     out = ensure_operator_proxy_mission_prompt(
@@ -552,19 +550,12 @@ def test_enforce_hop_render_max_sha_inflated_checkpoint_appends_flag_after_loop(
         register_text="",
     )
     ck_section = out.split(prefix, 1)[1].split("## Live leg", 1)[0]
-    marker = "[budget_exceeded checkpoint "
-    assert ck_section.count(marker) == 1
-    before, rest = ck_section.split(marker, 1)
-    assert len(before.rstrip("\n").encode("utf-8")) == CHECKPOINT_BUDGET_B
+    assert "[budget_exceeded checkpoint" not in ck_section
+    assert "[section_linked" in ck_section
     uri = standing_handoff_uri(lane)
-    flag_line = marker + rest.split("\n", 1)[0]
-    assert (
-        flag_line
-        == f"[budget_exceeded checkpoint {initial_size}/{CHECKPOINT_BUDGET_B} "
-        f"\u2014 read {uri}]"
-    )
+    assert uri in ck_section
     acts = out.split("## Your first acts", 1)[1].split("## Data", 1)[0]
-    assert f"`{lane}-standing-handoff.md` whole" in acts
+    assert "linked section" in acts
 
 
 def test_enforce_hop_render_max_last_leg_overage_denominator_ge_floor() -> None:
@@ -598,14 +589,8 @@ def test_enforce_hop_render_max_last_leg_overage_denominator_ge_floor() -> None:
     hop_bytes = len(out.encode("utf-8"))
     ck_bytes = len(ck.encode("utf-8"))
     assert hop_bytes - ck_bytes > HOP_RENDER_MAX_B - HOP_LEG_FLOOR_B
-    assert "[budget_exceeded LAST LEG " in ck
-    assert "[budget_exceeded NOTES" not in ck
-    marker = "[budget_exceeded checkpoint "
-    assert marker in ck
-    flag = marker + ck.split(marker, 1)[1].split("\n", 1)[0]
-    assert "/0 " not in flag
-    denom = int(flag.split("/")[1].split()[0])
-    assert denom >= HOP_LEG_FLOOR_B
+    assert "[section_linked LAST LEG " in ck
+    assert "[budget_exceeded checkpoint" not in ck
 
 
 def test_floor_wins_over_cap_infeasible() -> None:
@@ -645,15 +630,8 @@ def test_floor_wins_over_cap_infeasible() -> None:
     ck = out.split(prefix, 1)[1].split("## Live leg", 1)[0]
     ck_bytes = len(ck.encode("utf-8"))
     assert hop_bytes - ck_bytes > HOP_RENDER_MAX_B - HOP_LEG_FLOOR_B
-    marker = "[budget_exceeded checkpoint "
-    assert marker in ck
-    before, rest = ck.rsplit(marker, 1)
-    body_bytes = len(before.rstrip("\n").encode("utf-8"))
-    assert body_bytes == HOP_LEG_FLOOR_B
-    flag_line = marker + rest.split("\n", 1)[0]
-    denom = int(flag_line.split("/")[1].split()[0])
-    assert denom == body_bytes == HOP_LEG_FLOOR_B
-    assert denom != 0
+    assert "[budget_exceeded checkpoint" not in ck
+    assert "[section_linked" in ck
 
 
 def test_hop_le_12000_with_floor() -> None:
@@ -684,23 +662,9 @@ def test_hop_le_12000_with_floor() -> None:
         register_text="",
     )
     ck_section = out.split(prefix, 1)[1].split("## Live leg", 1)[0]
-    marker = "[budget_exceeded checkpoint "
-    assert ck_section.count(marker) == 1
-    before, rest = ck_section.split(marker, 1)
-    assert len(before.rstrip("\n").encode("utf-8")) == CHECKPOINT_BUDGET_B
-
-    flag_line = "\n" + marker + rest.split("\n", 1)[0]
-    hop_bytes = len(out.encode("utf-8"))
-    ck_bytes = len(ck_section.encode("utf-8"))
-    non_leg_bytes = hop_bytes - ck_bytes
-    flag_bytes = len(flag_line.encode("utf-8"))
-    assert non_leg_bytes + flag_bytes > HOP_RENDER_MAX_B - CHECKPOINT_BUDGET_B
-
-    assert hop_bytes > HOP_RENDER_MAX_B
-
-    denom = int((marker + rest.split("\n", 1)[0]).split("/")[1].split()[0])
-    assert denom == CHECKPOINT_BUDGET_B
-    assert denom != 0
+    assert "[budget_exceeded checkpoint" not in ck_section
+    assert len(ck_section.encode("utf-8")) <= CHECKPOINT_BUDGET_B + 256
+    assert "[section_linked" in ck_section
 
 
 def test_floor_denominator_ge_2048_when_leg_over_cap() -> None:
@@ -716,11 +680,8 @@ def test_floor_denominator_ge_2048_when_leg_over_cap() -> None:
         journal_text="",
         register_text="",
     )
-    marker = "[budget_exceeded checkpoint "
-    assert marker in out
-    flag = marker + out.split(marker, 1)[1].split("\n", 1)[0]
-    denom = int(flag.split("/")[1].split()[0])
-    assert denom >= HOP_LEG_FLOOR_B
+    assert "[budget_exceeded checkpoint" not in out
+    assert "[section_linked" in out
 
 
 def test_flag_label_equals_applied_target() -> None:
@@ -735,13 +696,8 @@ def test_flag_label_equals_applied_target() -> None:
         journal_text="",
         register_text="",
     )
-    marker = "[budget_exceeded checkpoint "
     ck = out.split(prefix, 1)[1].split("## Live leg", 1)[0]
-    assert marker in ck
-    before, rest = ck.rsplit(marker, 1)
-    flag_line = marker + rest.split("\n", 1)[0]
-    denom = int(flag_line.split("/")[1].split()[0])
-    assert denom == len(before.rstrip("\n").encode("utf-8"))
+    assert "[budget_exceeded checkpoint" not in ck
 
 
 def test_denominator_never_zero() -> None:
@@ -755,10 +711,7 @@ def test_denominator_never_zero() -> None:
         journal_text="",
         register_text="",
     )
-    marker = "[budget_exceeded checkpoint "
-    flag = marker + out.split(marker, 1)[1].split("\n", 1)[0]
-    denom = int(flag.split("/")[1].split()[0])
-    assert denom > 0
+    assert "[budget_exceeded checkpoint" not in out
 
 
 def test_rendered_prompt_is_under_the_old_briefing() -> None:
@@ -976,6 +929,22 @@ def test_housekeeping_preamble_has_budgets_not_mission_act_seven() -> None:
     assert "## Housekeeping acts" in out
     assert "Act on the running items" not in out
     assert out.index("## Budgets") < out.index("## Housekeeping acts")
+
+
+def test_housekeeping_hop_act6_caller_agent_resolves() -> None:
+    """Breaks when housekeeping resume hop omits a deliverable caller_agent (AC2)."""
+    from tools.agent_bus.hop_cdp_caller import resolve_hop_cdp_caller_agent
+
+    act_line = (
+        '6. agent_bus(hop, thread=12286, from_agent=web-anthropic, caller_agent=cursor, '
+        'desired_model=cdp/fable-5.1, desired_effort=medium, hop_kind=mission, '
+        'reason="housekeeping done; resume").'
+    )
+    marker = "caller_agent="
+    start = act_line.index(marker) + len(marker)
+    end = act_line.index(",", start)
+    caller_token = act_line[start:end]
+    assert resolve_hop_cdp_caller_agent(caller_token) == "cursor"
 
 
 def test_housekeeping_hop_prompt_unchanged(
@@ -1452,7 +1421,7 @@ def test_ac6_checkpoint_raise_replaces_only_that_block(
 
 _ARIVAL_MARKERS = (
     "owed-sentinel",
-    "cdp-operator-proxy",
+    "lean-dispatch",
     "runbook:houseless-setup",
     "§ 3",
     "§ 8",
@@ -1531,12 +1500,11 @@ def test_default_hop_keeps_3000_bytes_of_an_over_budget_leg(
     uri = f"cortex://notes/system/threads/{lane}-standing-handoff.md"
     for text in _arrival_texts(root, lane, body):
         part = _hop_part(text)
-        runs = [len(s) for s in re.findall(r"n+", part)]
-        assert max(runs) >= 3000
-        assert any(
-            ln.startswith("[budget_exceeded checkpoint ") and uri in ln
-            for ln in part.splitlines()
-        )
+        assert "handoff sha256" in part
+        assert "[budget_exceeded checkpoint" not in part
+        assert "[section_linked" in part
+        assert uri in part
+        assert "n" * 100 not in part
 
 
 def test_archived_maestro_paste_is_not_passed_through(
