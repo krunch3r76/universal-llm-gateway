@@ -321,6 +321,94 @@ def verify_persisted(dest: Path, expected_sha256: str) -> None:
         )
 
 
+class SourceDigestMismatchError(Exception):
+    """Streaming digest of *src* did not match the pinned pre-copy digest."""
+
+    reason = "source_sha256.mismatch"
+
+    def __init__(
+        self,
+        *,
+        expected_sha256: str,
+        actual_sha256: str,
+    ) -> None:
+        self.expected_sha256 = expected_sha256
+        self.actual_sha256 = actual_sha256
+        super().__init__(
+            f"Source digest mismatch: expected {expected_sha256!r}, "
+            f"got {actual_sha256!r}"
+        )
+
+
+_STREAM_CHUNK = 65536
+
+
+def durable_copy_file(
+    src: Path,
+    dest: Path,
+    *,
+    expected_source_digest: str | None = None,
+    expected_pre_image: str | None = None,
+    already_locked: bool = False,
+) -> tuple[str, int]:
+    """Stream *src* into *dest* via temp+fsync+replace; return (digest, nbytes).
+
+    Takes ``path_flock`` unless *already_locked*. Any failure unlinks the temp;
+    *dest* is not opened for write until CAS checks pass and replace succeeds.
+    """
+    if not src.is_file():
+        raise FileNotFoundError(f"Source is not a file: {src}")
+    dest_path = dest / src.name if dest.exists() and dest.is_dir() else dest
+
+    def _copy_unlocked() -> tuple[str, int]:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256()
+        nbytes = 0
+        temp_path = temp_path_for(dest_path)
+        try:
+            with temp_path.open("wb") as out_handle:
+                with src.open("rb") as in_handle:
+                    while True:
+                        chunk = in_handle.read(_STREAM_CHUNK)
+                        if not chunk:
+                            break
+                        out_handle.write(chunk)
+                        digest.update(chunk)
+                        nbytes += len(chunk)
+                out_handle.flush()
+                os.fsync(out_handle.fileno())
+            written_digest = digest.hexdigest()
+            if expected_source_digest is not None and not _sha256_hex_equal(
+                written_digest, expected_source_digest
+            ):
+                temp_path.unlink(missing_ok=True)
+                raise SourceDigestMismatchError(
+                    expected_sha256=expected_source_digest,
+                    actual_sha256=written_digest,
+                )
+            if expected_pre_image is not None:
+                actual_pre = _sha256_hex_of_file(dest_path) if dest_path.is_file() else ""
+                if actual_pre != _normalize_sha256_hex(expected_pre_image):
+                    temp_path.unlink(missing_ok=True)
+                    raise PreImageMismatchError(
+                        dest_path,
+                        expected_sha256=expected_pre_image,
+                        actual_sha256=actual_pre,
+                    )
+            finalize_atomic_replace(temp_path, dest_path)
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+            raise
+        verify_persisted(dest_path, written_digest)
+        return written_digest, nbytes
+
+    if already_locked:
+        return _copy_unlocked()
+    with path_flock(dest_path):
+        return _copy_unlocked()
+
+
 def write_verify_error_dict(exc: WriteVerifyError) -> dict[str, Any]:
     """Structured tool error payload for verify-after-write failure."""
     return {

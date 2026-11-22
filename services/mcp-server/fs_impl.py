@@ -13,6 +13,7 @@ from fs_roots import (
 )
 from project_ops import workspaces_impl_registry
 from tool_error_enricher import fs_missing_sandbox_hint
+
 from tools._durable_write import WriteVerifyError, write_verify_error_dict
 from tools.filesystem._batch_ingress import (
     apply_lane_ingress,
@@ -26,6 +27,7 @@ from tools.filesystem._fs_dispatch import (
     dispatch_workspaces_op,
     validate_op_params,
 )
+from tools.filesystem._ops_paths import CopyRefusalError
 from tools.filesystem._paths import FS_WORKFLOW_HINTS
 
 if TYPE_CHECKING:
@@ -189,21 +191,6 @@ def fs_impl(
         copy_dest_sandbox = dest_ingress.sandbox
         target = dest_ingress.rel_path
 
-    # thread= roots workspaces ops in the lane worktree; cross-sandbox copy/move
-    # still reads the source from the shared checkout — refuse before any I/O.
-    if (
-        lane_thread
-        and op in {"copy", "move"}
-        and copy_dest_sandbox
-        and copy_dest_sandbox != effective_sandbox
-    ):
-        return {
-            "error": (
-                "thread= is not supported for cross-sandbox copy/move; "
-                "source would be read from the shared checkout"
-            )
-        }
-
     refusal = permission_refusal(
         surface,
         effective_sandbox,
@@ -212,6 +199,26 @@ def fs_impl(
     )
     if refusal is not None:
         return refusal
+
+    if (
+        lane_thread
+        and op in {"copy", "move"}
+        and copy_dest_sandbox
+        and copy_dest_sandbox != effective_sandbox
+    ):
+        if op == "move":
+            return {
+                "error": (
+                    "thread= is not supported for cross-sandbox move; "
+                    "would delete lane source"
+                )
+            }
+        if effective_sandbox == "cortex" and copy_dest_sandbox == "workspaces":
+            return {
+                "error": (
+                    "thread= is not supported for cortex→workspaces cross-sandbox copy"
+                )
+            }
 
     contract_error = validate_op_params(
         op,
@@ -316,18 +323,64 @@ def fs_impl(
             return {"error": "'path' is required for copy"}
         if not target:
             return {"error": "'target' is required for copy"}
+        bound_expected_read: str | None = None
+        if expected_read_sha256:
+            from tools.filesystem._expected_read_sha256_boundary import (
+                coerce_expected_read_sha256_at_fs_boundary,
+            )
+
+            bound_expected_read, pin_err = coerce_expected_read_sha256_at_fs_boundary(
+                op="copy",
+                expected=expected_read_sha256,
+                path=effective_path,
+                sandbox=effective_sandbox,
+            )
+            if pin_err is not None:
+                return pin_err
+        lane_root: Path | None = None
+        lane_fields: dict[str, str] | None = None
+        copy_source = effective_path
+        if lane_thread and effective_sandbox == "workspaces":
+            from lane_branch_root import (
+                LaneBranchResolutionError,
+                branch_for_thread,
+                root_for_thread,
+            )
+
+            try:
+                branch = branch_for_thread(lane_thread)
+                lane_root = root_for_thread(lane_thread)
+            except LaneBranchResolutionError as exc:
+                return {"error": str(exc)}
+            lane_fields = _lane_provenance_fields(
+                thread=lane_thread, branch=branch, root=lane_root
+            )
+            copy_source, lane_ingress_meta = apply_lane_ingress(
+                path=effective_path,
+                sandbox=effective_sandbox,
+                for_write=False,
+                lane_root=lane_root,
+            )
+            ingress_meta.update(lane_ingress_meta)
         try:
             result = copy_between_sandboxes_impl(
                 effective_sandbox,
-                effective_path,
+                copy_source,
                 copy_dest_sandbox,
                 target,
                 surface=surface,
+                source_root=lane_root,
+                expected_read_sha256=bound_expected_read,
+                if_absent=if_absent,
+                expected_sha256=expected_sha256 or None,
+                lane_fields=lane_fields,
             )
         except WriteVerifyError as exc:
             return write_verify_error_dict(exc)
         except (ValueError, FileNotFoundError, OSError) as exc:
             return {"error": str(exc)}
+        if "error" in result:
+            return result
         result["_next"] = FS_WORKFLOW_HINTS["copy"]
         result.update(ingress_meta)
         return result
@@ -428,5 +481,7 @@ def fs_impl(
         return result
     except WriteVerifyError as exc:
         return write_verify_error_dict(exc)
+    except CopyRefusalError as exc:
+        return exc.payload
     except (ValueError, FileNotFoundError) as exc:
         return {"error": str(exc)}

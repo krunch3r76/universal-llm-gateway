@@ -106,10 +106,11 @@ OP_DOC: dict[str, tuple[str, str]] = {
     ),
     "move": ("(path, target)", "rename/relocate file"),
     "copy": (
-        "(path, target, target_sandbox?)",
+        "(path, target, target_sandbox?, expected_read_sha256?, if_absent?, expected_sha256?)",
         "copy file; dest Share URI infers sandbox even when\n"
-        "                           target_sandbox is omitted; success includes\n"
-        "                           dest read_sha256 after persist verify",
+        "                           target_sandbox is omitted; with thread= and\n"
+        "                           workspaces→cortex reads the lane worktree;\n"
+        "                           success includes read_sha256 after persist verify",
     ),
     "write_binary": ("(path, content)", "write base64-encoded binary"),
     "append_binary": ("(path, content)", "append base64 chunk to binary file"),
@@ -229,7 +230,7 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "recent_commits": frozenset(),
     "search": frozenset({"mode", "include_worktrees"}),
     "move": frozenset({"target"}),
-    "copy": frozenset({"target"}),
+    "copy": frozenset({"target", "expected_read_sha256"}),
     "delete": frozenset(),
     "md_list": frozenset({"size_only", "offset"}),
     "md_read": frozenset(

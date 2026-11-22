@@ -196,7 +196,14 @@ def dispatch_files_op(
             raise ValueError("'path' is required for copy")
         if not target:
             raise ValueError("'target' is required for copy")
-        result = copy_file_impl(path, target)
+        result = copy_file_impl(
+            path,
+            target,
+            if_absent=if_absent,
+            expected_sha256=expected_sha256 or None,
+        )
+        if "error" in result:
+            return result
         result["_next"] = FS_WORKFLOW_HINTS["copy"]
         if path.startswith("dropbox/"):
             result["_warning"] = DROPBOX_COPY_WARNING

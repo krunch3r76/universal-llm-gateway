@@ -920,6 +920,8 @@ binary ingest, or image/model transfer between tools.
 | `insert_at_line` | path, content, line | Insert at line number |
 | `list` | path? | List directory (defaults to sandbox root) |
 | `delete` | path | Delete file |
+| `move` | path, target | Rename or relocate within a sandbox |
+| `copy` | path, target, target_sandbox?, thread? (workspaces lane source), expected_read_sha256?, if_absent?, expected_sha256? | Copy file across sandboxes; `thread=` with workspaces→cortex reads the registered lane worktree; success includes `read_sha256` |
 | `search` | path (file or dir), content (regex) | Regex search (cortex + workspaces) |
 
 #### `fs(op="search")` — regex search (both sandboxes)

@@ -1,4 +1,4 @@
-"""Cross-sandbox copy/move with thread= must fail closed (assertion:37974 C4)."""
+"""Cross-sandbox copy/move thread= rules retained from assertion:37974 C4."""
 
 from __future__ import annotations
 
@@ -9,17 +9,17 @@ from unittest.mock import patch
 import pytest
 from fs_impl import fs_impl
 from project_ops import workspaces_impl_registry
+
+from tools import _file_helpers
+from tools._hashing import sha256_hex_of_file
 from tools.filesystem import _cross_sandbox as cross_sandbox
 from tools.filesystem import _ops_paths as ops_paths
 from tools.filesystem import _ops_text as ops_text
 from tools.filesystem import _paths as paths_mod
 from tools.filesystem._files_dispatcher import dispatch_files_op
-
-from tools import _file_helpers
+from tools.filesystem._ops_paths import CopyRefusalError
 
 pytestmark = pytest.mark.offline
-
-_THREAD_REFUSAL = "thread= is not supported"
 
 
 def _fs_kwargs(**overrides: Any) -> dict[str, Any]:
@@ -93,83 +93,83 @@ def copy_roots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, P
     return cortex_root, workspaces_root
 
 
-def test_copy_cortex_to_workspaces_refuses_with_thread(
+def test_same_sandbox_cortex_copy_shared_dest_without_cas_refuses(
     copy_roots: tuple[Path, Path],
 ) -> None:
-    cortex_root, workspaces_root = copy_roots
-    src_rel = "notes/system/threads/a37974-c4/src.md"
+    """Same-sandbox cortex copy onto existing shared dest → structured refuse."""
+    cortex_root, _workspaces_root = copy_roots
+    src_rel = "tmp/same-sb-src.md"
+    dest_rel = "notes/system/specs/same-sb-shared-dest.md"
     src = cortex_root / src_rel
+    dest = cortex_root / dest_rel
     src.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text("must-not-copy\n", encoding="utf-8")
-    dest_rel = "docs/a37974-c4-dest.md"
-    dest_uri = f"workspaces://universal-llm-gateway/{dest_rel}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("new-body\n", encoding="utf-8")
+    prior = "prior-shared\n"
+    dest.write_text(prior, encoding="utf-8")
+    prior_sha = sha256_hex_of_file(dest)
 
     result = fs_impl(
         **_fs_kwargs(
-            path=f"cortex://{src_rel}",
-            target=dest_uri,
-            target_sandbox="",
-            thread="12345",
+            sandbox="cortex",
+            path=src_rel,
+            target=dest_rel,
         )
     )
 
-    assert "error" in result, result
-    assert _THREAD_REFUSAL in result["error"]
-    assert not (workspaces_root / "universal-llm-gateway" / dest_rel).exists()
+    assert result.get("reason") == "expected_sha256.required", result
+    assert "error" in result
+    assert dest.read_text(encoding="utf-8") == prior
+    assert sha256_hex_of_file(dest) == prior_sha
 
 
-def test_copy_workspaces_to_cortex_refuses_with_thread(
+def test_same_sandbox_cortex_copy_shared_dest_with_matching_cas_succeeds(
     copy_roots: tuple[Path, Path],
 ) -> None:
-    cortex_root, workspaces_root = copy_roots
-    src_rel = "docs/a37974-c4-src.md"
-    src = workspaces_root / "universal-llm-gateway" / src_rel
+    """Same-sandbox cortex copy with matching expected_sha256 overwrites dest."""
+    cortex_root, _workspaces_root = copy_roots
+    src_rel = "tmp/same-sb-cas-src.md"
+    dest_rel = "notes/system/specs/same-sb-cas-dest.md"
+    src = cortex_root / src_rel
+    dest = cortex_root / dest_rel
     src.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text("must-not-copy\n", encoding="utf-8")
-    dest_rel = "notes/system/threads/a37974-c4/dest.json"
-    dest_uri = f"cortex://{dest_rel}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("replaced-body\n", encoding="utf-8")
+    dest.write_text("incumbent\n", encoding="utf-8")
+    expected = sha256_hex_of_file(dest)
 
     result = fs_impl(
         **_fs_kwargs(
-            path=f"workspaces://universal-llm-gateway/{src_rel}",
-            target=dest_uri,
-            target_sandbox="",
-            thread="12345",
+            sandbox="cortex",
+            path=src_rel,
+            target=dest_rel,
+            expected_sha256=expected,
         )
     )
 
-    assert "error" in result, result
-    assert _THREAD_REFUSAL in result["error"]
-    assert not (cortex_root / dest_rel).exists()
+    assert result.get("status") == "copied", result
+    assert dest.read_text(encoding="utf-8") == "replaced-body\n"
+    assert sha256_hex_of_file(dest) == sha256_hex_of_file(src)
 
 
-def test_move_workspaces_to_cortex_refuses_with_thread_and_preserves_source(
+def test_same_sandbox_copy_refusal_never_raises_copy_refusal_error(
     copy_roots: tuple[Path, Path],
 ) -> None:
-    cortex_root, workspaces_root = copy_roots
-    src_rel = "docs/a37974-c4-move-src.md"
-    src = workspaces_root / "universal-llm-gateway" / src_rel
+    """CopyRefusalError must not escape the files dispatcher to callers."""
+    cortex_root, _workspaces_root = copy_roots
+    src_rel = "tmp/same-sb-escape-src.md"
+    dest_rel = "notes/system/specs/same-sb-escape-dest.md"
+    src = cortex_root / src_rel
+    dest = cortex_root / dest_rel
     src.parent.mkdir(parents=True, exist_ok=True)
-    payload = "must-not-move\n"
-    src.write_text(payload, encoding="utf-8")
-    dest_rel = "notes/system/threads/a37974-c4/move-dest.json"
-    dest_uri = f"cortex://{dest_rel}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("attempt\n", encoding="utf-8")
+    dest.write_text("held\n", encoding="utf-8")
 
-    result = fs_impl(
-        **_fs_kwargs(
-            op="move",
-            path=f"workspaces://universal-llm-gateway/{src_rel}",
-            target=dest_uri,
-            target_sandbox="",
-            thread="12345",
-        )
-    )
+    result = dispatch_files_op(op="copy", path=src_rel, target=dest_rel)
 
     assert "error" in result, result
-    assert _THREAD_REFUSAL in result["error"]
-    assert src.is_file()
-    assert src.read_text(encoding="utf-8") == payload
-    assert not (cortex_root / dest_rel).exists()
+    assert not isinstance(result, CopyRefusalError)
 
 
 def test_copy_cortex_to_cortex_with_thread_not_refused_by_lane_rule(

@@ -512,7 +512,7 @@ def register_project_tools(mcp: FastMCP) -> None:
         if not src.is_file():
             return {"error": f"Path is not a file: {path!r}"}
 
-        dest, digest = copy_file_verified(src, dst)
+        dest, digest, _nbytes, _replaced = copy_file_verified(src, dst)
         rel_src = str(src.relative_to(_PROJECT_ROOT.resolve()))
         rel_dst = str(dest.relative_to(_PROJECT_ROOT.resolve()))
         logger.info("copy_project_file: %s -> %s", rel_src, rel_dst)

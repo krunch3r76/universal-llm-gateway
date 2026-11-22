@@ -8,14 +8,14 @@ from typing import Any
 import pytest
 from fs_impl import fs_impl
 from implement_admission.scheme_resolve import sandbox_scheme_conflict_message
+
+from tools import _file_helpers
 from tools._hashing import sha256_hex_of_file
 from tools.filesystem import _cross_sandbox as cross_sandbox
 from tools.filesystem import _ops_paths as ops_paths
 from tools.filesystem import _ops_text as ops_text
 from tools.filesystem import _paths as paths_mod
 from tools.filesystem._files_dispatcher import dispatch_files_op
-
-from tools import _file_helpers
 
 pytestmark = pytest.mark.offline
 
@@ -207,21 +207,25 @@ def test_copy_explicit_target_sandbox_conflicting_with_scheme_refuses(
     assert not (workspaces_root / dest_rel).exists()
 
 
-def test_copy_refuses_when_dest_vanishes_after_shutil(
+def test_copy_refuses_when_dest_vanishes_after_replace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from tools._durable_write import WriteVerifyError, verify_persisted
+
     src = tmp_path / "src.txt"
     dst = tmp_path / "dst.txt"
     src.write_text("payload", encoding="utf-8")
-    real_copy = ops_paths.shutil.copy2
+    real_verify = verify_persisted
 
-    def _copy_then_unlink(source: str, destination: str) -> str:
-        real_copy(source, destination)
-        Path(destination).unlink()
-        return destination
+    def _verify_then_unlink(path: Path, expected: str) -> None:
+        real_verify(path, expected)
+        path.unlink(missing_ok=True)
+        raise WriteVerifyError(
+            path, expected_sha256=expected, actual_sha256="0" * 64
+        )
 
-    monkeypatch.setattr(ops_paths.shutil, "copy2", _copy_then_unlink)
-    with pytest.raises(FileNotFoundError, match="not a file after copy"):
+    monkeypatch.setattr("durable_io.atomic.verify_persisted", _verify_then_unlink)
+    with pytest.raises(WriteVerifyError):
         ops_paths.copy_file_verified(src, dst)
     assert not dst.exists()
 
@@ -239,18 +243,20 @@ def test_fs_impl_copy_withholds_copied_when_verify_fails(
     src.parent.mkdir(parents=True)
     src.write_text("source-bytes\n", encoding="utf-8")
     dest_uri = "cortex://notes/system/threads/a37974-copy/source/verify.json"
-    real_copy = ops_paths.shutil.copy2
+    from tools._durable_write import WriteVerifyError
 
-    def _tamper(source: str, destination: str) -> str:
-        real_copy(source, destination)
-        dest = Path(destination)
+    def _tamper_verify(path: Path, expected: str) -> None:
         if mode == "vanish":
-            dest.unlink()
-        else:
-            dest.write_text("not-the-source\n", encoding="utf-8")
-        return destination
+            path.unlink(missing_ok=True)
+            raise WriteVerifyError(
+                path, expected_sha256=expected, actual_sha256="0" * 64
+            )
+        path.write_text("not-the-source\n", encoding="utf-8")
+        raise WriteVerifyError(
+            path, expected_sha256=expected, actual_sha256=sha256_hex_of_file(path)
+        )
 
-    monkeypatch.setattr(ops_paths.shutil, "copy2", _tamper)
+    monkeypatch.setattr("durable_io.atomic.verify_persisted", _tamper_verify)
     result = fs_impl(
         **_fs_kwargs(
             path=f"workspaces://universal-llm-gateway/{src_rel}",
@@ -260,6 +266,10 @@ def test_fs_impl_copy_withholds_copied_when_verify_fails(
     )
     assert "error" in result, result
     assert "status" not in result
+    dest_rel = "notes/system/threads/a37974-copy/source/verify.json"
+    dest_path = _cortex_root / dest_rel
     if mode == "mismatch":
-        dest_rel = "notes/system/threads/a37974-copy/source/verify.json"
-        assert not (_cortex_root / dest_rel).exists()
+        assert dest_path.is_file()
+        assert dest_path.read_text(encoding="utf-8") == "not-the-source\n"
+    else:
+        assert not dest_path.exists()
