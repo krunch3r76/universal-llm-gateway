@@ -139,7 +139,7 @@ def test_grok_host_preflight_worktree_isolation_contract() -> None:
         "lane A",
         "refuse",
         "team_dispatch",
-        "outside Git",
+        "outside any checkout",
         "lookup roots",
         "not default write",
         "cursor-sdk/lane-",
