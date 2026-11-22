@@ -140,6 +140,8 @@
 "mcp.agentbus.body.file.resolved" = "body_file read; manifest built for post/reply"
 "mcp.agentbus.body.rejected" = "Inline body/append exceeded MCP inline limit"
 "mcp.agentbus.dispatch.admit.failed" = "POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal"
+"mcp.agentbus.hop.posted" = "Continuity hop CDP generate commissioned on the lane (`record` from agent_bus hop verb)."
+"mcp.agentbus.hop.rejected" = "Hop validation or continuity commission refused (`model` when model ban applies)."
 "mcp.agentbus.post.failed" = "Atomic thread+turn creation failed"
 "mcp.agentbus.thread.abandoned" = "Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired`"
 "mcp.agentbus.thread.closed" = "Atomic close completed (marks all turns read + status=closed). `via` values: `\"reply\"` (reply-with-close), `\"ephemeral_delivery\"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `\"watchdog_reaper\"` (watchdog-initiated close); field may be absent for plain manual closes"
