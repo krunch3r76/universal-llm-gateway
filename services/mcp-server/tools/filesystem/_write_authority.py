@@ -206,6 +206,7 @@ def evaluate_write_authority(
     if_absent: bool,
     artifact_class: str | None = None,
     author: str | None = None,
+    attempted_sha256: str | None = None,
 ) -> dict[str, Any] | None:
     """Return a rejection payload when class rules block the write; else None."""
     klass = classify_artifact_path(path, artifact_class=artifact_class)
@@ -242,7 +243,11 @@ def evaluate_write_authority(
             ),
             "existing_author": author,
         }
-    attempted_sha = sha256_hex_of_bytes(content.encode("utf-8"))
+    attempted_sha = (
+        normalize_sha256_hex(attempted_sha256)
+        if attempted_sha256
+        else sha256_hex_of_bytes(content.encode("utf-8"))
+    )
     existing_hex = (
         None if actual_sha256 is None else normalize_sha256_hex(actual_sha256)
     )

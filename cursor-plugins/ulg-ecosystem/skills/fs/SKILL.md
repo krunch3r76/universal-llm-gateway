@@ -35,6 +35,7 @@ Optional `thread=<agent-bus thread id>` with `sandbox="workspaces"` roots the ca
 | Association present + worktree resolvable | Ops use that worktree; success may include `lane_thread` / `lane_branch` / `lane_worktree_root` |
 | No association / unresolvable | **Refuse** (fail-closed) — never silent fallback to shared `master` |
 | `thread` omitted | Prior behavior — shared workspaces root for the surface |
+| `fs(op=copy)` workspaces→cortex with `thread=` | Lane worktree bytes copy into cortex via durable leaf (not `move`; cross-sandbox `move` with `thread=` still refuses) |
 
 Branch → directory is resolved via `git worktree list --porcelain` matched on branch name (basename only). Do **not** invent a path from the branch string.
 

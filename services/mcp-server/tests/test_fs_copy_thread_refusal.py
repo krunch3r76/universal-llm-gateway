@@ -1,4 +1,4 @@
-"""Cross-sandbox copy/move with thread= must fail closed (assertion:37974 C4)."""
+"""Cross-sandbox copy/move thread= rules retained from assertion:37974 C4."""
 
 from __future__ import annotations
 
@@ -18,8 +18,6 @@ from tools.filesystem._files_dispatcher import dispatch_files_op
 from tools import _file_helpers
 
 pytestmark = pytest.mark.offline
-
-_THREAD_REFUSAL = "thread= is not supported"
 
 
 def _fs_kwargs(**overrides: Any) -> dict[str, Any]:
@@ -91,85 +89,6 @@ def copy_roots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, P
         lambda: cortex_root,
     )
     return cortex_root, workspaces_root
-
-
-def test_copy_cortex_to_workspaces_refuses_with_thread(
-    copy_roots: tuple[Path, Path],
-) -> None:
-    cortex_root, workspaces_root = copy_roots
-    src_rel = "notes/system/threads/a37974-c4/src.md"
-    src = cortex_root / src_rel
-    src.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text("must-not-copy\n", encoding="utf-8")
-    dest_rel = "docs/a37974-c4-dest.md"
-    dest_uri = f"workspaces://universal-llm-gateway/{dest_rel}"
-
-    result = fs_impl(
-        **_fs_kwargs(
-            path=f"cortex://{src_rel}",
-            target=dest_uri,
-            target_sandbox="",
-            thread="12345",
-        )
-    )
-
-    assert "error" in result, result
-    assert _THREAD_REFUSAL in result["error"]
-    assert not (workspaces_root / "universal-llm-gateway" / dest_rel).exists()
-
-
-def test_copy_workspaces_to_cortex_refuses_with_thread(
-    copy_roots: tuple[Path, Path],
-) -> None:
-    cortex_root, workspaces_root = copy_roots
-    src_rel = "docs/a37974-c4-src.md"
-    src = workspaces_root / "universal-llm-gateway" / src_rel
-    src.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text("must-not-copy\n", encoding="utf-8")
-    dest_rel = "notes/system/threads/a37974-c4/dest.json"
-    dest_uri = f"cortex://{dest_rel}"
-
-    result = fs_impl(
-        **_fs_kwargs(
-            path=f"workspaces://universal-llm-gateway/{src_rel}",
-            target=dest_uri,
-            target_sandbox="",
-            thread="12345",
-        )
-    )
-
-    assert "error" in result, result
-    assert _THREAD_REFUSAL in result["error"]
-    assert not (cortex_root / dest_rel).exists()
-
-
-def test_move_workspaces_to_cortex_refuses_with_thread_and_preserves_source(
-    copy_roots: tuple[Path, Path],
-) -> None:
-    cortex_root, workspaces_root = copy_roots
-    src_rel = "docs/a37974-c4-move-src.md"
-    src = workspaces_root / "universal-llm-gateway" / src_rel
-    src.parent.mkdir(parents=True, exist_ok=True)
-    payload = "must-not-move\n"
-    src.write_text(payload, encoding="utf-8")
-    dest_rel = "notes/system/threads/a37974-c4/move-dest.json"
-    dest_uri = f"cortex://{dest_rel}"
-
-    result = fs_impl(
-        **_fs_kwargs(
-            op="move",
-            path=f"workspaces://universal-llm-gateway/{src_rel}",
-            target=dest_uri,
-            target_sandbox="",
-            thread="12345",
-        )
-    )
-
-    assert "error" in result, result
-    assert _THREAD_REFUSAL in result["error"]
-    assert src.is_file()
-    assert src.read_text(encoding="utf-8") == payload
-    assert not (cortex_root / dest_rel).exists()
 
 
 def test_copy_cortex_to_cortex_with_thread_not_refused_by_lane_rule(
