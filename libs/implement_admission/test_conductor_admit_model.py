@@ -22,7 +22,8 @@ def test_conductor_omit_model_uses_pipeline_defaults() -> None:
         snapshot=snap,
         seat_role="driver",
     )
-    assert model == "cursor/grok-4.7"
+    # Pipeline model_defaults.conductor.driver (K97): composer Standard.
+    assert model == "cursor/composer-2.5"
     assert warnings == []
     assert knobs == {"fast": "false"}
 

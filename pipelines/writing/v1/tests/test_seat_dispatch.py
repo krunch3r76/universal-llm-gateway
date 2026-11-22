@@ -320,7 +320,7 @@ def test_seat_dispatch_cursor_pool1_body() -> None:
     assert body["work_key"] == "packet:writer-specialist-v1:run-2:writer"
     assert body["model"] == "cursor/grok-4.7"
     assert body["job"] == "freeform"
-    assert body["model_knobs"] == {"fast": "true"}
+    assert "model_knobs" not in body
     assert "DOCUNIQUE" not in str(payload)
     _assert_team_dispatch_body(body)
 
@@ -357,7 +357,7 @@ def test_seat_dispatch_cursor_pool1_body_validates_against_team_dispatch_model()
     )
     body = client.posts[0]
     assert body["job"] == "freeform"
-    assert body["model_knobs"] == {"fast": "true"}
+    assert "model_knobs" not in body
     assert body["seat"] == "cursor-sdk"
     assert body["lane"] == "B"
     assert body["read_only"] is True

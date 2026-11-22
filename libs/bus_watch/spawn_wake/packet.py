@@ -67,10 +67,10 @@ def successor_model_fields(policy: dict[str, Any]) -> dict[str, Any]:
         fields["model_knobs"] = {str(k): str(v) for k, v in policy_knobs.items()}
         return fields
     bare_id = successor.rsplit("/", 1)[-1] if successor else ""
+    # Grok judgment: pin Standard. Composer bare: omit fast so card_default Fast
+    # applies (a:44608 / todo:team-dispatch-fast-caller-honor).
     if bare_id == "grok-4.7":
         fields["model_knobs"] = {"effort": "high", "fast": "false"}
-    elif bare_id == "composer-2.5":
-        fields["model_knobs"] = {"fast": "false"}
     return fields
 
 
@@ -90,8 +90,8 @@ def conductor_hop_recipe_model_fields(
             fields: dict[str, Any] = {"model": stamped}
             if isinstance(knobs, dict):
                 fields["model_knobs"] = {str(k): str(v) for k, v in knobs.items()}
-            elif stamped.rsplit("/", 1)[-1] == "composer-2.5":
-                fields["model_knobs"] = {"fast": "false"}
+            # Composer without stamped knobs: omit → card_default Fast (a:44608).
+            # Explicit hop_successor.fast=false in pipeline YAML still wins via knobs.
             return fields
     from implement_admission.conductor_admit_model import (
         resolve_hop_successor_default_from_pipeline,

@@ -269,7 +269,7 @@ class WritingSeatDispatchHandler(BaseHandler):
             body["job"] = "freeform"
             body["read_only"] = True
             body["work_key"] = f"packet:writer-specialist-v1:{run_id}:{role}"
-            body["model_knobs"] = {"fast": "true"}
+            # Omit fast → composer/grok card_default Fast (a:44608).
         digest = hashlib.sha256(prompt.encode()).hexdigest()
         if sensitive:
             sidecar_ref = self._sidecar_writer(prompt, key)

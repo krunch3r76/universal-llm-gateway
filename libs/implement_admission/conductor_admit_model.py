@@ -20,7 +20,15 @@ _DRIVER_FALLBACK = "cursor/composer-2.5"
 def _normalize_knobs(raw: Any) -> dict[str, str] | None:
     if not isinstance(raw, dict):
         return None
-    out = {str(k): str(v) for k, v in raw.items()}
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        key = str(k)
+        if key == "fast" and isinstance(v, bool):
+            out[key] = "true" if v else "false"
+        elif key == "fast":
+            out[key] = str(v).lower()
+        else:
+            out[key] = str(v)
     return out or None
 
 
@@ -175,6 +183,6 @@ def resolve_hop_successor_default_from_pipeline() -> dict[str, Any]:
     knobs = _normalize_knobs({k: v for k, v in block.items() if k != "model"})
     if knobs:
         out["model_knobs"] = _drop_composer_effort(model, knobs) or knobs
-    elif canonical_cursor_bare_id(model.rsplit("/", 1)[-1]) == _COMPOSER_BARE:
-        out["model_knobs"] = {"fast": "false"}
+    # Composer hop_successor with no fast key: omit → card_default Fast (a:44608).
+    # Pipeline YAML that still sets fast:false (K97 hop_successor) keeps Standard.
     return out

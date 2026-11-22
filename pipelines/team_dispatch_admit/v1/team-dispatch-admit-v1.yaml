@@ -18,7 +18,9 @@ output: assemble
 model_defaults:
   conductor:
     driver: {model: cursor/composer-2.5, fast: false}
-    mechanical: {model: cursor/composer-2.5, fast: false}
+    # mechanical: omit fast → card_default Fast (a:44608). driver/hop_successor
+    # keep explicit false while K97 Standard conductor trial holds.
+    mechanical: {model: cursor/composer-2.5}
     hop_successor: {model: cursor/composer-2.5, fast: false}
     allowed_models: [cursor/grok-4.7, cursor/composer-2.5]
 

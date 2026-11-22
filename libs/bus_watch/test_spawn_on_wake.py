@@ -1194,13 +1194,13 @@ def test_dispatch_body_successor_model_knobs_override_grok_fast() -> None:
     assert body["model_knobs"] == {"fast": "false"}
 
 
-def test_dispatch_body_composer_successor_pins_standard() -> None:
-    """Composer card default is Fast. Liaison hops pin Standard."""
+def test_dispatch_body_composer_successor_omits_fast() -> None:
+    """Composer bare successor omits fast so card_default Fast applies (a:44608)."""
     body = build_dispatch_body(
         "10479",
         {"successor_model": "cursor/composer-2.5", "max_hop_minutes": 60},
     )
-    assert body["model_knobs"] == {"fast": "false"}
+    assert "model_knobs" not in body
 
 
 def test_dispatch_body_non_grok_omits_model_knobs() -> None:
