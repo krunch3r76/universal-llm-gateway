@@ -1,4 +1,4 @@
-"""Leg 4 resolve: Live shell recipe + Proposed grok_routing_read (not MCP-only live)."""
+"""Leg 4 resolve: Live grok_routing_read + Proposed shell fallback."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-_SHELL_LIVE = re.compile(
+_SHELL_FALLBACK = re.compile(
     r'python.*-c.*cursor_bridge\.grok_window_bindings import binding_for,\s*load_routing',
     re.IGNORECASE | re.DOTALL,
 )
-_PROPOSED_SNIPPETS = (
+_LIVE_SNIPPETS = (
     "grok_routing_read",
     "grok_bot_home.display",
     "preferred_spawn_present",
@@ -46,13 +46,19 @@ def test_leg4_template_contract() -> None:
     block = text[resolve_idx : resolve_idx + 4500]
 
     assert "**Live (current callers" in block, "missing Live resolve subsection"
-    assert _SHELL_LIVE.search(block), "missing verified shell binding_for/load_routing one-liner in Live block"
-
-    assert "**Proposed (" in block or "**Proposed (reviewed" in block, (
-        "missing Proposed MCP candidate subsection"
+    live_end = block.find("**Proposed")
+    assert live_end > 0, "missing Proposed subsection after Live"
+    live_body = block[:live_end]
+    for snippet in _LIVE_SNIPPETS:
+        assert snippet in live_body, f"missing {snippet!r} in Live block"
+    assert not _SHELL_FALLBACK.search(live_body), (
+        "shell binding_for/load_routing one-liner must not be in Live after AC8 flip"
     )
-    propose_idx = block.find("**Proposed")
-    assert propose_idx >= 0
-    proposed_body = block[propose_idx : propose_idx + 2000]
-    for snippet in _PROPOSED_SNIPPETS:
-        assert snippet in proposed_body, f"missing {snippet!r} in Proposed block"
+
+    assert "**Proposed (" in block or "**Proposed (legacy" in block, (
+        "missing Proposed shell-fallback subsection"
+    )
+    proposed_body = block[live_end : live_end + 2000]
+    assert _SHELL_FALLBACK.search(proposed_body), (
+        "missing verified shell binding_for/load_routing one-liner in Proposed fallback"
+    )
