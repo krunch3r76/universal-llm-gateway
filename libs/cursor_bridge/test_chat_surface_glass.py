@@ -48,6 +48,13 @@ def test_probe_js_glass_message_fallback_selectors() -> None:
     assert "data-testid='assistant-message'" in _PROBE_JS
     assert "data-message-author-role" in _PROBE_JS
     assert "empty_basis" in _PROBE_JS
+    assert ".composer-human-message" in _PROBE_JS
+    assert "agent-transcript-row-markdown" in _PROBE_JS
+
+
+def test_probe_js_skips_glass_activity_work_rows() -> None:
+    assert "agent-transcript-row-activity" in _PROBE_JS
+    assert "agent-transcript-row-work-group" in _PROBE_JS
 
 
 def test_classify_surface_nonempty_messages_sets_messages_present() -> None:

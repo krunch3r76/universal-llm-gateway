@@ -212,16 +212,32 @@ _PROBE_JS = r"""
   }));
   const has_active_chat = !!(promptEl);
   if (message_turns.length === 0 && has_active_chat) {
+    // Glass Agents: human bubbles + markdown reply rows (not sand-message-prose).
     const fallbackRoots = Array.from(document.querySelectorAll(
       "[data-testid='assistant-message'], [data-testid='user-message'], "
-      + "[data-message-author-role], .markdown, .prose"
-    )).filter((el) => !insideComposer(el));
+      + "[data-message-author-role], .markdown, .prose, "
+      + ".composer-human-message, "
+      + ".agent-transcript-row.agent-transcript-row-markdown"
+    )).filter((el) => {
+      if (insideComposer(el)) return false;
+      const cls = (el.className || '').toString();
+      if (cls.includes('agent-transcript-row-activity')) return false;
+      if (cls.includes('agent-transcript-row-work-group')) return false;
+      if (cls.includes('agent-transcript-activity-group')) return false;
+      if (cls.includes('agent-transcript-work-group')) return false;
+      return true;
+    });
   const roleFromEl = (el) => {
       const attr = (el.getAttribute('data-message-author-role') || '').toLowerCase();
       if (attr === 'user' || attr === 'assistant') return attr;
       const tid = (el.getAttribute('data-testid') || '').toLowerCase();
       if (tid.includes('user')) return 'user';
       if (tid.includes('assistant')) return 'assistant';
+      const cls = (el.className || '').toString();
+      if (cls.includes('composer-human-message') || cls.includes('ui-agent-transcript-human-bubble')) {
+        return 'user';
+      }
+      if (cls.includes('agent-transcript-row-markdown')) return 'assistant';
       return 'assistant';
     };
     const seen = new Set();
@@ -626,6 +642,30 @@ async def _read_surface(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
     sel_id = str(value.get("selection_agent_id") or "").strip()
     if sel_id:
         result["selection_agent_id"] = sel_id
+    # Glass keeps aria-label "Stop generation" visible after completion; prefer
+    # agent run_state when the probe claimed generating.
+    agent_id = str(
+        result.get("active_agent_id") or result.get("selection_agent_id") or ""
+    ).strip()
+    if agent_id and result.get("generating"):
+        try:
+            from cursor_bridge.glass_agent_run_state import probe_agent_run_state
+
+            run = await probe_agent_run_state(ws_url, agent_id)
+            if (
+                isinstance(run, dict)
+                and run.get("ok")
+                and run.get("running") is False
+            ):
+                result["generating"] = False
+                result["empty_basis"] = derive_empty_basis(
+                    message_turns=message_turns,
+                    recent_messages=[str(x) for x in result.get("recent_messages") or []],
+                    has_active_chat=has_active_chat,
+                    generating=False,
+                )
+        except Exception:
+            pass
     try:
         maybe_emit_browser_supervision(result["supervision"])
     except Exception:
