@@ -13,7 +13,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _INSTALL = _REPO_ROOT / "scripts" / "grokbot-box-mcp-install.sh"
 _PRELOAD_SRC = _REPO_ROOT / "scripts" / "grokbot-proxyshim" / "preload.cjs"
 _EXPECTED_PRELOAD_SHA = (
-    "0e8a545a2b04946b489fad332f1af485d397f77c0c7fc161e2f6386ce016636c"
+    "7da8cac3b3669847c7628d45df8723c066bc733b53acacd7e238770440dfb49f"
 )
 
 
@@ -73,6 +73,14 @@ def _run_install(
         check=False,
         cwd=str(_REPO_ROOT / "scripts"),
     )
+
+
+@pytest.mark.offline
+def test_preload_sets_undici_idle_timeouts() -> None:
+    text = _PRELOAD_SRC.read_text(encoding="utf-8")
+    assert "headersTimeout: 90_000" in text
+    assert "bodyTimeout: 90_000" in text
+    assert "new ProxyAgent({" in text
 
 
 @pytest.mark.offline

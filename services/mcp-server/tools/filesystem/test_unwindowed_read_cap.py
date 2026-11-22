@@ -57,9 +57,9 @@ def test_large_unwindowed_markdown_lists_sections(tmp_path: Path) -> None:
     body = "\n\n".join(
         [
             "# Doc",
-            "## Executive envelope\n" + ("summary line\n" * 1200),
-            "## effects_manifest\n" + ("effect\n" * 1200),
-            "## closeout_body\n" + ("detail\n" * 1200),
+            "## Executive envelope\n" + ("summary line\n" * 2000),
+            "## effects_manifest\n" + ("effect\n" * 2000),
+            "## closeout_body\n" + ("detail\n" * 2000),
             "padding\n" * 50,
         ]
     )
@@ -117,11 +117,11 @@ def _reassemble_line_windows(root: Path, rel: str) -> bytes:
 def test_multiline_byte_cap_ends_on_line_boundary_and_reassembles(
     tmp_path: Path,
 ) -> None:
-    """>32 KB and <800 lines: no silent mid-line cut; windows reassemble to source."""
+    """>48 KiB and <400 lines: no silent mid-line cut; windows reassemble to source."""
     root = tmp_path / "sandbox"
     root.mkdir()
     line_payload = "x" * 700
-    lines = [f"row-{i}-{line_payload}" for i in range(60)]
+    lines = [f"row-{i}-{line_payload}" for i in range(72)]
     rel = "wide.txt"
     (root / rel).write_text("\n".join(lines), encoding="utf-8")
     source_bytes = (root / rel).read_bytes()
@@ -164,7 +164,7 @@ def test_small_unwindowed_markdown_matches_frozen_fixture(tmp_path: Path) -> Non
 def test_first_section_truncation_ends_on_line_boundary(tmp_path: Path) -> None:
     root = tmp_path / "sandbox"
     root.mkdir()
-    fill = ("row-" + ("x" * 600) + "\n") * 70
+    fill = ("row-" + ("x" * 600) + "\n") * 82
     body = "\n\n".join(
         [
             "## Executive\n" + fill + "complete tail line\n",

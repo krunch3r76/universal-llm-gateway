@@ -23,7 +23,16 @@ grokbot_proxyshim_install_from_embed() {
   tmp_pkg="$(mktemp -p "${PROXYSHIM_DIR}" ".package.json.XXXXXX")"
   cat >"${tmp_preload}" <<'GROKBOT_PROXYSHIM_PRELOAD_EMBED'
 const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
-if (proxy) { const { setGlobalDispatcher, ProxyAgent } = require('/home/box/.proxyshim/node_modules/undici'); setGlobalDispatcher(new ProxyAgent(proxy)); }
+if (proxy) {
+  const { setGlobalDispatcher, ProxyAgent } = require('/home/box/.proxyshim/node_modules/undici');
+  setGlobalDispatcher(
+    new ProxyAgent({
+      uri: proxy,
+      headersTimeout: 90_000,
+      bodyTimeout: 90_000,
+    })
+  );
+}
 GROKBOT_PROXYSHIM_PRELOAD_EMBED
   cat >"${tmp_pkg}" <<'GROKBOT_PROXYSHIM_PACKAGE_EMBED'
 {"name":"proxyshim","version":"1.0.0","private":true,"dependencies":{"undici":"^6.29.0"}}
