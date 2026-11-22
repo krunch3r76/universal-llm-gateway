@@ -40,6 +40,21 @@ For **read-only** section tree / body inspection, pick the cheaper path — not 
 
 Do not claim unconditional token savings for one transport; measure hops and payload size for the job.
 
+## Section read scope (parent sections)
+
+For a **parent** section that has child headings, MCP `fs(op=md_read)` and local `libs/markdown_sections.read_section` do **not** return the same span. Pick the scope your job needs; do not assume parity.
+
+| Route | Default parent read | Children |
+|---|---|---|
+| **MCP `fs` `md_read`** | Section **own_body** only (text before the first child heading) | Listed in manifest metadata (`children` / tree); **not** inlined in the read payload |
+| **Local `read_section(text, section_path)`** | Full section **subtree** (`text[sec.start:sec.end]`, through the next same-or-higher-level heading) | **Included** in the returned string |
+
+MCP responses disclose own-body reads via `span: "own_body"`, `includes_children: false`, and `subtree_char_count` for the full subtree size. Write ops use `span` (`own_body` default; `subtree` for legacy include-children behavior on writes only).
+
+When you need **exact MCP read semantics** on a local file in the assigned worktree (same slice as `fs` sparse reads, including own_body on parents), call the sparse resolver — do not hand-roll a substitute:
+
+- `services/mcp-server/tools/_sparse_document_read.py:resolve_document_read` (parameters: path, sandbox, text, read_sha256, section, …), or the managed `fs` / `markdown` read path that already routes through it.
+
 ## Sandboxes and paths
 
 | Sandbox | Root | Example |
