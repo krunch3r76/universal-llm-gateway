@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
-from tools.grok_routing_read import fetch_grok_routing_read, register_grok_routing_read_tool
+import httpx
+
+from tools.grok_routing_read import (
+    fetch_grok_routing_read,
+    register_grok_routing_read_tool,
+)
 
 
 def test_module_does_not_import_grok_window_bindings() -> None:
@@ -36,12 +42,27 @@ def test_relay_happy_path() -> None:
     client.get.assert_called_once_with("/v1/grok/window-routing")
 
 
-def test_relay_transport_error_retryable() -> None:
+def _unreachable_out(*, side_effect: BaseException) -> dict[str, Any]:
     client = MagicMock()
     client.__enter__.return_value = client
-    client.get.side_effect = OSError("connection refused")
+    client.get.side_effect = side_effect
     with patch("tools.grok_routing_read.make_sync_client", return_value=client):
-        out = fetch_grok_routing_read(stargate_url="http://test")
+        return fetch_grok_routing_read(stargate_url="http://test")
+
+
+def test_relay_connect_error_retryable() -> None:
+    req = httpx.Request("GET", "http://test/v1/grok/window-routing")
+    out = _unreachable_out(side_effect=httpx.ConnectError("connection refused", request=req))
+    assert out["ok"] is False
+    assert out["error"]["code"] == "stargate_unreachable"
+    assert out["error"]["retryable"] is True
+
+
+def test_relay_timeout_retryable() -> None:
+    req = httpx.Request("GET", "http://test/v1/grok/window-routing")
+    out = _unreachable_out(
+        side_effect=httpx.ReadTimeout("timed out", request=req),
+    )
     assert out["ok"] is False
     assert out["error"]["code"] == "stargate_unreachable"
     assert out["error"]["retryable"] is True

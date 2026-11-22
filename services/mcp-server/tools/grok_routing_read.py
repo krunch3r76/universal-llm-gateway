@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from mcp.types import ToolAnnotations
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 
@@ -15,23 +16,27 @@ _ROUTE = "/v1/grok/window-routing"
 _TIMEOUT = 30.0
 
 
+def _stargate_unreachable_envelope(exc: BaseException) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": {
+            "code": "stargate_unreachable",
+            "message": str(exc)[:400],
+            "source": "services/mcp-server/tools/grok_routing_read",
+            "retryable": True,
+            "data": {"route": _ROUTE},
+        },
+    }
+
+
 def fetch_grok_routing_read(*, stargate_url: str | None = None) -> dict[str, Any]:
     """GET the host routing snapshot via Stargate (no local bindings I/O)."""
     base = (stargate_url or os.environ.get("STARGATE_URL") or DEFAULT_STARGATE_URL).strip()
     try:
         with make_sync_client(base, timeout=_TIMEOUT) as client:
             response = client.get(_ROUTE)
-    except OSError as exc:
-        return {
-            "ok": False,
-            "error": {
-                "code": "stargate_unreachable",
-                "message": str(exc)[:400],
-                "source": "services/mcp-server/tools/grok_routing_read",
-                "retryable": True,
-                "data": {"route": _ROUTE},
-            },
-        }
+    except (OSError, httpx.RequestError) as exc:
+        return _stargate_unreachable_envelope(exc)
     try:
         body = response.json()
     except Exception as exc:

@@ -1,4 +1,4 @@
-"""Leg 4 resolve block must use grok_routing_read, not shell load_routing one-liner."""
+"""Leg 4 resolve: Live shell recipe + Proposed grok_routing_read (not MCP-only live)."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-_FORBIDDEN = re.compile(
+_SHELL_LIVE = re.compile(
     r'python.*-c.*cursor_bridge\.grok_window_bindings import binding_for,\s*load_routing',
     re.IGNORECASE | re.DOTALL,
 )
-_REQUIRED_SNIPPETS = (
+_PROPOSED_SNIPPETS = (
     "grok_routing_read",
     "grok_bot_home.display",
     "preferred_spawn_present",
@@ -28,6 +28,9 @@ def _resolve_cortex_template() -> Path | None:
     home = Path.home() / ".cortex/files/notes/system/templates/lean-dispatch-ladder.md"
     if home.is_file():
         return home
+    data = Path("/data/files/notes/system/templates/lean-dispatch-ladder.md")
+    if data.is_file():
+        return data
     return None
 
 
@@ -40,7 +43,16 @@ def test_leg4_template_contract() -> None:
     assert leg4_idx >= 0
     resolve_idx = text.find("**Resolve `<grok_display>`**", leg4_idx)
     assert resolve_idx >= 0
-    block = text[resolve_idx : resolve_idx + 2500]
-    assert _FORBIDDEN.search(block) is None, "shell python -c load_routing one-liner still present"
-    for snippet in _REQUIRED_SNIPPETS:
-        assert snippet in block, f"missing {snippet!r} in Leg 4 resolve block"
+    block = text[resolve_idx : resolve_idx + 4500]
+
+    assert "**Live (current callers" in block, "missing Live resolve subsection"
+    assert _SHELL_LIVE.search(block), "missing verified shell binding_for/load_routing one-liner in Live block"
+
+    assert "**Proposed (" in block or "**Proposed (reviewed" in block, (
+        "missing Proposed MCP candidate subsection"
+    )
+    propose_idx = block.find("**Proposed")
+    assert propose_idx >= 0
+    proposed_body = block[propose_idx : propose_idx + 2000]
+    for snippet in _PROPOSED_SNIPPETS:
+        assert snippet in proposed_body, f"missing {snippet!r} in Proposed block"
