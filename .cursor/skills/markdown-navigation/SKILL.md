@@ -1,11 +1,11 @@
 ---
-description: Section-level navigation and editing of large Markdown-like documents via fs md_read/md_replace/md_append.
+description: Section-level navigation and editing of large Markdown-like documents via fs md_read/md_replace/md_append on cortex and workspaces; local libs/markdown_sections when cheaper.
 trigger_match_terms: ["markdown-navigation", "markdown_navigation", "pdf", "docx", "chars", "md_list", "tooling-observability", "markdown", "file", "inspect", "section", "tree"]
 ---
 
 # Markdown Navigation Tools
 
-Secondary reference. Canonical MCP boot surface: `docs/tool-reference.md`. Use this skill for section-level navigation/editing of large Markdown-like documents via `fs`.
+Secondary reference. Canonical MCP boot surface: `docs/tool-reference.md`. Use this skill for section-level navigation/editing of large Markdown-like documents via `fs` or local section helpers when hops favor them.
 
 ## Core rule
 
@@ -13,10 +13,9 @@ Secondary reference. Canonical MCP boot surface: `docs/tool-reference.md`. Use t
 
 `large_doc_edit ⇒ md_* server_side_edit ∧ ¬whole_file_rewrite` unless the edit genuinely spans the whole file.
 
-## Primary interface: `fs` `md_*` (workspaces only)
+## Primary interface: `fs` `md_*` (cortex and workspaces)
 
-Markdown section ops are **not** available on `sandbox="cortex"`. Use `fs(op="read")`
-for cortex files.
+Markdown section ops are available on **both** `sandbox="cortex"` and `sandbox="workspaces"` (see `cursor-plugins/ulg-ecosystem/skills/fs/SKILL.md`). Md writes are lease-gated (`code` for workspaces, `{life, code}` for cortex).
 
 | Op | Required args | Use |
 |---|---|---|
@@ -28,13 +27,24 @@ for cortex files.
 | `md_insert` | `path`, `heading`, `level`, `position` | Create a new section at `end`/`after`/`before`; `after`/`before` require anchor `section`. |
 | `md_delete` | `path`, `section` | Remove heading + body. |
 
-`fs` is canonical. Use `dispatch(tool="markdown")` only for `to_dict` / `from_dict`.
+`fs` is canonical for durable edits. Use `dispatch(tool="markdown")` only for `to_dict` / `from_dict`.
+
+## Navigation (transport-neutral)
+
+For **read-only** section tree / body inspection, pick the cheaper path — not MCP by default:
+
+| Transport | When |
+|---|---|
+| **Local** | On-host: `libs/markdown_sections` (`list_sections`, `read_section`, `parse_sections`) against a file you already hold or a verified worktree path |
+| **MCP `fs`** | Cross-resident paths, Share URI semantics, or when local file access is missing |
+
+Do not claim unconditional token savings for one transport; measure hops and payload size for the job.
 
 ## Sandboxes and paths
 
 | Sandbox | Root | Example |
 |---|---|---|
-| `cortex` | `/data/files/` | `notes/research.md` — use `read`, not `md_*` |
+| `cortex` | `/data/files/` | `notes/research.md` — `md_list` / section `md_read` supported |
 | `workspaces` | `/mnt/torus/projects/` | `universal-llm-gateway/docs/tool-reference.md` |
 
 `workspaces` paths MUST include repo prefix: `universal-llm-gateway/...`.
@@ -80,11 +90,11 @@ Use `char_count` from `md_list` to decide whether to read a section directly or 
 ## Quick examples
 
 ```text
+fs(op="md_list", sandbox="cortex", path="notes/system/architecture/index.md")
 fs(op="md_list", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md")
 fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="fs")
 fs(op="md_replace", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", section="Background", target="old paragraph", content="Updated text.\n")
 fs(op="md_rewrite_section", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", section="Background", content="Fully new section body.\n")
 fs(op="md_insert", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", heading="Risks", level=2, position="after", section="Background", content="- risk\n")
 fs(op="md_delete", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", section="Scratch")
-fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="fs")
 ```
