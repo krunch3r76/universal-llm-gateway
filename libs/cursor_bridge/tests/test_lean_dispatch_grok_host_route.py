@@ -203,4 +203,7 @@ def test_grok_host_preflight_runbook_kaywan58_walls() -> None:
     temp_block = text[temp_idx : temp_idx + 900]
     assert "Visible `??`" in temp_block
     assert "external temp" in temp_block
-    assert "lane-B dispatch" in temp_block
+    assert "assigned lane" in temp_block
+    assert "verified host grant" in temp_block
+    assert "Composer" in temp_block
+    assert "does not authorize Cursor" not in text
