@@ -12,7 +12,9 @@ from services.git_integration_worker.cursor_sdk_closeout.bridge_death_harvest im
     park_partial_uri,
     read_sidecar_payload,
 )
-from services.git_integration_worker.cursor_sdk_closeout_seal import seal_closeout_payload
+from services.git_integration_worker.cursor_sdk_closeout_seal import (
+    seal_closeout_payload,
+)
 from services.git_integration_worker.cursor_sdk_run_limits import (
     RUN_BUDGET_CONTROL_KEY,
     classify_stop_from_closeout_row,
