@@ -142,6 +142,7 @@ async def read_display_latest(target: DisplayEightTarget) -> dict[str, Any]:
             },
         )
     recent = list(snap.get("recent_messages") or [])
+    empty_basis = str(snap.get("empty_basis") or "").strip()
     return _with_display(
         target,
         {
@@ -150,6 +151,7 @@ async def read_display_latest(target: DisplayEightTarget) -> dict[str, Any]:
             "coverage": "latest",
             "latest_message": snap.get("latest_message") or "",
             "generating": bool(snap.get("generating")),
+            "empty_basis": empty_basis,
             "composer_draft": str(snap.get("composer_draft") or ""),
             "latest_fingerprint": str(snap.get("latest_fingerprint") or ""),
             "active_agent_id": snap.get("active_agent_id"),

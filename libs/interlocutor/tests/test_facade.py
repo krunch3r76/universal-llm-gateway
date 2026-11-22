@@ -53,6 +53,67 @@ def test_read_latest_carries_display() -> None:
     assert out["latest_message"] == "hi"
     assert out["display"] == "9"
 
+
+def test_read_latest_forwards_empty_basis_and_generating() -> None:
+    with patch(
+        "interlocutor.display_adapter.read_endpoint_turn", new_callable=AsyncMock
+    ) as read_turn:
+        read_turn.return_value = {
+            "ok": True,
+            "latest_message": "",
+            "generating": True,
+            "empty_basis": "pending_no_messages",
+            "recent_messages": [],
+            "latest_fingerprint": "",
+            "active_agent_id": "a1",
+            "active_title": "lane",
+            "endpoint": ":9:a1",
+        }
+        out = execute_read(target="display:9/agent-1", coverage="latest")
+    assert out["generating"] is True
+    assert out["empty_basis"] == "pending_no_messages"
+
+
+def test_read_display_empty_basis_discriminates_pending_extractor_empty() -> None:
+    target = DisplayEightTarget(display="8", agent_id="agent-1")
+    cases = [
+        (
+            {
+                "ok": True,
+                "generating": True,
+                "empty_basis": "pending_no_messages",
+                "recent_messages": [],
+            },
+            "pending_no_messages",
+        ),
+        (
+            {
+                "ok": True,
+                "generating": False,
+                "empty_basis": "extractor_miss",
+                "recent_messages": [],
+            },
+            "extractor_miss",
+        ),
+        (
+            {
+                "ok": True,
+                "generating": False,
+                "empty_basis": "empty_conversation",
+                "recent_messages": [],
+            },
+            "empty_conversation",
+        ),
+    ]
+    for snap, expected in cases:
+        with patch(
+            "interlocutor.display_adapter.read_endpoint_turn", new_callable=AsyncMock
+        ) as read_turn:
+            read_turn.return_value = snap
+            out = asyncio.run(display_adapter.read_display_latest(target))
+        assert out["empty_basis"] == expected
+        assert out["generating"] is snap["generating"]
+
     with patch(
         "interlocutor.display_adapter.read_endpoint_turn", new_callable=AsyncMock
     ) as read_turn:
