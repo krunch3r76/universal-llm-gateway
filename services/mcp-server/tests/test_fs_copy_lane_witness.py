@@ -191,6 +191,40 @@ def test_move_workspaces_to_cortex_refuses_with_thread_and_preserves_source(
     assert not (cortex_root / dest_rel).exists()
 
 
+def test_lane_copy_workspaces_uri_source_to_cortex_bytes_and_digest(
+    copy_roots: tuple[Path, Path, Path],
+) -> None:
+    """Leg4 — workspaces:// source under lane root copies with verified dest digest."""
+    cortex_root, workspaces_root, lane = copy_roots
+    src_rel = "tmp/workspaces-uri-src.bin"
+    payload = b"workspaces-uri-lane-bytes\n"
+    lane_src = lane / src_rel
+    lane_src.parent.mkdir(parents=True, exist_ok=True)
+    lane_src.write_bytes(payload)
+    shared_src = workspaces_root / "universal-llm-gateway" / src_rel
+    shared_src.parent.mkdir(parents=True, exist_ok=True)
+    shared_src.write_bytes(b"shared-checkout-wrong-for-uri\n")
+    dest_rel = "notes/tmp/lane-copy-proof/workspaces-uri-src.bin"
+    src_uri = f"workspaces://universal-llm-gateway/{src_rel}"
+
+    with patch("lane_branch_root.relay", side_effect=_lane_relay):
+        result = fs_impl(
+            **_fs_kwargs(
+                sandbox="workspaces",
+                path=src_uri,
+                target=f"cortex://{dest_rel}",
+                thread=LANE_THREAD,
+                if_absent=True,
+            )
+        )
+
+    assert result.get("status") == "copied", result
+    dest = cortex_root / dest_rel
+    assert dest.read_bytes() == payload
+    assert result["read_sha256"] == sha256_hex_of_file(dest)
+    assert result.get("lane_thread") == LANE_THREAD
+
+
 def test_lane_worktree_to_cortex_copy_bytes(
     copy_roots: tuple[Path, Path, Path],
 ) -> None:
