@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
+from agent_seat.dispatch_review_contract import review_dispatch_system_appendix
 from implement_admission.conductor_critic_render import g3_g5_score_ratify_clause
 from implement_admission.conductor_no_restart import (
     G7_RESTART_OWED_RULE,
@@ -308,17 +309,6 @@ _LANE_B_BRANCH_CONTRACT_TEMPLATE = (
     "claim when the probe disagrees. Omitting the hub-land token while the branch "
     "carries commits master lacks leaves that branch for a guarded land and opens "
     "the debt."
-)
-
-_REVIEW_VERDICT_CONTRACT = (
-    "REVIEW VERDICT CONTRACT: When the packet names a commit range or head, "
-    "the closeout's first line is the one unfenced canonical line "
-    "`VERDICT: APPROVE range=<40 lowercase hex>..<40 lowercase hex> "
-    "head=<40 lowercase hex>` or the same line with `REQUEST_CHANGES`. "
-    "`head` equals the range tip. `fixes=<full sha of the REQUEST_CHANGES tip>` "
-    "is present only when this review closes one. There is no second "
-    "`VERDICT:` line. When the packet names no commit, do not invent "
-    "`range=` or `head=`."
 )
 
 _CONTINUITY_ROOT_TEMPLATE = (
@@ -1223,8 +1213,11 @@ def resolve_prompt_preamble(
         parts.append(skill_block)
     if preamble:
         parts.append(preamble.strip())
-    if contract in {"check-review", "code-review"}:
-        parts.append(_REVIEW_VERDICT_CONTRACT)
+    review_appendix = review_dispatch_system_appendix(
+        contract, packet_text=existing_text or ""
+    )
+    if review_appendix:
+        parts.append(review_appendix)
     parts = _prefix_reasoning_posture(
         contract, parts, prompt_preamble, existing_text, resolved_model=resolved_model
     )

@@ -20,6 +20,9 @@ from implement_admission.closeout_models import (
 from services.git_integration_worker.cursor_sdk_boundary_finalize import (
     finalize_boundary_manifest,
 )
+from services.git_integration_worker.cursor_sdk_closeout_harvest import (
+    bound_closeout_harvest_preamble,
+)
 from services.git_integration_worker.cursor_sdk_cortex_identity import (
     assertion_id_from_cortex_observation,
     enrich_cortex_identities_from_stream,
@@ -170,6 +173,26 @@ def test_ac_h4_h5_captured_fixture_clears_divergence_and_assertion_identity() ->
     assert harvest_cortex_assertion_ids(merged) == [str(_LIVE_ASSERTION_ID)]
     _, divs = reconcile_observed_vs_committed(merged, (obs,))
     assert divs == []
+
+
+def test_harvest_preamble_promotes_single_verdict_and_coverage_ref() -> None:
+    """AC1 — coverage rows beside one unfenced VERDICT in the harvest preamble."""
+    sha = "f" * 40
+    body = (
+        "x" * 200
+        + f"\nVERDICT: APPROVE range={sha}..{sha} head={sha}\n"
+        + "coverage_ref: cortex://notes/tmp/coverage.json#sha256=facefeed\n"
+        + "status: complete\nresidue: none\n"
+    )
+    harvested = bound_closeout_harvest_preamble(body)
+    lines = harvested.splitlines()
+    verdict_lines = [line for line in lines if line.startswith("VERDICT:")]
+    coverage_lines = [line for line in lines if line.startswith("coverage_ref:")]
+    assert len(verdict_lines) == 1
+    assert verdict_lines[0] == f"VERDICT: APPROVE range={sha}..{sha} head={sha}"
+    assert coverage_lines == [
+        "coverage_ref: cortex://notes/tmp/coverage.json#sha256=facefeed"
+    ]
 
 
 def test_ac_w3_retained_body_wires_to_boundary_finalize_without_stream_result() -> None:

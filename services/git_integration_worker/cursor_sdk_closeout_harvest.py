@@ -25,6 +25,7 @@ _UNSTATED_STATUS_LINE = "status: unstated"
 _EMPTY_RESIDUE_LINE = "residue: none"
 _STATUS_LINE_RE = re.compile(r"(?m)^(status:[^\n]*)$")
 _VERDICT_LINE_RE = re.compile(r"(?m)^(VERDICT:[^\n]*)$")
+_COVERAGE_REF_LINE_RE = re.compile(r"(?m)^(coverage_ref:[^\n]*)$")
 _RESIDUE_LINE_RE = re.compile(r"(?m)^(residue:[^\n]*)$")
 _ATX_HEADING_RE = re.compile(r"(?m)^#{1,6} ")
 
@@ -82,7 +83,7 @@ def _rewrite_rejected_leading_status(section: str) -> str:
 
 
 def _harvest_field_lines(content: str) -> tuple[str, str | None, str]:
-    """Status, optional VERDICT, and residue to place in the harvest preamble.
+    """Status, optional VERDICT, residue, and optional coverage_ref harvest fields.
 
     A leading ``status:`` line is kept only when its token is allowed.
     ``full_result_text``'s ``status: degraded`` qualifies. A non-token leading
@@ -91,6 +92,7 @@ def _harvest_field_lines(content: str) -> tuple[str, str | None, str]:
     Distinct unfenced hits are not collapsed to the last one: status and
     residue fall back to sentinels the receipt can replace, and VERDICT is
     omitted so a quoted artifact cannot become the only line maestro reads.
+    ``coverage_ref:`` lines are separate from VERDICT — at most one promoted VERDICT.
     """
     if content.startswith("status:"):
         leading = content.split("\n", 1)[0]
@@ -110,13 +112,32 @@ def _harvest_field_lines(content: str) -> tuple[str, str | None, str]:
     return status, verdict, residue
 
 
-def _missing_harvest_lines(section: str, content: str) -> list[str]:
+def _unique_coverage_ref(content: str) -> str | None:
+    hits = _unfenced_line_starts(_COVERAGE_REF_LINE_RE, content)
+    distinct = list(dict.fromkeys(hits))
+    if len(distinct) == 1:
+        return distinct[0]
+    return None
+
+
+def harvest_field_lines_with_coverage(
+    content: str,
+) -> tuple[str, str | None, str, str | None]:
+    """Like ``_harvest_field_lines`` but include an optional ``coverage_ref:`` line."""
     status, verdict, residue = _harvest_field_lines(content)
+    coverage = _unique_coverage_ref(content)
+    return status, verdict, residue, coverage
+
+
+def _missing_harvest_lines(section: str, content: str) -> list[str]:
+    status, verdict, residue, coverage = harvest_field_lines_with_coverage(content)
     missing: list[str] = []
     if _STATUS_LINE_RE.search(section) is None:
         missing.append(status)
     if verdict and _VERDICT_LINE_RE.search(section) is None:
         missing.append(verdict)
+    if coverage and _COVERAGE_REF_LINE_RE.search(section) is None:
+        missing.append(coverage)
     if _RESIDUE_LINE_RE.search(section) is None:
         missing.append(residue)
     return missing
@@ -180,10 +201,12 @@ def bound_closeout_harvest_preamble(content: str) -> str:
         spliced = _splice_harvest_lines(normalized, section, heading_at, missing)
         if spliced is not None:
             return spliced
-    status, verdict, residue = _harvest_field_lines(normalized)
+    status, verdict, residue, coverage = harvest_field_lines_with_coverage(normalized)
     lines = [status]
     if verdict:
         lines.append(verdict)
+    if coverage:
+        lines.append(coverage)
     lines.append(residue)
     preamble = _fit_preamble(lines)
     if normalized.startswith(f"{preamble}{_CLOSEOUT_BODY_HEADING}"):
@@ -351,6 +374,8 @@ def _non_fenced_summary_lines(body: str, *, max_lines: int) -> list[str]:
             continue
         if _STATUS_LINE_RE.match(line) or _VERDICT_LINE_RE.match(line):
             continue
+        if _COVERAGE_REF_LINE_RE.match(line):
+            continue
         if _RESIDUE_LINE_RE.match(line):
             continue
         if not stripped:
@@ -371,7 +396,7 @@ def partition_closeout_executive_envelope(
 ) -> tuple[str, str | None]:
     """Split oversize closeout prose into an executive header and optional archive body."""
     content = body or ""
-    status, verdict, residue = _harvest_field_lines(content)
+    status, verdict, residue, coverage = harvest_field_lines_with_coverage(content)
     if status_fallback and status == _UNSTATED_STATUS_LINE:
         status = status_fallback
     if residue_fallback and residue == _EMPTY_RESIDUE_LINE:
@@ -390,6 +415,8 @@ def partition_closeout_executive_envelope(
     header_lines = [status]
     if verdict:
         header_lines.append(verdict)
+    if coverage:
+        header_lines.append(coverage)
     header_lines.append(residue)
     header_lines.append("")
     header_lines.extend(_non_fenced_summary_lines(content, max_lines=54))
