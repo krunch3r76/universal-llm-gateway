@@ -219,10 +219,9 @@ def load_routing() -> dict[str, Any]:
     return validate_state(json.loads(path.read_text(encoding="utf-8")), config=config)
 
 
-def binding_for(agent: str) -> dict[str, Any] | None:
-    """Window for one recipient. Fixed roles beat the moving seats."""
+def binding_for_from_state(state: dict[str, Any], agent: str) -> dict[str, Any] | None:
+    """Window for one recipient using a pre-loaded routing ``state`` snapshot."""
     config = load_config()
-    state = load_routing()
     key = _norm(agent)
     ports = _window_ids(config)
     fixed_raw = config.get("fixed_roles") or {}
@@ -250,6 +249,11 @@ def binding_for(agent: str) -> dict[str, Any] | None:
         "source": state["source"],
         "scope": state["scope"],
     }
+
+
+def binding_for(agent: str) -> dict[str, Any] | None:
+    """Window for one recipient. Fixed roles beat the moving seats."""
+    return binding_for_from_state(load_routing(), agent)
 
 
 def _preferred_spawn_preserved(*, config: dict[str, Any], path: Path) -> str | None:

@@ -27,6 +27,7 @@ domains:
 - panel_dispatch
 - cortex_brief
 - fleet_liveness
+- grok_routing
 - operator_request
 - cse_session
 - chat_session
@@ -7399,6 +7400,28 @@ tools:
   - life
   - code
   introduced: '2026-10-30'
+- canonical_name: grok_routing_read
+  domain: grok_routing
+  operation: read
+  dispatcher_call_shape:
+    tool: grok_routing_read
+    dispatch_key: op
+    dispatch_value: read
+  flat_call_shape:
+    tool: grok_routing_read
+    substrate_qualified: user-vortex__grok_routing_read
+  fol_descriptor: "Read-only grok window routing snapshot from host Stargate GET /v1/grok/window-routing. One load_routing epoch; preferred_spawn when present; explicit absent marker when unset. Thin relay on ulg-code — no local bindings import."
+  json_schema:
+    type: object
+  skill_uri: agent_skill:dispatch-shape
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: '2026-11-22'
+  endpoint_visibility:
+  - code
 domain_endpoints:
   default:
   - life
@@ -7483,6 +7506,7 @@ surface_primary_domains:
   - team_dispatch
   - panel_dispatch
   - fleet_liveness
+  - grok_routing
   - cse_session
   - chat_session
   - ingest_dropbox

@@ -31,6 +31,7 @@ from tools.fleet_liveness import register_fleet_liveness_tools
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
+from tools.grok_routing_read import register_grok_routing_read_tool
 from tools.glass_export_transcript_messages import (
     register_glass_export_transcript_messages_tool,
 )
@@ -140,6 +141,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
         register_recycle_giw_tools(mcp)
 
     if surface == "code":
+        register_grok_routing_read_tool(mcp)
         register_ingest_dropbox_tools(mcp)
         register_manage_tools(mcp)
         register_model_status_tools(mcp)

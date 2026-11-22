@@ -57,6 +57,7 @@ from cdp_ask.followup_events import (
 from cdp_ask.followup_events import (
     emit as emit_followup_event,
 )
+from cdp_ask.grok_routing_read_route import grok_window_routing_http_response
 from cdp_ask.models import (
     AbortExecutionResponse,
     ExecutionPollResponse,
@@ -749,6 +750,12 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         return JSONResponse(
             status_code=200, content=result.model_dump(exclude_none=True)
         )
+
+    @app.get("/v1/grok/window-routing")
+    async def grok_window_routing() -> JSONResponse:
+        """Read-only grok window routing snapshot (one ``load_routing()`` epoch)."""
+        status_code, payload = await asyncio.to_thread(grok_window_routing_http_response)
+        return JSONResponse(status_code=status_code, content=payload)
 
     @app.post("/v1/project-ask/reattach-house")
     async def reattach_house(request: Request) -> JSONResponse:

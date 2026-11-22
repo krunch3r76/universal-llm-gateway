@@ -1,0 +1,6 @@
+# propagation_residue — todo:grok-routing-mcp-read (lane-24891)
+restart_owed:
+  - service: mcp
+    reason: grok_routing_read tool registration + canonical.yaml domain grok_routing
+  - service: stargate
+    reason: GET /v1/grok/window-routing on cdp_ask FastAPI surface
