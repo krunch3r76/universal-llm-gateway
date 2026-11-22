@@ -102,7 +102,7 @@ def test_grok_host_preflight_runbook_headings() -> None:
         "Share URI",
         "Temporary scripts",
         "Entry-point loaders",
-        "grand impresario",
+        "route-C host grant",
         "Three probes",
         "PREFLIGHT bus receipt",
         "Freshness",
@@ -146,3 +146,33 @@ def test_lean_dispatch_ladder_grok_host_preflight_step() -> None:
     ):
         assert needle in block, f"missing {needle!r} in Leg 2c block"
     assert not re.search(r"grok_routing.*grant state", block, re.I)
+
+
+_FORBIDDEN_RUNBOOK_STRINGS = (
+    "explicitly names that exception",
+    "when the job requires an isolated lane",
+    "untracked scratch in the tree is acceptable",
+)
+
+
+def test_grok_host_preflight_runbook_kaywan58_walls() -> None:
+    path = _first_existing(_RUNBOOK_CANDIDATES)
+    if path is None:
+        pytest.skip("grok-host-preflight.md not on disk; cortex runbook check deferred")
+    text = path.read_text(encoding="utf-8")
+    for forbidden in _FORBIDDEN_RUNBOOK_STRINGS:
+        assert forbidden not in text, f"forbidden runbook string present: {forbidden!r}"
+    idx = text.find("### 2. Checkout")
+    assert idx >= 0
+    checkout_block = text[idx : idx + 600]
+    fail_m = re.search(r"^- \*\*Fail:\*\*(.+)$", checkout_block, re.M)
+    assert fail_m is not None
+    fail_line = fail_m.group(1)
+    assert "toplevel is lane A / shared hub checkout" in fail_line
+    assert "when the job requires an isolated lane" not in fail_line
+    temp_idx = text.find("## Temporary scripts")
+    assert temp_idx >= 0
+    temp_block = text[temp_idx : temp_idx + 900]
+    assert "Visible `??`" in temp_block
+    assert "external temp" in temp_block
+    assert "lane-B dispatch" in temp_block
