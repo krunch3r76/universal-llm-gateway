@@ -20,7 +20,10 @@ from pathlib import Path
 from typing import Any
 
 _SCOPE = "grok-window-routing"
-_SCHEMA = 1
+_CONFIG_SCHEMA = 1
+_ROUTING_SCHEMA = 2
+_ROUTING_LEGACY_SCHEMA = 1
+_PRESERVE_PREFERRED_SPAWN = object()
 
 
 def _repo_root() -> Path:
@@ -60,8 +63,8 @@ def _norm(slug: str) -> str:
 def load_config() -> dict[str, Any]:
     """Load ``grok-windows.json`` and reject a missing or wrong-schema windows map."""
     data = json.loads(config_path().read_text(encoding="utf-8"))
-    if data.get("schema_version") != _SCHEMA:
-        raise ValueError("grok-windows.json schema_version must be 1")
+    if data.get("schema_version") != _CONFIG_SCHEMA:
+        raise ValueError(f"grok-windows.json schema_version must be {_CONFIG_SCHEMA}")
     windows = data.get("windows")
     if not isinstance(windows, dict) or not windows:
         raise ValueError("grok-windows.json windows missing")
@@ -150,7 +153,7 @@ def _builtin_state(config: dict[str, Any]) -> dict[str, Any]:
     initial = config["initial_state"]
     now = "1970-01-01T00:00:00+00:00"
     return {
-        "schema_version": _SCHEMA,
+        "schema_version": _ROUTING_SCHEMA,
         "epoch": 0,
         "as_of": now,
         "source": "builtin",
@@ -181,15 +184,18 @@ def validate_state(raw: object, *, config: dict[str, Any] | None = None) -> dict
     missing = [key for key in required if key not in raw]
     if missing:
         raise ValueError(f"routing state missing {missing}")
-    if int(raw["schema_version"]) != _SCHEMA:
-        raise ValueError("routing state schema_version must be 1")
+    schema_in = int(raw["schema_version"])
+    if schema_in not in {_ROUTING_SCHEMA, _ROUTING_LEGACY_SCHEMA}:
+        raise ValueError(
+            f"routing state schema_version must be {_ROUTING_LEGACY_SCHEMA} or {_ROUTING_SCHEMA}"
+        )
     if str(raw["scope"]) != _SCOPE:
         raise ValueError("routing state scope must be grok-window-routing")
     epoch = int(raw["epoch"])
     if epoch < 0:
         raise ValueError("routing state epoch must be >= 0")
-    return {
-        "schema_version": _SCHEMA,
+    out: dict[str, Any] = {
+        "schema_version": _ROUTING_SCHEMA,
         "epoch": epoch,
         "as_of": str(raw["as_of"]),
         "source": str(raw["source"]),
@@ -199,6 +205,9 @@ def validate_state(raw: object, *, config: dict[str, Any] | None = None) -> dict
         "default_window": _require_window(cfg, raw["default_window"]),
         "insyncerator_window": _require_window(cfg, raw["insyncerator_window"]),
     }
+    if "preferred_spawn" in raw and raw.get("preferred_spawn") is not None:
+        out["preferred_spawn"] = _require_window(cfg, raw["preferred_spawn"])
+    return out
 
 
 def load_routing() -> dict[str, Any]:
@@ -243,41 +252,90 @@ def binding_for(agent: str) -> dict[str, Any] | None:
     }
 
 
+def _preferred_spawn_preserved(*, config: dict[str, Any], path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    try:
+        prior = validate_state(json.loads(path.read_text(encoding="utf-8")), config=config)
+    except (ValueError, json.JSONDecodeError, OSError):
+        return None
+    return prior.get("preferred_spawn")
+
+
 def write_routing(
     *,
     default_window: str,
     insyncerator_window: str,
     source: str,
     updated_by: str | None = None,
+    preferred_spawn: str | None | object = _PRESERVE_PREFERRED_SPAWN,
 ) -> dict[str, Any]:
     """Validate and atomically replace the state file. Epoch increments."""
     config = load_config()
     current_epoch = 0
     path = state_path()
+    preserved_pref = _preferred_spawn_preserved(config=config, path=path)
     if path.is_file():
         try:
             current_epoch = int(validate_state(json.loads(path.read_text(encoding="utf-8")), config=config)["epoch"])
         except (ValueError, json.JSONDecodeError, OSError):
             current_epoch = 0
     now = datetime.now(UTC).isoformat()
-    state = validate_state(
-        {
-            "schema_version": _SCHEMA,
-            "epoch": current_epoch + 1,
-            "as_of": now,
-            "source": source,
-            "scope": _SCOPE,
-            "updated_at": now,
-            "updated_by": updated_by or os.environ.get("USER") or "agent",
-            "default_window": default_window,
-            "insyncerator_window": insyncerator_window,
-        },
-        config=config,
-    )
+    body: dict[str, Any] = {
+        "schema_version": _ROUTING_SCHEMA,
+        "epoch": current_epoch + 1,
+        "as_of": now,
+        "source": source,
+        "scope": _SCOPE,
+        "updated_at": now,
+        "updated_by": updated_by or os.environ.get("USER") or "agent",
+        "default_window": default_window,
+        "insyncerator_window": insyncerator_window,
+    }
+    if preferred_spawn is not _PRESERVE_PREFERRED_SPAWN:
+        if preferred_spawn is not None:
+            body["preferred_spawn"] = preferred_spawn
+    elif preserved_pref is not None:
+        body["preferred_spawn"] = preserved_pref
+    state = validate_state(body, config=config)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
+    return state
+
+
+def write_preferred_spawn(
+    *,
+    preferred_spawn: str,
+    source: str,
+    updated_by: str | None = None,
+    emit: bool = True,
+) -> dict[str, Any]:
+    """Set ``preferred_spawn`` without changing home/insyncerator windows."""
+    from cursor_bridge.grok_routing_events import emit_preferred_spawn_written
+
+    config = load_config()
+    display = _require_window(config, preferred_spawn)
+    current = load_routing()
+    actor = updated_by or os.environ.get("USER") or "agent"
+    state = write_routing(
+        default_window=current["default_window"],
+        insyncerator_window=current["insyncerator_window"],
+        source=source,
+        updated_by=actor,
+        preferred_spawn=display,
+    )
+    if emit:
+        emit_preferred_spawn_written(
+            preferred_spawn=display,
+            epoch=int(state["epoch"]),
+            authority="grok-window-routing",
+            projection="spawn",
+            recovery="write_preferred_spawn",
+            updated_by=actor,
+            source=source,
+        )
     return state
 
 
