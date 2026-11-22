@@ -25,7 +25,7 @@ def test_resolve_cursor_grok_omit_fast_true() -> None:
     """Grok 4.7 omit-path emits context=256k and fast=true.
 
     ListModels' default variant is context=500k. The card pins 256k.
-    Fast omit-path matches ListModels / a:35451 (pin fast=false for Standard).
+    Fast omit-path matches ListModels / a:44605 (set fast=false for Standard).
     """
     from cursor_capabilities import default_variant, supported_knobs
 

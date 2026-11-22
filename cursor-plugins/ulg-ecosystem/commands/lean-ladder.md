@@ -2,7 +2,7 @@ Lean ladder — thin wrapper over the lean-dispatch paste template.
 
 ## Purpose
 
-Invokes the lean-dispatch ladder for one work item: externalized confer, plan, optional plan review, implement, and pre-land review. Procedure, leg order, wake modes, guards, review rosters, and completion rules are stated only in the template. Load the template, fill slots from the parameters below, and follow its sections in order.
+Invokes the lean-dispatch ladder for one work item: externalized confer, plan, optional plan review, implement, and pre-land review. A successful run drives Auto-runnable work through land → housekeeping (residuals filed via `residual-imprint`) → tab rename `{n} [closed] {slug}`. Procedure, leg order, wake modes, guards, review rosters, and completion rules are stated only in the template. Load the template, fill slots from the parameters below, and follow its sections in order.
 
 **Template SOT (fill and run):** `cortex://notes/system/templates/lean-dispatch-ladder.md` — `fs md_list`, then `md_read` the sections you need; plain `fs(op="read")` returns only a manifest.
 
@@ -22,7 +22,7 @@ Use the `lean-dispatch` skill (skill=`lean-dispatch`; Cursor arc=this command). 
 | `slug` | no | **inferred** (see Slug inference) | `work_key=todo:<slug>` | `{{slug}}` throughout |
 | `packet` | no | `cortex://notes/tmp/packets/<slug>-packet.md` | Seed sidecar URI | `{{packet}}` |
 | `retrieval_report` | no | `cortex://notes/tmp/packets/<slug>-retrieval-report.md` | Seed retrieval report | `{{retrieval_report}}` |
-| `architect_model` | no | `cdp/fable-5.2` | Leg 1 wire | `{{architect_model}}` |
+| `architect_model` | no | `cdp/fable-5.2` | Leg 1 wire — before accepting this default, honor `decision:cdp-fable-channel-outage` (`consult-routing` § CDP transport); if an open until-window applies, use that assertion's substitute | `{{architect_model}}` |
 | `architect_effort` | no | `high` | Leg 1 `reasoning_effort` | `{{architect_effort}}` |
 | `implement_model` | no | `cursor/composer-2.5` | Leg 3 wire (`cursor/*` only) | `{{implement_model}}` |
 | `lane` | no | `B` | Leg 3 lane | `{{lane}}` |
@@ -48,7 +48,7 @@ Prose parameters (`planner`, `wake`) are not `{{slots}}`; the template names whi
 ## Procedure
 
 1. **Parse** parameters and defaults; infer `slug` when absent. Echo resolved values in ≤8 lines.
-2. **Rename this tab** — once `slug` is resolved, rename the tab that runs the legs with Cursor's `rename_chat`: title `lean-ladder {slug}`; when the run has a bus thread id `{n}` (after § Wake registration, or the first worker thread when `wake=none`), rename once more to `{n} {slug}`. Invoking `/lean-ladder` is the rename ask: do not wait to be asked again. `rename_chat` unavailable or failed ⇒ say so once and continue; no retry loop. With `planner=glass:<n>` the spawned tab renames itself, not the spawning seat.
+2. **Rename this tab** — once `slug` is resolved, rename the tab that runs the legs with Cursor's `rename_chat`: title `lean-ladder {slug}`; when the run has a bus thread id `{n}` (after § Wake registration, or the first worker thread when `wake=none`), rename once more to `{n} {slug}`; after § Completion housekeeping on a successful arc (no Auto-runnable work left; residuals already imprinted), rename once more to `{n} [closed] {slug}` (or `lean-ladder [closed] {slug}` only if no bus thread id ever existed). `BLOCKED` or an open operator gate ⇒ keep `{n} {slug}` without `[closed]`. Invoking `/lean-ladder` is the rename ask: do not wait to be asked again. `rename_chat` unavailable or failed ⇒ say so once and continue; no retry loop. With `planner=glass:<n>` the spawned tab renames itself, not the spawning seat.
 3. **Register wakes first (default, not optional)** — unless the operator passed `wake=none`, run § Wake registration (`whereami` → `subscribe` → `subscriptions` verify; mailbox `cursor-{slug}`, scope = the arc thread) immediately after the arc thread exists and before retrieval, packets, or any dispatch. Quote the verified row id. `whereami` unresolved, a refused `subscribe`, or no row ⇒ post BLOCKED / report and stop; never fall back to `wake=none`. After every admit, end the turn idle for `BRIDGE_WAKE`.
 4. **Template** — substitute slots and prose flags, then follow the template only:
    - § Preflight (before any dispatch)
@@ -74,5 +74,5 @@ Prose parameters (`planner`, `wake`) are not `{{slots}}`; the template names whi
 | Light / heavy fork | Light path and fork to heavy |
 | Legs 1–4, 2b, failed gate | Legs (run in order; one bounded step each) |
 | Closeout harvest rules | Selective reading of closeouts (md tooling only) |
-| Bus completion turn | Completion (quote, do not narrate) |
+| Bus completion turn, housekeeping, closed-tab rename | Completion (quote, do not narrate) |
 | Whole-file review rule | Leg 4 — Pre-land review (before merge) (lead-in Whole-file and diff-read rule) |

@@ -219,7 +219,7 @@ def test_effective_knobs_grok_omit_path_fast_true() -> None:
 
 
 def test_effective_knobs_explicit_fast_false() -> None:
-    """Caller pin fast=false wins over the omit-path speed default."""
+    """Caller fast=false wins over the omit-path card default."""
     assert effective_knobs("grok-4.7", {"effort": "xhigh", "fast": "false"}) == {
         "context": "256k",
         "effort": "xhigh",

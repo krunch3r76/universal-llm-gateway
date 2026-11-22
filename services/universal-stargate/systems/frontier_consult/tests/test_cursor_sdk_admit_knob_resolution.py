@@ -148,7 +148,7 @@ async def test_admit_reports_knob_outcomes(
         **common,
     )
     assert result2["knob_resolution"]["fast"] == {
-        "status": "policy_default",
+        "status": "card_default",
         "requested": "",
         "forwarded": "true",
         "supported": ["false", "true"],

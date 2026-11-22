@@ -199,11 +199,11 @@ def test_composer_omit_fast_fills_policy_true(
         model_knobs=None,
     )
     assert result.aligned_knobs == {"fast": "true"}
-    assert result.knob_resolution["fast"].status == "policy_default"
+    assert result.knob_resolution["fast"].status == "card_default"
     assert "effort" not in result.knob_resolution
 
 
-def test_conductor_grok_omit_fast_fills_policy_true(
+def test_conductor_grok_omit_fast_fills_card_default_true(
     captured_events: dict[str, list[Any]],
 ) -> None:
     result = align_cursor_knobs(
@@ -212,7 +212,7 @@ def test_conductor_grok_omit_fast_fills_policy_true(
         model_knobs=None,
     )
     assert result.aligned_knobs["fast"] == "true"
-    assert result.knob_resolution["fast"].status == "policy_default"
+    assert result.knob_resolution["fast"].status == "card_default"
     assert result.aligned_knobs["effort"] == "low"
     assert not any(w.code == "knob_policy_override" for w in result.warnings)
 

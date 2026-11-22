@@ -37,7 +37,7 @@ This section is the `cdp/` substrate (web-anthropic-cdp). Conductor and review d
 
 `cdp/` wires: `cdp/opus-5.5`, `cdp/fable-5.2`, `cdp/fable-5.1`, `cdp/sonnet`, `cdp/sonnet-5.5` → poll `poll_hint`. `cdp/sonnet` is Sonnet 5.5; `cdp/sonnet-5` is legacy.
 
-Reasoning strength, low → high. Walk effort `high` → `extra` → `max` inside a rung before the next wire. Opus 5 reasons harder than Opus 5.5. Fable routing: prefer `fable-5.2`; legacy `fable-5.1` / `fable-5` pins for rollback. Opus versions share one usage channel; Fable versions share the other. Fable can exhaust while Opus remains. Name the full wire. Bare `cdp/opus` → `cdp/opus-5.5`; bare `cdp/fable` → `cdp/fable-5.2`.
+Reasoning strength, low → high. Walk effort `high` → `extra` → `max` inside a rung before the next wire. Opus 5 reasons harder than Opus 5.5. Fable routing: prefer `fable-5.2`; legacy `fable-5.1` / `fable-5` pins for rollback. Opus versions share one usage channel; Fable versions share the other. Fable can exhaust while Opus remains. **Before any `cdp/fable-*` (or API Fable): `entity_get` `decision:cdp-fable-channel-outage`; if an open until-window still applies, do not fire Fable — use the substitute named on that assertion (`cdp/opus-5.5` or nested-grok).** Name the full wire. Bare `cdp/opus` → `cdp/opus-5.5`; bare `cdp/fable` → `cdp/fable-5.2`.
 
 | Rung | Wire |
 |---|---|

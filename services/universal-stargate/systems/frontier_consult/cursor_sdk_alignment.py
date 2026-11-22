@@ -44,6 +44,7 @@ class KnobOutcome:
         "dropped_unsupported",
         "invalid_value",
         "policy_default",
+        "card_default",
         "policy_override",
     ]
     requested: str
@@ -180,6 +181,28 @@ def _resolve_knob(
     aligned_knobs[name] = value
 
 
+def _fill_default_knob(
+    *,
+    model_id: str,
+    name: str,
+    value: str,
+    knob_resolution: dict[str, KnobOutcome],
+    aligned_knobs: dict[str, str],
+    status: Literal["policy_default", "card_default"],
+) -> None:
+    """Stamp an omit-path fill. policy_default = workflow/contract; card_default = KnobSpec."""
+    spec = supported_knobs(model_id).get(name)
+    if spec is None or value not in spec.accepted:
+        return
+    knob_resolution[name] = KnobOutcome(
+        status=status,
+        requested="",
+        forwarded=value,
+        supported=tuple(spec.accepted),
+    )
+    aligned_knobs[name] = value
+
+
 def _fill_policy_knob(
     *,
     model_id: str,
@@ -188,16 +211,32 @@ def _fill_policy_knob(
     knob_resolution: dict[str, KnobOutcome],
     aligned_knobs: dict[str, str],
 ) -> None:
-    spec = supported_knobs(model_id).get(name)
-    if spec is None or value not in spec.accepted:
-        return
-    knob_resolution[name] = KnobOutcome(
+    _fill_default_knob(
+        model_id=model_id,
+        name=name,
+        value=value,
+        knob_resolution=knob_resolution,
+        aligned_knobs=aligned_knobs,
         status="policy_default",
-        requested="",
-        forwarded=value,
-        supported=tuple(spec.accepted),
     )
-    aligned_knobs[name] = value
+
+
+def _fill_card_default_knob(
+    *,
+    model_id: str,
+    name: str,
+    value: str,
+    knob_resolution: dict[str, KnobOutcome],
+    aligned_knobs: dict[str, str],
+) -> None:
+    _fill_default_knob(
+        model_id=model_id,
+        name=name,
+        value=value,
+        knob_resolution=knob_resolution,
+        aligned_knobs=aligned_knobs,
+        status="card_default",
+    )
 
 
 def align_cursor_knobs(
@@ -242,11 +281,10 @@ def align_cursor_knobs(
                 knob_resolution=knob_resolution,
                 aligned_knobs=aligned_knobs,
             )
-    # Composer + Grok omit-path: fill card fast default (true) so
-    # knob_resolution reports policy_default and the wire matches
-    # build_model_selection (a:35451). Explicit model_knobs.fast wins above.
+    # Composer + Grok omit-path: card KnobSpec.default (fast=true) — not a
+    # policy pin. Matches build_model_selection; explicit model_knobs.fast wins.
     if "fast" not in wire and "fast" in card and card["fast"].default is not None:
-        _fill_policy_knob(
+        _fill_card_default_knob(
             model_id=model_id,
             name="fast",
             value=card["fast"].default,

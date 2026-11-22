@@ -435,9 +435,9 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
     # Cursor Grok 4.5. Live catalog GET :8091/api/v1/cursor/catalog 2026-11-21:
     # effort low|medium|high (no xhigh), fast; no context knob. Cursor docs +
     # forum: fixed 256k window (not the native xAI 500k). ListModels and
-    # team_dispatch omit-path both default fast=true (a:35451 / a:35453).
+    # team_dispatch omit-path both default fast=true (card default, a:44605).
     # Effort default high per cursor.com/docs/models/grok-4-5. Callers that
-    # want Standard pin model_knobs.fast=false (judgment hops already do).
+    # want Standard set model_knobs.fast=false (judgment hops already do).
     "grok-4.5": ModelCapability(
         knobs={
             "effort": KnobSpec(accepted=("low", "medium", "high"), default="high"),
@@ -452,12 +452,12 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         probed_at="2026-11-21",
     ),
     # Cursor Grok 4.7. ListModels accepts context=256k|500k and its default
-    # variant is 500k (long-context, 2× the standard rate). team_dispatch pins
-    # 256k unless the caller sets context=500k. Fast omit-path is true
-    # (a:35451); pin model_knobs.fast=false for Standard. Effort's live
-    # parameter id is reasoning_effort (see cursor_models).
-    # context_window_tokens is the default window; the context knob is the
-    # two-window card.
+    # variant is 500k (long-context, 2× the standard rate). team_dispatch
+    # defaults context to 256k unless the caller sets context=500k. Fast
+    # omit-path default is true (card default, a:44605); callers set
+    # model_knobs.fast=false for Standard. Effort's live parameter id is
+    # reasoning_effort (see cursor_models). context_window_tokens is the
+    # default window; the context knob is the two-window card.
     "grok-4.7": ModelCapability(
         knobs={
             "context": KnobSpec(accepted=("256k", "500k"), default="256k"),
