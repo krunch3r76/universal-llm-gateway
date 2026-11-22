@@ -6,7 +6,7 @@ Invokes the lean-dispatch ladder for one work item: externalized confer, plan, o
 
 **Template SOT (fill and run):** `cortex://notes/system/templates/lean-dispatch-ladder.md` — `fs md_list`, then `md_read` the sections you need; plain `fs(op="read")` returns only a manifest.
 
-Use the `lean-dispatch` skill. Use the `consult-routing` skill. Use the `retrieval-before-authoring` skill.
+Use the `lean-dispatch` skill (skill=`lean-dispatch`; Cursor arc=this command). Use the `consult-routing` skill. Use the `retrieval-before-authoring` skill.
 
 ## Usage
 

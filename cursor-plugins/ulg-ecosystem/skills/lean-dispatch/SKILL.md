@@ -46,6 +46,8 @@ Balance load across bot, cursor-sdk, CDP — ¬ outsource everything. "Maestro" 
 - **In-flight gate:** read `team_dispatch(op="registry", work_key_prefix=<key>)` first; never retry a work_key while a non-terminal dispatch holds it (`CURSOR_SOURCE_REF_IN_FLIGHT`, 22910–22914).
 - **Harvest:** envelope only (§ Packet in / envelope out; `cortex://notes/system/templates/closeout-envelope.md`); peer bots return the same fields by SendToAgent. Authoring lessons: `runbook:dispatch-authoring`.
 
+**Parallel steps (temporary):** `cortex://notes/system/runbooks/grok-parallel-steps-guide.md` — Leg 4 single-context / no-subagents default takes precedence unless the commissioning packet names that URI.
+
 ## Duty → wire
 
 Labels are routing shorthand. Address a child with its **packet**, never its label; never costume a child. Bare **Composer** (`cursor/composer-2.5`) is a wire string, ¬ a duty name.
