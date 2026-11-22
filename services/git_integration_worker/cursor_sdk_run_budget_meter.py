@@ -21,6 +21,10 @@ from services.git_integration_worker.cursor_sdk_run_limits import (
     RunLimits,
     read_run_limits,
 )
+from services.git_integration_worker.cursor_sdk_run_limits_events import (
+    emit_run_budget_exhausted,
+    emit_run_budget_warned,
+)
 from services.git_integration_worker.cursor_sdk_steer_inject import (
     SteerDepositResult,
     deposit_steer_directive,
@@ -300,6 +304,15 @@ def maybe_deposit_budget_warn(
         deposit=deposit,
         ledger=ledger,
     )
+    record_json = str(claimed_row.get("record_json") or "")
+    limits = _limits_from_record(record_json)
+    if limits is not None and limits.warn_at is not None:
+        emit_run_budget_warned(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            tool_call_count=tool_call_count,
+            warn_at=limits.warn_at,
+        )
     return deposit
 
 
@@ -382,6 +395,13 @@ def maybe_park_budget_exhausted(
         CursorDispatchLedger.instance(),
         dispatch_id=dispatch_id,
         patch={"budget_exhausted": True, "budget_parked": True},
+    )
+    thread_id = str(row.get("thread_id") or "")
+    emit_run_budget_exhausted(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        tool_call_count=tool_call_count,
+        tool_call_budget=limits.tool_call_budget,
     )
     return result
 

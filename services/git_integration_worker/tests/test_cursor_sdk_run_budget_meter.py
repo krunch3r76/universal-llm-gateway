@@ -64,7 +64,17 @@ def _admit(ledger: CursorDispatchLedger, dispatch_id: str = "budget-meter-1") ->
     return dispatch_id
 
 
-def test_warn_once_latched() -> None:
+@pytest.fixture
+def emitted(monkeypatch: pytest.MonkeyPatch) -> list:
+    events: list = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_run_limits_events.emit_frontier_event",
+        lambda event: events.append(event),
+    )
+    return events
+
+
+def test_warn_once_latched(emitted: list) -> None:
     ledger = CursorDispatchLedger.instance()
     dispatch_id = _admit(ledger)
     ledger.merge_record_json(
@@ -123,9 +133,14 @@ def test_warn_once_latched() -> None:
         dispatch_id=dispatch_id, claim_token="t2", tool_call_count=17, ledger=ledger
     )
     assert second == "latched"
+    warned = [e for e in emitted if e.signal == "frontier.sdk.run.budget.warned"]
+    assert len(warned) == 1
+    assert warned[0].payload["dispatch_id"] == dispatch_id
+    assert warned[0].payload["tool_call_count"] == 16
+    assert warned[0].payload["warn_at"] == 15
 
 
-def test_exhaustion_parks_budget_exhausted() -> None:
+def test_exhaustion_parks_budget_exhausted(emitted: list) -> None:
     ledger = CursorDispatchLedger.instance()
     dispatch_id = _admit(ledger, dispatch_id="budget-meter-2")
     ledger.merge_record_json(
@@ -159,6 +174,12 @@ def test_exhaustion_parks_budget_exhausted() -> None:
     reading = read_run_budget_meter(str(rec["record_json"]))
     assert reading.budget_exhausted is True
     assert RUN_BUDGET_EXHAUSTED_REASON == "tool-call-budget-exhausted"
+    exhausted = [
+        e for e in emitted if e.signal == "frontier.sdk.run.budget.exhausted"
+    ]
+    assert len(exhausted) == 1
+    assert exhausted[0].payload["tool_call_count"] == 5
+    assert exhausted[0].payload["tool_call_budget"] == 5
 
 
 def test_stream_tool_call_count_persists() -> None:

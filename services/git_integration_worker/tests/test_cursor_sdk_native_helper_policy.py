@@ -41,6 +41,11 @@ def test_packet_opt_in_intersect_allowlist() -> None:
 def test_denial_recorded_harmless(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from services.git_integration_worker import cursor_sdk_native_helper_policy as mod
 
+    events: list = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_run_limits_events.emit_frontier_event",
+        lambda event: events.append(event),
+    )
     monkeypatch.setattr(mod, "native_helper_spool_dir", lambda: tmp_path)
     append_native_helper_attempt(
         "d-test",
@@ -49,6 +54,10 @@ def test_denial_recorded_harmless(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     attempts = harvest_native_helper_attempts("d-test")
     assert len(attempts) == 1
     assert attempts[0]["denied"] is True
+    denied = [e for e in events if e.signal == "frontier.sdk.native.helper.denied"]
+    assert len(denied) == 1
+    assert denied[0].payload["dispatch_id"] == "d-test"
+    assert denied[0].payload["kind"] == "generalPurpose"
 
 
 def test_unenforced_stated_when_sdk_outside_probe_set(

@@ -136,6 +136,32 @@ def native_helper_attempts_path(dispatch_id: str) -> Path:
     return base / f"{dispatch_id}.jsonl"
 
 
+def _thread_id_for_dispatch(dispatch_id: str) -> str:
+    if not dispatch_id or dispatch_id == "unknown":
+        return "unknown"
+    try:
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            CursorDispatchLedger,
+        )
+
+        with CursorDispatchLedger.instance()._connect() as conn:
+            row = conn.execute(
+                "SELECT thread_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+        if row is not None:
+            tid = row["thread_id"]
+            if tid is not None and str(tid).strip():
+                return str(tid)
+    except Exception:
+        logger.debug(
+            "native_helper_attempt: thread_id lookup failed for %s",
+            dispatch_id,
+            exc_info=True,
+        )
+    return "unknown"
+
+
 def append_native_helper_attempt(
     dispatch_id: str,
     record: Mapping[str, Any],
@@ -144,6 +170,17 @@ def append_native_helper_attempt(
     line = json.dumps(dict(record), separators=(",", ":")) + "\n"
     with path.open("a", encoding="utf-8") as handle:
         handle.write(line)
+    if record.get("denied"):
+        from services.git_integration_worker.cursor_sdk_run_limits_events import (
+            emit_native_helper_denied,
+        )
+
+        kind = str(record.get("kind") or "unspecified")
+        emit_native_helper_denied(
+            dispatch_id=dispatch_id,
+            thread_id=_thread_id_for_dispatch(dispatch_id),
+            kind=kind,
+        )
 
 
 def harvest_native_helper_attempts(dispatch_id: str) -> list[dict[str, Any]]:
