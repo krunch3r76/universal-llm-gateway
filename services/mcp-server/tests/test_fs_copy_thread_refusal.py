@@ -9,11 +9,13 @@ from unittest.mock import patch
 import pytest
 from fs_impl import fs_impl
 from project_ops import workspaces_impl_registry
+from tools._hashing import sha256_hex_of_file
 from tools.filesystem import _cross_sandbox as cross_sandbox
 from tools.filesystem import _ops_paths as ops_paths
 from tools.filesystem import _ops_text as ops_text
 from tools.filesystem import _paths as paths_mod
 from tools.filesystem._files_dispatcher import dispatch_files_op
+from tools.filesystem._ops_paths import CopyRefusalError
 
 from tools import _file_helpers
 
@@ -89,6 +91,85 @@ def copy_roots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, P
         lambda: cortex_root,
     )
     return cortex_root, workspaces_root
+
+
+def test_same_sandbox_cortex_copy_shared_dest_without_cas_refuses(
+    copy_roots: tuple[Path, Path],
+) -> None:
+    """Same-sandbox cortex copy onto existing shared dest → structured refuse."""
+    cortex_root, _workspaces_root = copy_roots
+    src_rel = "tmp/same-sb-src.md"
+    dest_rel = "notes/system/specs/same-sb-shared-dest.md"
+    src = cortex_root / src_rel
+    dest = cortex_root / dest_rel
+    src.parent.mkdir(parents=True, exist_ok=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("new-body\n", encoding="utf-8")
+    prior = "prior-shared\n"
+    dest.write_text(prior, encoding="utf-8")
+    prior_sha = sha256_hex_of_file(dest)
+
+    result = fs_impl(
+        **_fs_kwargs(
+            sandbox="cortex",
+            path=src_rel,
+            target=dest_rel,
+        )
+    )
+
+    assert result.get("reason") == "expected_sha256.required", result
+    assert "error" in result
+    assert dest.read_text(encoding="utf-8") == prior
+    assert sha256_hex_of_file(dest) == prior_sha
+
+
+def test_same_sandbox_cortex_copy_shared_dest_with_matching_cas_succeeds(
+    copy_roots: tuple[Path, Path],
+) -> None:
+    """Same-sandbox cortex copy with matching expected_sha256 overwrites dest."""
+    cortex_root, _workspaces_root = copy_roots
+    src_rel = "tmp/same-sb-cas-src.md"
+    dest_rel = "notes/system/specs/same-sb-cas-dest.md"
+    src = cortex_root / src_rel
+    dest = cortex_root / dest_rel
+    src.parent.mkdir(parents=True, exist_ok=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("replaced-body\n", encoding="utf-8")
+    dest.write_text("incumbent\n", encoding="utf-8")
+    expected = sha256_hex_of_file(dest)
+
+    result = fs_impl(
+        **_fs_kwargs(
+            sandbox="cortex",
+            path=src_rel,
+            target=dest_rel,
+            expected_sha256=expected,
+        )
+    )
+
+    assert result.get("status") == "copied", result
+    assert dest.read_text(encoding="utf-8") == "replaced-body\n"
+    assert sha256_hex_of_file(dest) == sha256_hex_of_file(src)
+
+
+def test_same_sandbox_copy_refusal_never_raises_copy_refusal_error(
+    copy_roots: tuple[Path, Path],
+) -> None:
+    """CopyRefusalError must not escape the files dispatcher to callers."""
+    cortex_root, _workspaces_root = copy_roots
+    src_rel = "tmp/same-sb-escape-src.md"
+    dest_rel = "notes/system/specs/same-sb-escape-dest.md"
+    src = cortex_root / src_rel
+    dest = cortex_root / dest_rel
+    src.parent.mkdir(parents=True, exist_ok=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("attempt\n", encoding="utf-8")
+    dest.write_text("held\n", encoding="utf-8")
+
+    result = dispatch_files_op(op="copy", path=src_rel, target=dest_rel)
+
+    assert "error" in result, result
+    assert not isinstance(result, CopyRefusalError)
 
 
 def test_copy_cortex_to_cortex_with_thread_not_refused_by_lane_rule(

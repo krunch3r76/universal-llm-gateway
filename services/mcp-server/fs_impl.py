@@ -26,6 +26,7 @@ from tools.filesystem._fs_dispatch import (
     dispatch_workspaces_op,
     validate_op_params,
 )
+from tools.filesystem._ops_paths import CopyRefusalError
 from tools.filesystem._paths import FS_WORKFLOW_HINTS
 
 if TYPE_CHECKING:
@@ -479,5 +480,7 @@ def fs_impl(
         return result
     except WriteVerifyError as exc:
         return write_verify_error_dict(exc)
+    except CopyRefusalError as exc:
+        return exc.payload
     except (ValueError, FileNotFoundError) as exc:
         return {"error": str(exc)}

@@ -197,7 +197,13 @@ class CopyRefusalError(Exception):
         super().__init__(str(payload.get("error")))
 
 
-def copy_file_impl(source: str, destination: str) -> dict[str, str]:
+def copy_file_impl(
+    source: str,
+    destination: str,
+    *,
+    if_absent: bool = False,
+    expected_sha256: str | None = None,
+) -> dict[str, Any]:
     """Copy a file within the sandbox."""
     reject_template_tokens(destination)
     src = safe_path(source, for_write=False)
@@ -207,9 +213,38 @@ def copy_file_impl(source: str, destination: str) -> dict[str, str]:
     if not src.is_file():
         raise ValueError(f"Source is not a file: {source!r}")
 
-    dest, digest, _nbytes, replaced = copy_file_verified(
-        src, dst, dest_rel=destination.lstrip("/")
-    )
+    try:
+        dest, digest, _nbytes, replaced = copy_file_verified(
+            src,
+            dst,
+            dest_rel=destination.lstrip("/"),
+            if_absent=if_absent,
+            expected_sha256=expected_sha256,
+        )
+    except CopyRefusalError as exc:
+        record(
+            "mcp.tool.file.copy_rejected",
+            source=source,
+            destination=destination,
+            reason=exc.payload.get("reason", "copy_rejected"),
+        )
+        return exc.payload
+    except SourceDigestMismatchError as exc:
+        record(
+            "mcp.tool.file.copy_rejected",
+            source=source,
+            destination=destination,
+            reason=exc.reason,
+        )
+        return source_digest_mismatch_dict(exc)
+    except PreImageMismatchError as exc:
+        record(
+            "mcp.tool.file.copy_rejected",
+            source=source,
+            destination=destination,
+            reason=exc.reason,
+        )
+        return pre_image_mismatch_dict(exc)
     record("mcp.tool.file.copied", source=source, destination=destination)
     logger.info("copy_file: %s → %s", src, dest)
     src_rel = str(src.relative_to(SANDBOX_ROOT))
