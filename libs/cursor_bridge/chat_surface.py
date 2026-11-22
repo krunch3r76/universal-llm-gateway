@@ -34,6 +34,40 @@ from cursor_bridge.chat_target import (
 
 logger = logging.getLogger(__name__)
 
+_EMPTY_BASIS_VALUES = frozenset(
+    {
+        "messages_present",
+        "pending_no_messages",
+        "empty_conversation",
+        "extractor_miss",
+    }
+)
+
+
+def derive_empty_basis(
+    *,
+    message_turns: list[dict[str, Any]] | None,
+    recent_messages: list[str] | None,
+    has_active_chat: bool | None,
+    generating: bool,
+) -> str:
+    """Classify why a surface snapshot has no readable turns (observability only)."""
+    turns = message_turns or []
+    nonempty_turns = [
+        t for t in turns if isinstance(t, dict) and str(t.get("text") or "").strip()
+    ]
+    if nonempty_turns:
+        return "messages_present"
+    recent = [str(m).strip() for m in (recent_messages or []) if str(m).strip()]
+    if recent:
+        return "messages_present"
+    if has_active_chat is False or has_active_chat is None:
+        return "empty_conversation"
+    if generating:
+        return "pending_no_messages"
+    return "extractor_miss"
+
+
 _PROBE_JS = r"""
 (() => {
   const flat = (el) => (el.innerText || el.getAttribute('aria-label') || '')
@@ -172,12 +206,52 @@ _PROBE_JS = r"""
     const pcls = parent ? (parent.className || '') : '';
     return cls.includes('sand-ehausa') || pcls.includes('sand-ufnvkl');
   };
-  const message_turns = proseEls.map((el) => ({
+  let message_turns = proseEls.map((el) => ({
     role: proseUser(el) ? 'user' : 'assistant',
     text: (el.innerText || '').trim(),
   }));
-  const prose = message_turns.slice(-6).map((t) => t.text);
   const has_active_chat = !!(promptEl);
+  if (message_turns.length === 0 && has_active_chat) {
+    const fallbackRoots = Array.from(document.querySelectorAll(
+      "[data-testid='assistant-message'], [data-testid='user-message'], "
+      + "[data-message-author-role], .markdown, .prose"
+    )).filter((el) => !insideComposer(el));
+  const roleFromEl = (el) => {
+      const attr = (el.getAttribute('data-message-author-role') || '').toLowerCase();
+      if (attr === 'user' || attr === 'assistant') return attr;
+      const tid = (el.getAttribute('data-testid') || '').toLowerCase();
+      if (tid.includes('user')) return 'user';
+      if (tid.includes('assistant')) return 'assistant';
+      return 'assistant';
+    };
+    const seen = new Set();
+    const merged = [];
+    for (const el of fallbackRoots) {
+      const text = (el.innerText || '').trim();
+      if (!text || text.length > 20000) continue;
+      const key = roleFromEl(el) + '\0' + text.slice(0, 200);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push({ role: roleFromEl(el), text });
+      if (merged.length >= 40) break;
+    }
+    if (merged.length) message_turns = merged;
+  }
+  const prose = message_turns
+    .map((t) => (t.text || '').trim())
+    .filter(Boolean)
+    .slice(-6);
+  let empty_basis = 'empty_conversation';
+  const has_turns = message_turns.some((t) => (t.text || '').trim());
+  if (has_turns) {
+    empty_basis = 'messages_present';
+  } else if (!has_active_chat) {
+    empty_basis = 'empty_conversation';
+  } else if (generating) {
+    empty_basis = 'pending_no_messages';
+  } else {
+    empty_basis = 'extractor_miss';
+  }
   return {
     labels,
     items,
@@ -186,6 +260,7 @@ _PROBE_JS = r"""
     recent_messages: prose,
     message_turns,
     has_active_chat,
+    empty_basis,
     selection_agent_id: selectionAgentId,
   };
 })()
@@ -341,6 +416,12 @@ def classify_surface(
         visibility_state=visibility_state,
         ui_banner=ui_banner,
     )
+    empty_basis = derive_empty_basis(
+        message_turns=message_turns,
+        recent_messages=recent_messages,
+        has_active_chat=has_active_chat,
+        generating=bool(generating),
+    )
     result = {
         "state": state,
         "active_title": active,
@@ -354,6 +435,7 @@ def classify_surface(
         "recent_messages": list(recent_messages or []),
         "message_turns": list(message_turns or []),
         "has_active_chat": has_active_chat,
+        "empty_basis": empty_basis,
         "supervision": supervision,
     }
     if emit_events:
@@ -526,6 +608,7 @@ async def _read_surface(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
     has_active_chat = (
         bool(has_active_chat_raw) if isinstance(has_active_chat_raw, bool) else None
     )
+    probe_empty_basis = str(value.get("empty_basis") or "").strip()
     result = classify_surface(
         labels,
         items,
@@ -538,6 +621,8 @@ async def _read_surface(ws_url: str, *, timeout_s: float) -> dict[str, Any]:
         selection_agent_id=str(value.get("selection_agent_id") or ""),
         emit_events=False,
     )
+    if probe_empty_basis in _EMPTY_BASIS_VALUES:
+        result["empty_basis"] = probe_empty_basis
     sel_id = str(value.get("selection_agent_id") or "").strip()
     if sel_id:
         result["selection_agent_id"] = sel_id

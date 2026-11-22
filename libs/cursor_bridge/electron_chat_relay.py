@@ -696,6 +696,7 @@ async def read_endpoint_turn(
                     if str(m).strip()
                 ]
             latest = messages[-1] if messages else ""
+            empty_basis = str(surface.get("empty_basis") or "").strip()
             out = {
                 "ok": True,
                 "endpoint": endpoint.label,
@@ -705,6 +706,7 @@ async def read_endpoint_turn(
                 "active_title": verdict.get("active_title"),
                 "active_agent_id": verdict.get("active_agent_id"),
                 "generating": bool(surface.get("generating")),
+                "empty_basis": empty_basis,
                 "composer_draft": str(surface.get("composer_draft") or ""),
                 "recent_messages": messages,
                 "latest_message": latest,
