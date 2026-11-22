@@ -8,6 +8,8 @@ Invokes the lean-dispatch ladder for one work item: externalized confer, plan, o
 
 Use the `lean-dispatch` skill (skill=`lean-dispatch`; Cursor arc=this command). Use the `consult-routing` skill. Use the `retrieval-before-authoring` skill.
 
+When the plan may assign **host-checkout diagnostics or named pytest** (not lane-B implement), follow template **Leg 2c — Grok host PREFLIGHT** and load `runbook:grok-host-preflight` (`cortex://notes/system/runbooks/grok-host-preflight.md`) before routing.
+
 ## Usage
 
 ```
