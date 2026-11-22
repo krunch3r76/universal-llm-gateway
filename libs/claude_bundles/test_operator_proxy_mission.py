@@ -931,6 +931,22 @@ def test_housekeeping_preamble_has_budgets_not_mission_act_seven() -> None:
     assert out.index("## Budgets") < out.index("## Housekeeping acts")
 
 
+def test_housekeeping_hop_act6_caller_agent_resolves() -> None:
+    """Breaks when housekeeping resume hop omits a deliverable caller_agent (AC2)."""
+    from tools.agent_bus.hop_cdp_caller import resolve_hop_cdp_caller_agent
+
+    act_line = (
+        '6. agent_bus(hop, thread=12286, from_agent=web-anthropic, caller_agent=cursor, '
+        'desired_model=cdp/fable-5.1, desired_effort=medium, hop_kind=mission, '
+        'reason="housekeeping done; resume").'
+    )
+    marker = "caller_agent="
+    start = act_line.index(marker) + len(marker)
+    end = act_line.index(",", start)
+    caller_token = act_line[start:end]
+    assert resolve_hop_cdp_caller_agent(caller_token) == "cursor"
+
+
 def test_housekeeping_hop_prompt_unchanged(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

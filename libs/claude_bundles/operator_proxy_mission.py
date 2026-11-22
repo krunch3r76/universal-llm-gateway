@@ -350,7 +350,7 @@ You are the housekeeping successor for lane {lane}. Your birth record: successor
 3. Rules file: new bullets ≤600 B, superseded wording to the archive, tightened wording where over budget; **proposed** absorb/retire lines only.
 4. Runbook K-index refresh when a K-row moved; monthly archive folder roll when due.
 5. Post TYPE: HOUSEKEEPING_DONE on {lane} to cursor with before/after bytes per surface, K-ids added/removed/proposed, shas.
-6. agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model={maestro_self_hop_model}{maestro_self_hop_effort_arg}, hop_kind=mission, reason="housekeeping done; resume").
+6. agent_bus(hop, thread={lane}, from_agent=web-anthropic, caller_agent=cursor, desired_model={maestro_self_hop_model}{maestro_self_hop_effort_arg}, hop_kind=mission, reason="housekeeping done; resume").
 
 ## Hard refusals (housekeeping — these bind; they are last on purpose)
 

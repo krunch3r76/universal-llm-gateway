@@ -40,6 +40,29 @@ _HOP_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+/-]*$")
 _THREAD_DETAIL_RESUME = "false"
 
 
+def _hop_event_fields(
+    thread_id: str | None = None,
+    *,
+    explicit_work_key: str | None = None,
+    caller_agent: str | None = None,
+    include_work_key: bool = True,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Observability kwargs for ``mcp.agentbus.hop.posted`` / ``hop.rejected``."""
+    fields: dict[str, Any] = dict(extra)
+    tid = (thread_id or "").strip()
+    if tid:
+        fields.setdefault("thread", tid)
+        if include_work_key:
+            resolved = resolve_hop_work_key(tid, explicit_work_key)
+            if resolved:
+                fields["work_key"] = resolved
+    raw_caller = (caller_agent or "").strip()
+    if raw_caller:
+        fields["caller_agent"] = raw_caller
+    return fields
+
+
 def _fetch_thread_detail_for_responsibility(thread_id: str) -> dict[str, Any]:
     """Load thread metadata via agent-bus HTTP relay (no resume envelope)."""
     from ._shared import relay
@@ -262,7 +285,14 @@ async def _hop_dispatch(
             "reason": "hop_thread_required",
         }
     if not trigger:
-        record("mcp.agentbus.hop.rejected", reason="reason_required")
+        record(
+            "mcp.agentbus.hop.rejected",
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                reason="reason_required",
+            ),
+        )
         return {
             "error": "hop: reason is required",
             "reason": "hop_reason_required",
@@ -293,8 +323,11 @@ async def _hop_dispatch(
     if resolved_hop_kind not in VALID_HOP_KINDS:
         record(
             "mcp.agentbus.hop.rejected",
-            reason="hop_kind_invalid",
-            thread=thread_id,
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                reason="hop_kind_invalid",
+            ),
         )
         return {
             "error": "hop: hop_kind must be mission or housekeeping",
@@ -304,7 +337,14 @@ async def _hop_dispatch(
     try:
         model = resolve_hop_successor_model(desired_model)
     except ValueError:
-        record("mcp.agentbus.hop.rejected", reason="model_invalid", thread=thread_id)
+        record(
+            "mcp.agentbus.hop.rejected",
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                reason="model_invalid",
+            ),
+        )
         return {
             "error": "hop: desired_model is not a model id",
             "reason": "hop_model_invalid",
@@ -326,9 +366,12 @@ async def _hop_dispatch(
         env = ban_verdict.reject_envelope or {}
         record(
             "mcp.agentbus.hop.rejected",
-            reason=str(env.get("code") or "model_banned"),
-            thread=thread_id,
-            model=model,
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                reason=str(env.get("code") or "model_banned"),
+                model=model,
+            ),
         )
         return {
             "error": str(env.get("reason") or "hop: model is banned"),
@@ -446,16 +489,23 @@ async def _hop_dispatch(
     if caller_raw and not resolve_hop_cdp_caller_agent(caller_raw):
         record(
             "mcp.agentbus.hop.rejected",
-            reason="hop_caller_agent_invalid",
-            thread=thread_id,
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                caller_agent=caller_raw,
+                reason="hop_caller_agent_invalid",
+            ),
         )
         return hop_invalid_caller_agent_response(caller_raw)
     wire_caller = resolve_hop_cdp_caller_agent(caller_agent)
     if wire_caller is None:
         record(
             "mcp.agentbus.hop.rejected",
-            reason="hop_caller_agent_required",
-            thread=thread_id,
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                reason="hop_caller_agent_required",
+            ),
         )
         return hop_caller_agent_required_response()
 
@@ -496,8 +546,12 @@ async def _hop_dispatch(
     if not commissioned["posted"]:
         record(
             "mcp.agentbus.hop.rejected",
-            reason=commissioned["reason"],
-            thread=thread_id,
+            **_hop_event_fields(
+                thread_id,
+                explicit_work_key=work_key,
+                caller_agent=wire_caller,
+                reason=commissioned["reason"],
+            ),
         )
         return {
             "posted": False,
@@ -516,9 +570,13 @@ async def _hop_dispatch(
     successor_chat_url = (str(raw_url).strip() or None) if raw_url is not None else None
     record(
         "mcp.agentbus.hop.posted",
-        thread=thread_id,
-        reason=trigger,
-        execution_id=execution_id,
+        **_hop_event_fields(
+            thread_id,
+            explicit_work_key=work_key,
+            caller_agent=wire_caller,
+            reason=trigger,
+            execution_id=execution_id,
+        ),
     )
     stamped = dict(result) if isinstance(result, dict) else {"result": result}
     stamped["continuity_hop"] = True

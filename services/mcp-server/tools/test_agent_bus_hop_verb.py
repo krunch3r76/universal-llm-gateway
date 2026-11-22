@@ -286,6 +286,175 @@ def test_hop_dispatch_refuses_undeliverable_explicit_caller() -> None:
     assert result["reason"] == "hop_caller_agent_invalid"
 
 
+@pytest.mark.offline
+def test_hop_posted_event_records_work_key_and_caller_agent() -> None:
+    """Breaks when hop.posted observability drops admit work_key or CDP wake mailbox."""
+    record_mock_holder: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        return {"execution_id": "ex-hop-event-fields"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record") as record_mock,
+            patch(
+                "tools.agent_bus.hop.resolve_hop_work_key",
+                side_effect=lambda _tid, explicit=None: (explicit or "").strip()
+                or "todo:lane-77",
+            ),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            _patch_no_consumption_window(),
+        ):
+            record_mock_holder["mock"] = record_mock
+            return await _hop_dispatch(
+                thread="77",
+                reason="event-fields",
+                from_agent="web-anthropic",
+                caller_agent="cursor-sdk-lane",
+                work_key="todo:explicit-hop",
+            )
+
+    asyncio.run(run())
+    record_mock = record_mock_holder["mock"]
+    posted = [
+        c
+        for c in record_mock.call_args_list
+        if c.args and c.args[0] == "mcp.agentbus.hop.posted"
+    ]
+    assert len(posted) == 1
+    kwargs = posted[0].kwargs
+    assert kwargs["work_key"] == "todo:explicit-hop"
+    assert kwargs["caller_agent"] == "cursor-sdk-lane"
+    assert kwargs["thread"] == "77"
+    assert kwargs["execution_id"] == "ex-hop-event-fields"
+
+
+@pytest.mark.offline
+def test_hop_posted_event_work_key_from_hop_precedence_when_omitted() -> None:
+    """Breaks when hop.posted stops falling back to hop_precedence work_key."""
+    record_mock_holder: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        return {"execution_id": "ex-hop-precedence-wk"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record") as record_mock,
+            patch(
+                "tools.agent_bus.hop.resolve_hop_work_key",
+                side_effect=lambda tid, explicit=None: (
+                    "todo:from-precedence" if not (explicit or "").strip() else explicit
+                ),
+            ),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+            _patch_no_consumption_window(),
+        ):
+            record_mock_holder["mock"] = record_mock
+            return await _hop_dispatch(
+                thread="12286",
+                reason="precedence-fallback",
+                from_agent="web-anthropic",
+                caller_agent="cursor",
+            )
+
+    asyncio.run(run())
+    record_mock = record_mock_holder["mock"]
+    posted = [
+        c
+        for c in record_mock.call_args_list
+        if c.args and c.args[0] == "mcp.agentbus.hop.posted"
+    ]
+    assert posted[0].kwargs["work_key"] == "todo:from-precedence"
+
+
+@pytest.mark.offline
+def test_hop_rejected_invalid_caller_records_caller_and_work_key() -> None:
+    record_mock_holder: dict[str, Any] = {}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record") as record_mock,
+            patch(
+                "tools.agent_bus.hop.resolve_hop_work_key",
+                return_value="todo:reject-wk",
+            ),
+            patch("tools.frontier._relay") as relay_mock,
+        ):
+            record_mock_holder["mock"] = record_mock
+            result = await _hop_dispatch(
+                thread="77",
+                reason="bad-caller-event",
+                from_agent="web-anthropic",
+                caller_agent="team",
+                work_key="todo:reject-wk",
+            )
+            relay_mock.assert_not_called()
+            return result
+
+    asyncio.run(run())
+    record_mock = record_mock_holder["mock"]
+    rejected = [
+        c
+        for c in record_mock.call_args_list
+        if c.args and c.args[0] == "mcp.agentbus.hop.rejected"
+    ]
+    assert len(rejected) == 1
+    assert rejected[0].kwargs["caller_agent"] == "team"
+    assert rejected[0].kwargs["work_key"] == "todo:reject-wk"
+
+
+@pytest.mark.offline
+def test_hop_rejected_caller_required_records_work_key() -> None:
+    record_mock_holder: dict[str, Any] = {}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record") as record_mock,
+            patch(
+                "tools.agent_bus.hop.resolve_hop_work_key",
+                return_value="todo:required-wk",
+            ),
+            patch("tools.frontier._relay"),
+        ):
+            record_mock_holder["mock"] = record_mock
+            return await _hop_dispatch(
+                thread="77",
+                reason="missing-caller-event",
+                from_agent="web-anthropic",
+            )
+
+    asyncio.run(run())
+    record_mock = record_mock_holder["mock"]
+    rejected = [
+        c
+        for c in record_mock.call_args_list
+        if c.args and c.args[0] == "mcp.agentbus.hop.rejected"
+    ]
+    assert len(rejected) == 1
+    assert rejected[0].kwargs["work_key"] == "todo:required-wk"
+    assert "caller_agent" not in rejected[0].kwargs
+
+
 def test_hop_generate_payload_explicit_caller_passthrough() -> None:
     decision = {
         "post": True,
