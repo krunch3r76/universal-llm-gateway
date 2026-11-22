@@ -74,6 +74,37 @@ def test_read_latest_forwards_empty_basis_and_generating() -> None:
     assert out["empty_basis"] == "pending_no_messages"
 
 
+def test_read_latest_forwards_role_labelled_message_turns() -> None:
+    with patch(
+        "interlocutor.display_adapter.read_endpoint_turn", new_callable=AsyncMock
+    ) as read_turn:
+        read_turn.return_value = {
+            "ok": True,
+            "latest_message": "TEAL-79-LARCH",
+            "generating": False,
+            "empty_basis": "messages_present",
+            "recent_messages": ["U-MARKER", "progress…", "TEAL-79-LARCH"],
+            "message_turns": [
+                {"role": "user", "text": "U-MARKER"},
+                {"role": "assistant", "text": "progress…"},
+                {"role": "assistant", "text": "TEAL-79-LARCH"},
+                {"role": "tool", "text": "drop-me"},
+                {"role": "assistant", "text": ""},
+            ],
+            "latest_fingerprint": "abc",
+            "active_agent_id": "a1",
+            "active_title": "Orion scratch",
+            "endpoint": ":8:a1",
+        }
+        out = execute_read(target="display:8/agent-1", coverage="latest")
+    assert out["empty_basis"] == "messages_present"
+    assert out["message_turns"] == [
+        {"role": "user", "text": "U-MARKER"},
+        {"role": "assistant", "text": "progress…"},
+        {"role": "assistant", "text": "TEAL-79-LARCH"},
+    ]
+
+
 def test_read_display_empty_basis_discriminates_pending_extractor_empty() -> None:
     target = DisplayEightTarget(display="8", agent_id="agent-1")
     cases = [

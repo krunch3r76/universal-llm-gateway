@@ -143,6 +143,16 @@ async def read_display_latest(target: DisplayEightTarget) -> dict[str, Any]:
         )
     recent = list(snap.get("recent_messages") or [])
     empty_basis = str(snap.get("empty_basis") or "").strip()
+    turns_raw = list(snap.get("message_turns") or [])
+    message_turns: list[dict[str, str]] = []
+    for raw in turns_raw:
+        if not isinstance(raw, dict):
+            continue
+        role = str(raw.get("role") or "").strip()
+        text = str(raw.get("text") or "").strip()
+        if role not in {"user", "assistant"} or not text:
+            continue
+        message_turns.append({"role": role, "text": text})
     return _with_display(
         target,
         {
@@ -157,6 +167,8 @@ async def read_display_latest(target: DisplayEightTarget) -> dict[str, Any]:
             "active_agent_id": snap.get("active_agent_id"),
             "active_title": snap.get("active_title"),
             "recent_messages": recent[-3:],
+            # Cap with recent_messages window — role-labelled pair for Orion.
+            "message_turns": message_turns[-3:],
             "endpoint": snap.get("endpoint"),
         },
     )

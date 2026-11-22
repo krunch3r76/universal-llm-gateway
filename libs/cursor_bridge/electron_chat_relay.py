@@ -689,12 +689,24 @@ async def read_endpoint_turn(
             surface, verdict = res["surface"], res["verdict"]
             if surface.get("stale_dom"):
                 messages: list[str] = []
+                message_turns: list[dict[str, str]] = []
             else:
                 messages = [
                     str(m).strip()
                     for m in (surface.get("recent_messages") or [])
                     if str(m).strip()
                 ]
+                # Already extracted on the Glass/CDP probe — forward role+text
+                # so interlocutor reads are role-labelled without re-scraping.
+                message_turns = []
+                for raw in surface.get("message_turns") or []:
+                    if not isinstance(raw, dict):
+                        continue
+                    role = str(raw.get("role") or "").strip()
+                    text = str(raw.get("text") or "").strip()
+                    if role not in {"user", "assistant"} or not text:
+                        continue
+                    message_turns.append({"role": role, "text": text})
             latest = messages[-1] if messages else ""
             empty_basis = str(surface.get("empty_basis") or "").strip()
             out = {
@@ -709,6 +721,7 @@ async def read_endpoint_turn(
                 "empty_basis": empty_basis,
                 "composer_draft": str(surface.get("composer_draft") or ""),
                 "recent_messages": messages,
+                "message_turns": message_turns,
                 "latest_message": latest,
                 "latest_fingerprint": message_fingerprint(latest) if latest else "",
                 "restore_agent_id": restore_agent_id,
