@@ -243,10 +243,6 @@ def test_fs_impl_copy_withholds_copied_when_verify_fails(
     src.parent.mkdir(parents=True)
     src.write_text("source-bytes\n", encoding="utf-8")
     dest_uri = "cortex://notes/system/threads/a37974-copy/source/verify.json"
-    from tools._durable_write import verify_persisted
-
-    real_verify = verify_persisted
-
     from tools._durable_write import WriteVerifyError
 
     def _tamper_verify(path: Path, expected: str) -> None:

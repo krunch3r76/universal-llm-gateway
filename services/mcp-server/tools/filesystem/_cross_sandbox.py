@@ -9,6 +9,7 @@ from endpoint_surface import Surface
 from fs_roots import fs_root_for
 from implement_admission.scheme_resolve import resolve_fs_ingress
 from implement_admission.share_uri_emit import to_share_uri
+from lane_branch_root import GATEWAY_REPO_DIRNAME
 from mcp_events import record
 
 from tools._durable_write import (
@@ -17,14 +18,12 @@ from tools._durable_write import (
     WriteVerifyError,
     write_verify_error_dict,
 )
-
 from tools.filesystem._ops_paths import (
     CopyRefusalError,
     copy_file_verified,
     pre_image_mismatch_dict,
     source_digest_mismatch_dict,
 )
-from lane_branch_root import GATEWAY_REPO_DIRNAME
 from tools.filesystem._paths import SANDBOX_ROOT
 from tools.filesystem._share_uri_response import attach_dual_carry
 

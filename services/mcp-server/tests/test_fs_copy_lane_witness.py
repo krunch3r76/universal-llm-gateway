@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 import pytest
 from fs_impl import fs_impl
-from project_ops import workspaces_impl_registry
 from tools._hashing import sha256_hex_of_file
 from tools.filesystem import _cross_sandbox as cross_sandbox
 from tools.filesystem import _ops_paths as ops_paths
@@ -241,7 +240,6 @@ def test_lane_copy_wrong_expected_read_sha256_refuses_before_dest(
     lane_src.parent.mkdir(parents=True, exist_ok=True)
     lane_src.write_bytes(b"pin-me\n")
     dest_rel = "notes/tmp/lane-copy-proof/pin-test.bin"
-    live = sha256_hex_of_file(lane_src)
 
     with patch("lane_branch_root.relay", side_effect=_lane_relay):
         result = fs_impl(
