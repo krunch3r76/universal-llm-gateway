@@ -325,3 +325,10 @@ class CursorDispatchResponse(BaseModel):
     work_key_seq: int | None = None
     steer: dict[str, str] | None = None
     prompt_expand: str | None = None
+    run_limits: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Echo of ledger record_json.run_limits: tool_call_budget, warn_at, "
+            "upstream_tool_call_limits, native_helper_enforcement."
+        ),
+    )

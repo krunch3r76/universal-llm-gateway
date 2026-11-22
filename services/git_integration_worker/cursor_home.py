@@ -507,6 +507,7 @@ def setup_cursor_dispatch_home(
     bare: bool = False,
     delegation_tier: str = "A",
     lane: str | None = None,
+    native_helper_policy: object | None = None,
 ) -> Path:
     """Create dispatch HOME and seed cursor credentials by copy (never symlink).
 
@@ -590,6 +591,18 @@ def setup_cursor_dispatch_home(
         )
         prune_headless_dispatch_home_noise(cursor_dir)
     _install_steer_native_hook(cursor_dir)
+    from services.git_integration_worker.cursor_sdk_native_helper_policy import (
+        NativeHelperPolicy,
+        install_native_helper_hook,
+        resolve_native_helper_policy,
+    )
+
+    policy = (
+        native_helper_policy
+        if isinstance(native_helper_policy, NativeHelperPolicy)
+        else resolve_native_helper_policy(packet_text="", contract=None)
+    )
+    install_native_helper_hook(cursor_dir, policy=policy)
     seed_dispatch_git_identity(home, dispatch_id)
     _link_operator_venv(home, real)
     link_operator_playwright_browsers(home, real)

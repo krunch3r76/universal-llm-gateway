@@ -898,6 +898,7 @@ def resolve_prompt_preamble(
     resolved_model: str | None = None,
     nest_under: str | None = None,
     delegation_tier: DelegationTier | None = None,
+    run_limits_line: str | None = None,
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
@@ -1231,4 +1232,18 @@ def resolve_prompt_preamble(
         existing_text=existing_text,
         prompt_preamble=prompt_preamble,
     )
+    from services.git_integration_worker.cursor_sdk_run_limits import (
+        format_run_limits_preamble_line,
+        undeclared_run_limits,
+    )
+    from services.git_integration_worker.cursor_sdk_native_helper_policy import (
+        resolve_native_helper_enforcement,
+    )
+
+    limits_line = run_limits_line or format_run_limits_preamble_line(
+        undeclared_run_limits(
+            native_helper_enforcement=resolve_native_helper_enforcement()
+        )
+    )
+    parts.append(limits_line)
     return "\n\n".join(parts) + "\n\n"

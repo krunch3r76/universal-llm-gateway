@@ -231,8 +231,50 @@ def _assemble_closeout_delivery(
                 commits_ahead_presence=meter_presence,
                 git_land_plane_uncomputable=plane_uncomputable,
             )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
     from services.git_integration_worker.cursor_sdk_mode import sdk_mode_for_dispatch
+    from services.git_integration_worker.cursor_sdk_native_helper_policy import (
+        harvest_native_helper_attempts,
+    )
+    from services.git_integration_worker.cursor_sdk_run_limits import (
+        classify_stop_cause,
+        read_run_limits,
+    )
+    from services.git_integration_worker.cursor_sdk_run_budget_meter import (
+        read_run_budget_meter,
+    )
 
+    import json
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        ledger_row = conn.execute(
+            "SELECT record_json, status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    record_json = str(ledger_row["record_json"] or "") if ledger_row else ""
+    park_blob: dict[str, Any] = {}
+    try:
+        rec_data = json.loads(record_json) if record_json else {}
+        if isinstance(rec_data, dict):
+            raw_park = rec_data.get("park")
+            if isinstance(raw_park, dict):
+                park_blob = raw_park
+    except json.JSONDecodeError:
+        park_blob = {}
+    budget_reading = read_run_budget_meter(record_json)
+    park_reason = str(park_blob.get("reason") or "") if isinstance(park_blob, dict) else None
+    stop_cause = classify_stop_cause(
+        park_reason=park_reason or None,
+        run_status=str(outcome.status or ""),
+        budget_exhausted=budget_reading.budget_exhausted,
+        executor_voluntary=not budget_reading.budget_exhausted and not park_reason,
+    )
+    limits = read_run_limits(record_json)
+    run_limits_echo = limits.to_record() if limits is not None else None
+    native_helper_enforcement = limits.native_helper_enforcement if limits else None
+    native_helper_attempts = harvest_native_helper_attempts(dispatch_id)
     resolved_sdk_mode = sdk_mode_for_dispatch(dispatch_id)
     body = implement_body.build_implement_closeout_body(
         dispatch_id=dispatch_id,
@@ -283,6 +325,10 @@ def _assemble_closeout_delivery(
         hub_repo=binding.receipt_tree if binding is not None else source_repo,
         sdk_transcript_ref=sdk_transcript_ref,
         sdk_transcript_sha256=sdk_transcript_sha256,
+        stop_cause=stop_cause,
+        run_limits=run_limits_echo,
+        native_helper_enforcement=native_helper_enforcement,
+        native_helper_attempts=native_helper_attempts,
     )
     return receipt_finalization.finalize_closeout_receipt(
         source_repo=write_tree,

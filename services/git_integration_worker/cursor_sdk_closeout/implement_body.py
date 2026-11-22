@@ -130,6 +130,10 @@ def build_implement_closeout_body(
     acceptance_criteria: list[str] | None = None,
     sdk_transcript_ref: str | None = None,
     sdk_transcript_sha256: str | None = None,
+    stop_cause: str | None = None,
+    run_limits: dict[str, Any] | None = None,
+    native_helper_enforcement: str | None = None,
+    native_helper_attempts: list[dict[str, Any]] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -482,6 +486,14 @@ def build_implement_closeout_body(
             payload["sdk_mode"] = sdk_mode
         payload["open_forks"] = merged_open_forks
         payload["authority_fork"] = authority_fork
+        if stop_cause:
+            payload["stop_cause"] = stop_cause
+        if run_limits is not None:
+            payload["run_limits"] = run_limits
+        if native_helper_enforcement is not None:
+            payload["native_helper_enforcement"] = native_helper_enforcement
+        if native_helper_attempts:
+            payload["native_helper_attempts"] = native_helper_attempts
         if sdk_mode == "plan":
             if spec_sha256:
                 payload["spec_sha256"] = spec_sha256
