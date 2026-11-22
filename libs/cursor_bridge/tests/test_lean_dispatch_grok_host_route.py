@@ -100,6 +100,7 @@ def test_grok_host_preflight_runbook_headings() -> None:
         "Grant conditions",
         "Host checkout execution",
         "Project venv",
+        "Module origin pin",
         "Share URI",
         "Assigned worktree resolution",
         "Checkout isolation",
@@ -128,6 +129,50 @@ def test_grok_host_preflight_runbook_headings() -> None:
         "lane-{thread",
     ):
         assert heading in text, f"missing {heading!r} in runbook"
+
+
+def test_grok_host_preflight_module_origin_pin_contract() -> None:
+    path = _first_existing(_RUNBOOK_CANDIDATES)
+    if path is None:
+        pytest.skip("grok-host-preflight.md not on disk; cortex runbook check deferred")
+    text = path.read_text(encoding="utf-8")
+    pin_idx = text.find("## Module origin pin")
+    assert pin_idx >= 0
+    pin_block = text[pin_idx : pin_idx + 2200]
+    for needle in (
+        "not sufficient",
+        "repo-owned",
+        "__file__",
+        "importlib",
+        "PYTHONPATH",
+        "lane A",
+        "refuse",
+        "Recheck",
+        "Composer",
+        "sys.executable",
+        ".venvs/universal/bin/python",
+        "agent_seat",
+        "cursor_bridge",
+        "lane-{thread_id}",
+    ):
+        assert needle in pin_block, f"missing origin-pin needle {needle!r}"
+    host_idx = text.find("## Host checkout execution")
+    assert host_idx >= 0
+    assert "Module origin pin" in text[host_idx : host_idx + 1200]
+    temp_idx = text.find("## Temporary scripts")
+    assert temp_idx >= 0
+    assert "Module origin pin" in text[temp_idx : temp_idx + 1200]
+    interp_idx = text.find("### 3. Interpreter")
+    assert interp_idx >= 0
+    interp_block = text[interp_idx : interp_idx + 900]
+    for needle in (
+        "Module origin pin",
+        "__file__",
+        "lane A",
+        "PYTHONPATH",
+        "sys.executable",
+    ):
+        assert needle in interp_block, f"missing interpreter origin needle {needle!r}"
 
 
 def test_grok_host_preflight_worktree_isolation_contract() -> None:
@@ -200,7 +245,7 @@ def test_grok_host_preflight_runbook_kaywan58_walls() -> None:
     assert "when the job requires an isolated lane" not in fail_line
     temp_idx = text.find("## Temporary scripts")
     assert temp_idx >= 0
-    temp_block = text[temp_idx : temp_idx + 900]
+    temp_block = text[temp_idx : temp_idx + 1200]
     assert "Visible `??`" in temp_block
     assert "external temp" in temp_block
     assert "assigned lane" in temp_block
