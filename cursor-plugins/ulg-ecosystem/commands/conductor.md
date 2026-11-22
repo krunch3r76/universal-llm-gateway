@@ -61,7 +61,7 @@ Ask in one batch; skip any already bound in chat:
    conductor drives every G-row and lands its own verified merge without a
    separate ask (skill § Run to completion). Name an exception here if this
    mission needs its merge held for review.
-7. **Explicit seat pin?** — default none (Composer — omit `model=`, `{fast:true}`);
+7. **Explicit seat pin?** — default none (Composer — omit `model=`);
    judgment nests width seat ACTIVE (`impresario.critic`); bind/review uses that critic. `cdp/` is allowed and preferred for conductor and supervisor legs over `anthropic/*` and over any `cursor/*` model except `cursor/composer-2.5` while it is cheaper. No CDP host ⇒ record `cdp_fail_route=anthropic` and dispatch `anthropic/claude-sonnet-5-5`. An Other-Models pin only
    with a named trigger. Sonnet/Opus/Terra remain explicit-pin facts only — never implicit defaults.
 8. **Admit now?** — shape the todo only vs admit after confirm.
@@ -111,7 +111,6 @@ team_dispatch(
   contract=conductor,
   source_ref="todo:{slug}",   # packet_path is refused on this contract
   dispatch_thread_id={root},  # continuity root with turns, or pending-empty child of root
-  model_knobs={"fast":"true"},
   lane="B",                    # DEFAULT (Q4) — pass explicitly even when
                                 # unopposed; omitting resolves to Lane A at GIW
 )

@@ -349,7 +349,6 @@ team_dispatch(
 
   lane="B",
   source_ref="todo:{slug}",      # ¬ packet_path (refused on this contract)
-  model_knobs={"fast":"true"},
   dispatch_thread_id="{root}",   # shape 1 when root is not an operator lane; else shape 2 child
 )
 ```
@@ -369,7 +368,7 @@ after terminal: `reuse_thread=<work thread>` — do not re-pass the work thread 
 
 Receipt identity **is** the admitted thread with
 `branch_current=cursor-sdk/lane-{that id}` — quote `dispatch_id` + scoreboard URI
-+ that Lane B. Spawn is **Composer** (`{fast:true}`); judgment nests CDP.
++ that Lane B. Spawn is **Composer** (omit `model=` — Fast via card_default); judgment nests CDP.
 Conductor
 drives G-ladder; IDE does not fire `/layer` or Mode B Fable on the seed path.
 
@@ -444,9 +443,8 @@ Cadence: fewer, fatter commissions amortize round-trip latency vs. paying it per
 micro-step. **The operator seat** commissions via ulg-code `team_dispatch`
 (`seat=cursor-sdk`, `lane=B`, `model_knobs` on that wire). Do not pin
 `desired_effort` on `agent_bus.request`. **Code-side** `team_dispatch` shape stays
-scoped to code seats: `seat=cursor-sdk` · omit `model=` ·
-`model_knobs={"fast":"true"}` on the dispatch
-wire when Fast is intended. An omitted `fast` follows that model's card
+scoped to code seats: `seat=cursor-sdk` · omit `model=` on the dispatch
+wire; omit `fast` (card_default Fast). An omitted `fast` follows that model's card
 (`reasoning_effort` is rejected 422 on `seat=cursor-sdk`). Operator-proxy SOT:
 `libs/claude_bundles/operator_proxy_mission.py` § Knob relay.
 

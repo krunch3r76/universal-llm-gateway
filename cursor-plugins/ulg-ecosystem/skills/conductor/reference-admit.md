@@ -11,7 +11,6 @@ team_dispatch(
   source_ref="todo:{slug}",       # packet_path is REFUSED on this contract
   dispatch_thread_id={root},      # continuity root with turns, or pending-empty child of root
   # generation_options={summon_mode: confer_and_finish},  # optional; or todo attr
-  model_knobs={"fast":"true"},
   lane="B",                       # DEFAULT — always pass explicitly. SOT:
                                    # consult-routing § cursor-sdk checkout lane.
                                    # omit = inherit only (nest/resume), ¬ preference.

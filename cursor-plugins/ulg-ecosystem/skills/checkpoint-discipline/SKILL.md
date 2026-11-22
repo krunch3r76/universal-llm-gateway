@@ -293,7 +293,6 @@ get a window.
      contract=freeform,
      dispatch_thread_id=<same thread as brief>,
      lane=B,
-     model_knobs={"fast":"true"},
    )
    ```
 

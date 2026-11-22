@@ -412,7 +412,6 @@ the terminal parent).
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  model_knobs={"fast":"true"},
   contract=conductor,
   source_ref=todo:{slug},
   resume_of=<terminal parent dispatch_id>,  # ROW_PINNED lift — same agent
