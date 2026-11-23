@@ -52,6 +52,12 @@ def _parked_five(row: dict[str, Any]) -> None:
     assert row.get("tab_kept_reason") == "houseless_seat"
 
 
+def _houseless_rid(active: dict[str, Any]) -> str:
+    matches = [k for k, v in active.items() if v.get("purpose") == "houseless"]
+    assert matches, "expected a houseless tab row in the registry"
+    return matches[0]
+
+
 @pytest.mark.asyncio
 async def test_resumed_houseless_birth_parks_row(seat_registry: dict[str, Any]) -> None:
     reg._store.write_active(
@@ -91,7 +97,9 @@ async def test_resumed_houseless_birth_parks_row(seat_registry: dict[str, Any]) 
     with patch("cdp_ask.cse_session_harvest.harvest_with_loading_wait", harvest):
         await resume_execution(store, record, trigger="boot")
 
-    row = reg._store.load_active()[_RID]
+    active = reg._store.load_active()
+    assert _RID in active, "houseless row must be present after resume"
+    row = active[_RID]
     _parked_five(row)
     assert _RID not in sweep_kept_tab_rows()
     assert _RID in reg._store.load_active()
@@ -100,7 +108,12 @@ async def test_resumed_houseless_birth_parks_row(seat_registry: dict[str, Any]) 
 
 @pytest.mark.asyncio
 async def test_runner_houseless_birth_parks_row(seat_registry: dict[str, Any]) -> None:
-    """Exception (a): ``run_project_conversation`` replaced; acceptance proof is resumed case."""
+    """Exception (a): ``run_project_conversation`` replaced.
+
+    Plan AC-1 exception (a) is the second item of the rule's § Refuse; the
+    acceptance proof of behaviour 1 is the resumed case, which does not patch
+    the runner.
+    """
     reg._store.write_active({_H: host_row(_H, 9225)})
     ok = ProjectAskResult(
         ok=True,
@@ -122,8 +135,6 @@ async def test_runner_houseless_birth_parks_row(seat_registry: dict[str, Any]) -
             "cdp_ask.runner.apply_project_select",
             new=AsyncMock(side_effect=lambda r, **_: r),
         ),
-        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
-        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
     ):
         req = SubmitProjectAskRequest(
             prompt_text="wake",
@@ -140,7 +151,7 @@ async def test_runner_houseless_birth_parks_row(seat_registry: dict[str, Any]) -
         )
     assert payload["ok"] is True
     active = reg._store.load_active()
-    rid = next(k for k, v in active.items() if v.get("purpose") == "houseless")
+    rid = _houseless_rid(active)
     _parked_five(active[rid])
     assert rid not in sweep_kept_tab_rows()
     assert journal_tab_kept_count(seat_registry["root"], rid) == 1
@@ -163,8 +174,7 @@ def test_seat_branch_parks_over_wake_debt(seat_registry: dict[str, Any]) -> None
     row = reg._store.load_active()[_RID]
     assert row["tab_kept_reason"] == "houseless_seat"
     assert row.get("target_id") is None
-    closes = [o for o in seat_registry["ops"] if o[0] == "close"]
-    assert closes
+    assert ("close", 9225, tid) in seat_registry["ops"]
 
 
 @pytest.mark.parametrize(
@@ -196,9 +206,13 @@ def test_parked_row_refuses_release_paths(
         finish_tab_on_exit(reg_obj, branch="wake_debt")
     else:
         mark_tab_reopen_failed(_RID)
+    row_after = reg._store.load_active()[_RID]
     assert _RID in reg._store.load_active()
-    assert reg._store.load_active()[_RID]["tab_kept_reason"] == "houseless_seat"
+    assert row_after["tab_kept_reason"] == "houseless_seat"
     assert _RID not in sweep_kept_tab_rows()
+    if action == "reopen_failed":
+        assert row_after.get("target_id") is None
+        assert ("close", 9225, tid) in seat_registry["ops"]
 
 
 def test_parked_row_with_open_wake_tab_keeps_target(
@@ -300,8 +314,6 @@ async def test_exit_read_failure_leaves_houseless_row(
             "cdp_ask.runner.apply_project_select",
             new=AsyncMock(side_effect=lambda r, **_: r),
         ),
-        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
-        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
         caplog.at_level(logging.WARNING),
     ):
         req = SubmitProjectAskRequest(
@@ -314,7 +326,7 @@ async def test_exit_read_failure_leaves_houseless_row(
             req, execution_id="e-read-fail", abort_check=AsyncMock(return_value=False)
         )
     active = reg._store.load_active()
-    rid = next(k for k, v in active.items() if v.get("purpose") == "houseless")
+    rid = _houseless_rid(active)
     assert rid in active
     assert active[rid]["status"] == STATUS_TAB
     assert any(rid in rec.message for rec in caplog.records)
@@ -349,13 +361,13 @@ async def test_not_ok_or_chatless_birth_released(seat_registry: dict[str, Any]) 
     bad = ProjectAskResult(
         ok=False,
         body="",
-        url=CHAT_U,
+        url="",
         project_uuid="",
         project_url="",
         model={},
         body_len=0,
         delete_after=False,
-        error="fail",
+        error="conversation failed",
     )
     with (
         patch(
@@ -365,10 +377,6 @@ async def test_not_ok_or_chatless_birth_released(seat_registry: dict[str, Any]) 
             "cdp_ask.runner.apply_project_select",
             new=AsyncMock(side_effect=lambda r, **_: r),
         ),
-        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
-        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
-        patch("cdp_ask.runner.is_unverifiable_stall", return_value=False),
-        patch("cdp_ask.runner.is_host_lost_error", return_value=False),
     ):
         req = SubmitProjectAskRequest(
             prompt_text="x",

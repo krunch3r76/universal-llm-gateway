@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 from unittest.mock import patch
 
@@ -19,6 +20,7 @@ from cdp_ask.houseless_seat_testkit import (
     WAKE_PROMPT,
     SeatPage,
     host_row,
+    journal_tab_kept_count,
     paste_env,
     seat_row,
     stamp,
@@ -58,25 +60,50 @@ async def test_wake_pastes_into_parked_seat_and_reparks(
     seat_registry: dict[str, Any],
 ) -> None:
     _store_parked_host()
-    before_exec = dict(reg._store.load_active()[_RID].get("execution_state") or {})
+    before_active = reg._store.load_active()
+    before_exec = dict(before_active[_RID].get("execution_state") or {})
+    other_chat_urls = {
+        k: v.get("chat_url") for k, v in before_active.items() if k not in (_RID, _H)
+    }
+    before_ids = set(before_active)
+    journal_before = journal_tab_kept_count(seat_registry["root"], _RID)
+    paste_snapshots: list[dict[str, Any]] = []
+
+    async def _record_paste(*_a: Any, **_k: Any) -> None:
+        paste_snapshots.append(dict(reg._store.load_active()[_RID]))
 
     with paste_env() as send_mock:
+        send_mock.side_effect = _record_paste
         store = ExecutionStore()
         resp = await execute_followup(_wake_req(), store)
     assert resp.ok is True
-    assert resp.send_verified is True, getattr(resp, "receipt", None)
+    assert resp.send_verified is True
+    assert resp.receipt == "dom_committed"
     assert resp.registration_id == _RID
     assert resp.reattach_used is False
     assert resp.lane_created is False
     opens = [o for o in seat_registry["ops"] if o[0] == "open"]
     closes = [o for o in seat_registry["ops"] if o[0] == "close"]
     assert len(opens) == 1 and len(closes) == 1
+    assert opens[0][1] == 9225 and opens[0][3] == CHAT_U
+    opened_tid = opens[0][2]
+    assert closes[0] == ("close", 9225, opened_tid)
+    assert seat_registry["ops"].index(opens[0]) < seat_registry["ops"].index(closes[0])
     send_mock.assert_awaited_once()
-    assert send_mock.await_args.args[0].target_id == opens[0][2]
+    assert send_mock.await_args.args[0].target_id == opened_tid
+    assert len(paste_snapshots) == 1
+    snap = paste_snapshots[0]
+    assert snap.get("tab_kept_reason") == "houseless_seat"
+    assert snap.get("holder_pid") == os.getpid()
     row = reg._store.load_active()[_RID]
     assert row.get("target_id") is None
     assert row["tab_kept_reason"] == "houseless_seat"
     assert dict(row.get("execution_state") or {}) == before_exec
+    assert journal_tab_kept_count(seat_registry["root"], _RID) == journal_before + 1
+    after_active = reg._store.load_active()
+    assert set(after_active) == before_ids
+    for k, url in other_chat_urls.items():
+        assert after_active[k].get("chat_url") == url
 
 
 @pytest.mark.asyncio
@@ -146,7 +173,7 @@ async def test_in_flight_kinds(
     elif kind == "awaiting_wake":
         stamp(_RID, f"e-{kind}", "awaiting_wake", kind="execution")
     else:
-        stamp(_RID, f"e-{kind}", "finished", kind="followup")
+        stamp(_RID, f"e-{kind}", "streaming", kind="followup")
 
     with paste_env():
         resp = await execute_followup(_wake_req(), ExecutionStore())
@@ -154,6 +181,7 @@ async def test_in_flight_kinds(
         assert resp.ok is True
     else:
         assert resp.error == expect_err
+        assert not [o for o in seat_registry["ops"] if o[0] == "open"]
 
 
 @pytest.mark.asyncio
@@ -200,25 +228,53 @@ async def test_no_host_unavailable_row_untouched(seat_registry: dict[str, Any]) 
     assert reg._store.load_active()[_RID] == before
 
 
+class _UrlReadCountPage(SeatPage):
+    """Seat page that counts ``url`` property reads for AC-4 (ix)."""
+
+    def __init__(self, target_id: str, url: str | list[str]) -> None:
+        super().__init__(target_id, url)
+        self.url_read_count = 0
+        urls = list(url) if isinstance(url, list) else [url]
+        idx = {"i": 0}
+        outer = self
+
+        def _read_url() -> str:
+            outer.url_read_count += 1
+            if idx["i"] < len(urls) - 1:
+                u = urls[idx["i"]]
+                idx["i"] += 1
+                return u
+            return urls[-1]
+
+        type(self._inner).url = property(lambda _self: _read_url())
+
+
 @pytest.mark.asyncio
 async def test_identity_wait_then_paste(seat_registry: dict[str, Any]) -> None:
     _store_parked_host()
+    url_reads_at_paste: list[int] = []
 
     def fake_open(port: int, url: str) -> str:
         tid = "t-blank"
-        seat_registry["pages_by_tid"][tid] = SeatPage(
+        seat_registry["pages_by_tid"][tid] = _UrlReadCountPage(
             tid, ["about:blank", "about:blank", CHAT_U]
         )
         seat_registry["ops"].append(("open", port, tid, url))
         return tid
 
+    async def _capture_paste(*_a: Any, **_k: Any) -> None:
+        page = seat_registry["pages_by_tid"]["t-blank"]
+        url_reads_at_paste.append(page.url_read_count)
+
     with (
         patch("claude_bundles.cdp_lane.open_cdp_tab_target", fake_open),
         paste_env() as send_mock,
     ):
+        send_mock.side_effect = _capture_paste
         resp = await execute_followup(_wake_req(), ExecutionStore())
     assert resp.ok is True
     send_mock.assert_awaited_once()
+    assert url_reads_at_paste and url_reads_at_paste[0] >= 3
     assert reg._store.load_active()[_RID].get("tab_kept_reason") != "reopen_failed"
 
 

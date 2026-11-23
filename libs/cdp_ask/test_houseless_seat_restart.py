@@ -11,13 +11,17 @@ from claude_bundles.cdp_registry.tab_rows import sweep_kept_tab_rows
 
 from cdp_ask.execution_resume import hydrate_in_flight
 from cdp_ask.execution_store import ExecutionStore
+from cdp_ask.followup import execute_followup
 from cdp_ask.houseless_seat_testkit import (
     CHAT_U,
+    WAKE_PROMPT,
     dead_pid,
     host_row,
+    paste_env,
     seat_row,
     stamp,
 )
+from cdp_ask.models import FollowupProjectAskRequest
 
 pytest_plugins = ["cdp_ask.houseless_seat_testkit"]
 
@@ -39,6 +43,7 @@ async def _startup_sequence() -> tuple[list[str], list[str]]:
 @pytest.mark.asyncio
 async def test_parked_seat_survives_restart_and_wakes(
     seat_registry: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reg._store.write_active(
         {
@@ -47,6 +52,16 @@ async def test_parked_seat_survives_restart_and_wakes(
         }
     )
     stamp(_RID, "e-done", "finished")
+
+    from claude_bundles.cdp_orphans import LivePort
+
+    prof = seat_registry["profiles"] / f"claude-ai-chrome-profile-p-{_H}"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [
+            LivePort(port=9225, profile=prof, page_urls=(), has_live_cse=False)
+        ],
+    )
     reap, sweep = await _startup_sequence()
     assert _RID in reg._store.load_active()
     assert _RID not in reap
@@ -65,7 +80,19 @@ async def test_parked_seat_survives_restart_and_wakes(
     assert prov.seat_open is False
     assert prov.chat_url == CHAT_U
 
-    # Wake delivery is covered by AC-3; restart path only proves survival + provenance.
+    assert _H in reg._store.load_active(), "pool host adopted through boot_reconcile"
+
+    wake_req = FollowupProjectAskRequest(
+        prompt_text=WAKE_PROMPT,
+        chat_url=CHAT_U,
+        registration_id=_RID,
+        purpose=None,
+        reattach=False,
+    )
+    with paste_env():
+        wake_resp = await execute_followup(wake_req, ExecutionStore())
+    assert wake_resp.ok is True
+    assert wake_resp.send_verified is True
 
 
 @pytest.mark.asyncio
@@ -78,10 +105,12 @@ async def test_parked_seat_with_followup_stamp_keeps_reason(
             _RID: seat_row(_RID, _H, 9225, CHAT_U, holder_pid=dead_pid()),
         }
     )
-    stamp(_RID, "e-fu", "finished", kind="followup")
+    stamp(_RID, "e-fu", "streaming", kind="followup")
     reap, sweep = await _startup_sequence()
     assert _RID not in reap and _RID not in sweep
-    assert reg._store.load_active()[_RID]["tab_kept_reason"] == "houseless_seat"
+    active = reg._store.load_active()
+    assert _RID in active, "parked seat must survive reap with in-flight followup"
+    assert active[_RID]["tab_kept_reason"] == "houseless_seat"
 
 
 def test_reap_still_removes_unparked_dead_holder(seat_registry: dict[str, Any]) -> None:

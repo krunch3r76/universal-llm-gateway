@@ -203,11 +203,6 @@ def seat_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, 
         lambda **_k: None,
     )
 
-    async def _label(_page: Any) -> str:
-        return "stub-model"
-
-    monkeypatch.setattr("claude_bundles.chat_model_select.current_model_label", _label)
-    monkeypatch.setattr("cdp_ask.execution_resume.current_model_label", _label)
     return {
         "live": live,
         "ops": ops,
