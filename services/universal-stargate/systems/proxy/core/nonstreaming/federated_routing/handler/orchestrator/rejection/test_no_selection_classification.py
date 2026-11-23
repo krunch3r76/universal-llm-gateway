@@ -152,6 +152,14 @@ async def test_transient_constraints_enter_wait_with_transient_capacity_mode(
     wait_mock.assert_awaited_once()
     assert wait_mock.await_args.kwargs["continuation_mode"] == "transient_capacity"
     assert exc_info.value.detail["code"] == ErrorCode.STICKY_CAPACITY
+    detail = exc_info.value.detail
+    assert detail["data"]["eviction"]["disposition"] in (
+        "attempted",
+        "refused",
+        "not_applicable",
+    )
+    assert "retry_guidance" in detail["data"]
+    assert "eviction=" in detail["message"]
 
 
 @pytest.mark.asyncio

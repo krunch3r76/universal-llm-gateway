@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ....selection_errors import raise_capacity_error
+from .rejection.capacity_details import build_sticky_capacity_failure_summary
 from ...wait_continuation import (
     ContinuationMode,
     arm_or_remaining_eviction_budget,
@@ -78,15 +79,20 @@ async def requeue_after_transient_eviction(
         "vram_refusal",
     )
     if charge_requeue_depth and depth >= max_depth:
-        raise_capacity_error(
-            str(context.selected_model),
-            {
-                "reason": timeout_reason,
-                "waited_ms": 0,
-                "requeue_depth": depth,
-                "requeue_max_depth": max_depth,
-            },
+        summary = build_sticky_capacity_failure_summary(
+            model=context.selected_model,
+            trace=None,
+            routing_config=routing_config,
+            context=context,
+            waited_ms=0,
+            failure_reason="eviction_requeue_depth_exceeded",
+            requeue_depth=depth,
+            requeue_max_depth=max_depth,
+            budget_exhausted=False,
         )
+        if timeout_reason:
+            summary["reason"] = timeout_reason
+        raise_capacity_error(context.selected_model.routing_key, summary)
     if charge_requeue_depth:
         context._eviction_requeue_depth = depth + 1  # noqa: SLF001
 
@@ -131,10 +137,17 @@ async def requeue_after_transient_eviction(
             defer_first_select=defer_first_select,
         )
     if selected_gateway is None:
-        raise_capacity_error(
-            str(context.selected_model),
-            {"reason": timeout_reason, "waited_ms": waited_ms},
+        summary = build_sticky_capacity_failure_summary(
+            model=context.selected_model,
+            trace=trace,
+            routing_config=routing_config,
+            context=context,
+            waited_ms=int(waited_ms),
+            failure_reason=timeout_reason,
         )
+        if timeout_reason:
+            summary["reason"] = timeout_reason
+        raise_capacity_error(context.selected_model.routing_key, summary)
 
     from systems.routing.selection.stargate_collector import (
         federated_gateways_to_routing_candidates,

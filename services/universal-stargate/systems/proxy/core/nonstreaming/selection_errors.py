@@ -56,15 +56,20 @@ def raise_gateway_capacity_error(gateway_name: str) -> None:
 
 
 def raise_capacity_error(
-    model_id: str,
+    model_routing_key: str,
     capacity_details: dict[str, Any],
 ) -> None:
     """Raise error when sticky model has transient capacity contention."""
+    from systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.rejection.capacity_details import (
+        format_sticky_capacity_message,
+    )
+
+    message = format_sticky_capacity_message(model_routing_key, capacity_details)
     raise HTTPException(
         status_code=get_http_status(ErrorCode.STICKY_CAPACITY),
         detail=error_envelope(
             code=ErrorCode.STICKY_CAPACITY,
-            message=f"Sticky model {model_id}: transient capacity contention",
+            message=message,
             source="master",
             retryable=True,
             data=capacity_details,
