@@ -188,9 +188,18 @@ def format_sticky_capacity_message(model_routing_key: str, data: dict[str, Any])
     budget_s = data.get("wait_budget_s")
     budget_ms = int(float(budget_s) * 1000) if budget_s is not None else "unknown"
     wait_line = f"waited_ms={waited_ms}/{budget_ms}ms budget_exhausted={data.get('budget_exhausted')}"
+    depth_line = ""
+    if (
+        data.get("requeue_depth") is not None
+        and data.get("requeue_max_depth") is not None
+    ):
+        depth_line = (
+            f"requeue_depth={data['requeue_depth']}/"
+            f"{data['requeue_max_depth']}; "
+        )
     return (
         f"Sticky model {model_routing_key}: {holder_line}; "
-        f"{eviction_line}; {wait_line}"
+        f"{eviction_line}; {depth_line}{wait_line}"
     )
 
 

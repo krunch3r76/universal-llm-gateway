@@ -769,6 +769,58 @@ async def test_post_load_vram_refusal_does_not_consume_requeue_depth_cap(
 
 
 @pytest.mark.asyncio
+async def test_requeue_depth_cap_raises_with_depth_guidance_before_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Depth at or above max raises STICKY_CAPACITY without entering the wait loop."""
+    wait_mock = AsyncMock()
+    monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", wait_mock)
+    token = _FakeToken("edge-jupiter-gateway")
+    max_depth = 3
+    context = SimpleNamespace(
+        request_id="req-depth-cap",
+        selected_model=TARGET,
+        model_sticky=False,
+        capacity_token=token,
+        selected_gateway=None,
+        excluded_gateway_ids=set(),
+        _eviction_requeue_depth=max_depth,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await requeue_mod.requeue_after_transient_eviction(
+            context=context,
+            federated_manager=_FakeFederatedManager([]),
+            federated_load_orchestrator=_FakeLoadOrchestrator(),
+            federation_forwarder=_FakeForwarder(),
+            routing_config={
+                "eviction_requeue_max_depth": max_depth,
+            },
+            decision_engine=SimpleNamespace(),
+            placement=SimpleNamespace(model_id=TARGET),
+            event_bus=None,
+            stability_tracker=SimpleNamespace(),
+            routing_start_time=time.time(),
+            eviction_cooldown_s=120.0,
+            capacity_pool=None,
+            routing_key_tracker=None,
+            continuation_mode="execution_failure",
+            timeout_reason="eviction_blocked_queue_timeout",
+        )
+
+    wait_mock.assert_not_awaited()
+    assert token.released is True
+    detail = exc_info.value.detail
+    assert detail["code"] == ErrorCode.STICKY_CAPACITY
+    data = detail["data"]
+    assert data["requeue_depth"] == max_depth
+    assert data["requeue_max_depth"] == max_depth
+    assert data["reason"] == "eviction_blocked_queue_timeout"
+    assert "depth cap" in data["retry_guidance"]
+    assert "requeue_depth=" in detail["message"]
+
+
+@pytest.mark.asyncio
 async def test_config_blocked_does_not_requeue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

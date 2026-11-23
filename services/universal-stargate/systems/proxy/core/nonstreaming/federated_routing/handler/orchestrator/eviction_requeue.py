@@ -85,7 +85,7 @@ async def requeue_after_transient_eviction(
             routing_config=routing_config,
             context=context,
             waited_ms=0,
-            failure_reason=timeout_reason or "eviction_requeue_depth_exceeded",
+            failure_reason="eviction_requeue_depth_exceeded",
             requeue_depth=depth,
             requeue_max_depth=max_depth,
             budget_exhausted=False,
