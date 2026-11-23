@@ -75,6 +75,19 @@ def test_polling_grace_max_of_floor_and_twice_poll() -> None:
     assert grace == 20.0
 
 
+def test_remark_after_ack_does_not_reset_unacked_grace() -> None:
+    clock = _FakeClock()
+    table = LoadingLeaseTable(load_ack_grace_s=15, clock=clock)
+    mid = ModelId.parse("m1")
+    table.mark("gw1", mid, LeaseOrigin.OPTIMISTIC)
+    table.ack("gw1", mid)
+    clock.advance(5)
+    table.mark("gw1", mid, LeaseOrigin.OPTIMISTIC)
+    clock.advance(16)
+    expired = table.expire_gateway("gw1", unacked_grace_s=15)
+    assert expired == []
+
+
 def test_polling_unacked_still_reserved_at_19s_with_poll_10s() -> None:
     clock = _FakeClock()
     table = LoadingLeaseTable(load_ack_grace_s=15, clock=clock)
@@ -173,6 +186,9 @@ async def test_http_positive_loading_ack_only() -> None:
         loaded_models=frozenset(),
     )
     assert mid in manager.get_gateway("golem").loading_models
+    lease_before_ack = manager._loading_leases._leases.get(("golem", mid))
+    assert lease_before_ack is not None
+    assert lease_before_ack.acked_at is None
 
     manager._apply_http_loading_hooks(
         "golem",

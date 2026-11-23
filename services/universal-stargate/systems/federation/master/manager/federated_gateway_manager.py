@@ -1785,9 +1785,6 @@ class FederatedGatewayManager(Sequential):
             )
             return gw
 
-        self._loading_leases.mark(
-            gw.gateway_id, model_id, LeaseOrigin.TELEMETRY
-        )
         self._loading_leases.ack(gw.gateway_id, model_id)
         gw = self._sync_loading_models(gw)
         logger.debug(

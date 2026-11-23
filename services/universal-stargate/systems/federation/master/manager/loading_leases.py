@@ -93,6 +93,17 @@ class LoadingLeaseTable:
     ) -> None:
         now = self._clock()
         key = (gateway_id, model_id)
+        existing = self._leases.get(key)
+        if existing is not None:
+            self._leases[key] = LoadingLease(
+                gateway_id=existing.gateway_id,
+                model_id=existing.model_id,
+                marked_at=existing.marked_at,
+                acked_at=existing.acked_at,
+                last_evidence_at=now,
+                origin=existing.origin,
+            )
+            return
         self._leases[key] = LoadingLease(
             gateway_id=gateway_id,
             model_id=model_id,
