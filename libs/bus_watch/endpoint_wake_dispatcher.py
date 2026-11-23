@@ -2093,6 +2093,26 @@ def _stamp_missed_after_deliver(sub: dict[str, Any], missed_ids: list[int]) -> N
         )
 
 
+def _wake_turn_from(store: StoreClient, thread_id: str, turn_number: int) -> str:
+    """Sender mailbox for one turn (empty when the fetch misses)."""
+    try:
+        payload = store.turns(
+            thread_id,
+            after_turn=max(int(turn_number) - 1, 0),
+            last=50,
+        )
+    except Exception:
+        return ""
+    for row in payload.get("turns") or []:
+        try:
+            n = int(row.get("turn_number") or 0)
+        except (TypeError, ValueError):
+            continue
+        if n == int(turn_number):
+            return str(row.get("from") or row.get("from_agent") or "").strip()
+    return ""
+
+
 def _display_post_maybe_missed(
     primary: dict[str, Any],
     sub: dict[str, Any],
@@ -2100,22 +2120,30 @@ def _display_post_maybe_missed(
     *,
     paste_text: str = "",
     wake_groups: list[dict[str, Any]] | None = None,
+    wake_mailbox: str | None = None,
+    wake_from: str | None = None,
 ) -> tuple[str, str]:
     text, missed_ids = _preview_missed_paste(sub, paste_text)
     has_text = bool((text or "").strip())
+    route_kw = {"wake_mailbox": wake_mailbox, "wake_from": wake_from}
     if wake_groups is not None:
         if has_text:
             state, reason = _display_post(
-                primary, sub, turn_arg, text=text, wake_groups=wake_groups
+                primary,
+                sub,
+                turn_arg,
+                text=text,
+                wake_groups=wake_groups,
+                **route_kw,
             )
         else:
             state, reason = _display_post(
-                primary, sub, turn_arg, wake_groups=wake_groups
+                primary, sub, turn_arg, wake_groups=wake_groups, **route_kw
             )
     elif has_text:
-        state, reason = _display_post(primary, sub, turn_arg, text=text)
+        state, reason = _display_post(primary, sub, turn_arg, text=text, **route_kw)
     else:
-        state, reason = _display_post(primary, sub, turn_arg)
+        state, reason = _display_post(primary, sub, turn_arg, **route_kw)
     if state == "delivered":
         _stamp_missed_after_deliver(sub, missed_ids)
     return state, reason
@@ -2128,10 +2156,20 @@ def _display_post(
     *,
     text: str = "",
     wake_groups: list[dict[str, Any]] | None = None,
+    wake_mailbox: str | None = None,
+    wake_from: str | None = None,
 ) -> tuple[str, str]:
     _display_started = time.monotonic()
     try:
-        return _display_post_body(row, sub, turn, text=text, wake_groups=wake_groups)
+        return _display_post_body(
+            row,
+            sub,
+            turn,
+            text=text,
+            wake_groups=wake_groups,
+            wake_mailbox=wake_mailbox,
+            wake_from=wake_from,
+        )
     finally:
         from bus_watch.endpoint_wake_pass_timing import note_display_post_duration
 
@@ -2145,6 +2183,8 @@ def _display_post_body(
     *,
     text: str = "",
     wake_groups: list[dict[str, Any]] | None = None,
+    wake_mailbox: str | None = None,
+    wake_from: str | None = None,
 ) -> tuple[str, str]:
     options = {
         "display": sub.get("display"),
@@ -2159,6 +2199,10 @@ def _display_post_body(
         options["text"] = text.strip()
     if wake_groups:
         options["wake_groups"] = wake_groups
+    if wake_mailbox:
+        options["mailbox"] = wake_mailbox
+    if wake_from is not None:
+        options["from_sender"] = wake_from
     body = {
         "model": "display-chat-wake",
         "messages": [{"role": "user", "content": "wake"}],
@@ -3344,9 +3388,19 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
         if len(primary_nums) == 1
         else ",".join(str(n) for n in primary_nums)
     )
+    wake_mailbox = str(agent)
+    wake_from = _wake_turn_from(
+        store, str(primary["thread_id"]), int(primary["turn_number"])
+    )
+    route_kwargs = {"wake_mailbox": wake_mailbox, "wake_from": wake_from or None}
     if len(by_thread) > 1:
         state, reason = _display_post_maybe_missed(
-            primary, sub, turn_arg, paste_text="", wake_groups=wake_groups
+            primary,
+            sub,
+            turn_arg,
+            paste_text="",
+            wake_groups=wake_groups,
+            **route_kwargs,
         )
     elif (
         len(by_thread) == 1
@@ -3355,10 +3409,10 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
     ):
         paste_text = exchange_lines(rows)
         state, reason = _display_post_maybe_missed(
-            primary, sub, turn_arg, paste_text=paste_text
+            primary, sub, turn_arg, paste_text=paste_text, **route_kwargs
         )
     else:
-        state, reason = _display_post_maybe_missed(primary, sub, turn_arg)
+        state, reason = _display_post_maybe_missed(primary, sub, turn_arg, **route_kwargs)
     from bus_watch.endpoint_wake_composer_defer import is_composer_defer_reason
 
     wake_detail: dict[str, Any] | None = None

@@ -44,6 +44,8 @@ class DisplayChatWakeHandler(BaseHandler):
             turn=opts.get("turn"),
             text=str(opts.get("text") or ""),
             wake_groups=opts.get("wake_groups"),
+            mailbox=opts.get("mailbox"),
+            from_sender=opts.get("from_sender"),
         )
         raw = json.dumps(result)
         return StepOutput(raw=raw, json=result)

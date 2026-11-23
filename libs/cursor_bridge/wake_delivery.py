@@ -229,6 +229,8 @@ async def deliver_wake(
     turn: object,
     text: str = "",
     wake_groups: object = None,
+    mailbox: object = None,
+    from_sender: object = None,
 ) -> dict[str, Any]:
     """Paste one wake into the target sidebar chat and report whether it landed.
 
@@ -267,6 +269,8 @@ async def deliver_wake(
         return _refuse("bad_options", display=target["display"], app=target["app"])
     if text_s and groups is not None:
         return _refuse("bad_options", display=target["display"], app=target["app"])
+    mailbox_s = str(mailbox or "").strip().lower() or None
+    from_s = str(from_sender or "").strip().lower() or None
     if text_s:
         if target["app"] != "cursor" or thread_s != "19627":
             return _refuse(
@@ -277,12 +281,23 @@ async def deliver_wake(
         line = text_s
     elif groups is not None:
         try:
-            line = wake_lines(groups, tab=aid_s or None)
+            line = wake_lines(
+                groups,
+                tab=aid_s or None,
+                mailbox=mailbox_s,
+                from_sender=from_s,
+            )
         except ValueError:
             return _refuse("bad_options", display=target["display"], app=target["app"])
     else:
         try:
-            line = wake_line(thread_s, number, tab=aid_s or None)
+            line = wake_line(
+                thread_s,
+                number,
+                tab=aid_s or None,
+                mailbox=mailbox_s,
+                from_sender=from_s,
+            )
         except ValueError:
             return _refuse("bad_options", display=target["display"], app=target["app"])
 

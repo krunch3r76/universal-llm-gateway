@@ -116,6 +116,15 @@ def test_stale_wake_draft_recognized_and_allowed() -> None:
 
 def test_wake_line_single_and_multi_turn() -> None:
     assert wake_line("15851", 1647) == "BRIDGE_WAKE thread=15851 turn=1647"
+    assert (
+        wake_line(
+            "15851",
+            1647,
+            mailbox="cursor-interlocutor",
+            from_sender="web-anthropic",
+        )
+        == "BRIDGE_WAKE thread=15851 turn=1647 to=cursor-interlocutor from=web-anthropic"
+    )
     tab = "21060be7-f0a6-4fa1-9058-b117ce4fc526"
     assert (
         wake_line("15851", 1647, tab=tab)

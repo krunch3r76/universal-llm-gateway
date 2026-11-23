@@ -45,6 +45,24 @@ operator dispatch** before any implementation. Roadmap item statuses are a prior
 re-verify against the live graph (esp. `(unknown)` markers), not current truth. Handoff ≠ dispatch. ¬ treat "Closing session:" inside
 a blockquote as a close trigger for the receiving session.
 
+## Wake subscriptions on handoff
+
+When you hold or inherit endpoint subscription rows for a tab or bot seat, confirm
+them before treating bus threads as pending work:
+
+1. `agent_bus(tool="subscriptions", arguments={})` (or scoped by `agent` /
+   `thread_scope` when the handoff names them).
+2. Every returned row's `agent_id` must be **this seat's** tab or bot id. If any row
+   names a different `agent_id`, stop and report — do not repair or delete rows from
+   the pickup turn.
+3. Record a small table in the handoff (mailbox, `thread_scope`, purpose) for the
+   next seat.
+4. Unread turns addressed **to** those mailboxes within scope are pending work until
+   acted on or explicitly classified no-op.
+5. After acting (or deciding no-op), `mark_read` the specific turn; never mark on
+   fetch alone; never bulk-mark a subscribed thread. At hop, the handoff must name
+   turns that were read but left unmarked.
+
 ## Anti-pattern
 
 | Bad | Good |

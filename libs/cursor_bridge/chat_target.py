@@ -24,11 +24,17 @@ TAB_UUID_RE = re.compile(
 
 _TAB_UUID = TAB_UUID_RE.pattern.removeprefix("^").removesuffix("$")
 _TAB_WAKE_SUFFIX = rf"(?:\s+tab={_TAB_UUID})?"
+_WAKE_MAILBOX = r"[a-z0-9-]{1,64}"
+_WAKE_FROM = rf"(?:{_WAKE_MAILBOX}|unknown)"
+_WAKE_ROUTE_SUFFIX = rf"(?:\s+to={_WAKE_MAILBOX})?(?:\s+from={_WAKE_FROM})?"
 _STALE_WAKE_LINE = re.compile(
-    rf"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*{_TAB_WAKE_SUFFIX}$"
+    rf"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*{_TAB_WAKE_SUFFIX}{_WAKE_ROUTE_SUFFIX}$"
 )
 _STALE_WAKE_PREFIX_JS = r"^BRIDGE_WAKE\s+thread=\S+\s+turn=\d+(?:,\d+)*"
-_TAB_WAKE_SUFFIX_JS = rf"(?:\s+tab={_TAB_UUID})?"
+_WAKE_ROUTE_SUFFIX_JS = (
+    rf"(?:\s+tab={_TAB_UUID})?(?:\s+to={_WAKE_MAILBOX})?(?:\s+from={_WAKE_FROM})?"
+)
+_TAB_WAKE_SUFFIX_JS = _WAKE_ROUTE_SUFFIX_JS
 STALE_WAKE_LINES_JS = (
     "lines.length>0&&lines.every(l=>"
     f"/{_STALE_WAKE_PREFIX_JS}{_TAB_WAKE_SUFFIX_JS}$/.test(l)"
@@ -126,14 +132,36 @@ def exchange_lines(rows: Sequence[dict[str, Any]]) -> str:
     return "\n\n".join(blocks)
 
 
+def _guard_wake_mailbox(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if re.fullmatch(_WAKE_MAILBOX, text):
+        return text
+    raise ValueError("mailbox must match [a-z0-9-]{1,64}")
+
+
+def _guard_wake_from(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return "unknown"
+    if re.fullmatch(_WAKE_MAILBOX, text):
+        return text
+    return "unknown"
+
+
 def wake_line(
-    thread: str, turn: int | str | Sequence[int], *, tab: str | None = None
+    thread: str,
+    turn: int | str | Sequence[int],
+    *,
+    tab: str | None = None,
+    mailbox: str | None = None,
+    from_sender: str | None = None,
 ) -> str:
     """Fixed paste for one or more bus turns. The turn body is not included.
 
     ``turn`` may be a positive int, a comma-separated string of positive ints,
     or a non-empty sequence of positive ints (sorted and deduplicated).
     The thread id is a single line. Optional ``tab`` appends one `` tab=<uuid>``.
+    Optional ``mailbox`` and ``from_sender`` append ``to=`` and guarded ``from=``.
     No I/O.
     """
     thread_s = _one_line(thread, "thread")
@@ -143,22 +171,37 @@ def wake_line(
         tab_s = str(tab).strip().lower()
         if TAB_UUID_RE.match(tab_s):
             line += f" tab={tab_s}"
+    if mailbox is not None:
+        line += f" to={_guard_wake_mailbox(mailbox)}"
+    if from_sender is not None:
+        line += f" from={_guard_wake_from(from_sender)}"
     return line
 
 
 def wake_lines(
-    groups: Sequence[dict[str, Any]], *, tab: str | None = None
+    groups: Sequence[dict[str, Any]],
+    *,
+    tab: str | None = None,
+    mailbox: str | None = None,
+    from_sender: str | None = None,
 ) -> str:
     """Multi-line paste: one ``wake_line`` per group in caller order.
 
     Each group must carry ``thread_id`` and ``turn`` (same shapes as ``wake_line``).
     A single group is byte-identical to ``wake_line`` for that thread and turn set.
-    Optional ``tab`` is appended on the first line only.
+    Optional ``tab``, ``mailbox``, and ``from_sender`` are appended on the first
+    line only.
     """
     if not groups:
         raise ValueError("groups must be non-empty")
     lines = [
-        wake_line(str(g["thread_id"]), g["turn"], tab=tab if i == 0 else None)
+        wake_line(
+            str(g["thread_id"]),
+            g["turn"],
+            tab=tab if i == 0 else None,
+            mailbox=mailbox if i == 0 else None,
+            from_sender=from_sender if i == 0 else None,
+        )
         for i, g in enumerate(groups)
     ]
     return "\n".join(lines)
