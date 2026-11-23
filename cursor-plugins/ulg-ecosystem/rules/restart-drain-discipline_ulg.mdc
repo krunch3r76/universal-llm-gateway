@@ -35,6 +35,5 @@ Restart-after-land is the default. The gateway GPU pre-check withholds a gateway
 
 ## Stopped Stargate (manage host)
 
-When the down witness agrees Stargate is stopped (port closed and PID absent or dead), a non-forced `sync_restart` or `restart` on `stargate` must start lifecycle immediately or refuse naming the verb — it must **never** arm `pending_drain` because the active-work probe raised `httpx.ConnectError` (including errno on `__context__` only). Caller-requested `force=true` while the probe is undetermined still requires a coordinator `force_reason` (409); down-witness idle does **not** bypass Gate 1.
+Stopped (down-witness) ⇒ non-forced `sync_restart`/`restart` starts or refuses — never `pending_drain` on probe `ConnectError` (incl. `__context__`). Undetermined `force` still needs `force_reason`. Detail: `runbook:restart-drain`.
 
-detail: skill `git-posture` § Restart drain · `runbook:restart-drain`.
