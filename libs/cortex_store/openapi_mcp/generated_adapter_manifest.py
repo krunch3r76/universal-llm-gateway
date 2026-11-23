@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "6bb52b4ce54c9878109f6204d56d92faaa3d4bec7f789e005fa724ebd95050b7"
+OPENAPI_SHA256 = "3fe9666bcc85990867559559f46a643ef7b2cc88f501895fdf24a407f7dabfbc"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -382,7 +382,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "cbc56cf4c9a90d46e94640a2581df1f58a8e3878592d805484d7e58a3b671338",
+    "@components": "d367bcd7e8b588c52b1c4bb95e3114564cffa82096b08092655a2a7607ab9034",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "3fd67dfdaa2e5b50a1f1d192fa0e88e9722a19bc4dcdca19d12f3296c9be4c7f",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",
@@ -413,6 +413,7 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "PATCH /extraction-runs/{run_id}": "6ee470a6051f9db5986b2c696abf45ca1626f68e91848a7d853bbb423652c181",
     "POST /assertions/age-staged": "365d3e7c8a105134bb86d05abaa77fb2c828ea748ecdf3477aa8fdd0ecf05fbd",
     "POST /assertions/{assertion_id}/enrich": "327214561abfd1521908ccfaf5f39fd3481569f444f4460203d3674e2ad84c16",
+    "POST /boot-mint": "e18a2b994f4722d012be8dfc0661363293e8fe3fee75d63d62a06ebdb2c376c5",
     "POST /claims/burst": "fff7ee585ebe6616ae9e848182a5e3441f5748a982ee4dd95643d406178abf4d",
     "POST /close/check": "4152437ef6896ebf64db0dd27a5508dbad37e11d6ca4d184e01fb4f97221f8f2",
     "POST /close/commit": "d05802c27ec0f565be76fd8797a5bbd9dd0bbf7522a4aa0751dd26eb7901c1f1",

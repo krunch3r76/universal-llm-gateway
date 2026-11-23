@@ -4,12 +4,57 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agent_seat.boot_identity import BootIdentity
+from mcp_events import record
+
+from .._cortex_relay import cx
 from ._boot_diff import build_boot_diff
 from ._boot_runner import BootMode, run_cortex_brief
 from ._boot_seat_resolve import (
     resolve_boot_family_platform,
     resolve_boot_identity,
 )
+
+_FORBIDDEN_MINT_ONLY_FIELDS = (
+    "views",
+    "principal",
+    "profile",
+    "packet_text",
+    "transcript_id",
+    "domain",
+)
+
+
+def _mint_only_companion_error(**present: Any) -> dict[str, Any] | None:
+    blocked = [
+        name
+        for name in _FORBIDDEN_MINT_ONLY_FIELDS
+        if present.get(name) not in (None, "", [], ())
+    ]
+    if not blocked:
+        return None
+    fields = ", ".join(blocked)
+    return {
+        "error": (
+            f"mint_only=true cannot be combined with {fields}; "
+            "omit mint_only or call cortex_brief without those parameters."
+        ),
+        "reason": "mint_only_companion_params",
+        "missing_fields": blocked,
+    }
+
+
+def _relay_boot_mint(
+    identity: BootIdentity,
+    *,
+    seat: str | None,
+) -> dict[str, Any]:
+    seat_arg = seat if seat else identity.capability_slug
+    result = cx("POST", "/boot-mint", {"seat": seat_arg})
+    if "error" in result:
+        return result
+    record("mcp.cortex.boot.mint", agent=identity.agent)
+    return result
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -38,8 +83,12 @@ def register_orchestration_tools(
         profile: str | None = None,
         packet_text: str | None = None,
         domain: str | None = None,
+        mint_only: bool = False,
     ) -> dict[str, Any]:
         """Mints the session id and returns the briefing card + section manifest.
+
+        Use ``mint_only=true`` when you only need ``session_id`` + identity (<2KB);
+        omit it (default) for the full briefing card + section manifest.
 
         Session-opening primary for any seat. The briefing card is a compact Markdown
         summary (soft target ≤ ~8KB inline) with priority signals and a section
@@ -113,6 +162,18 @@ def register_orchestration_tools(
         )
         if isinstance(resolved, dict):
             return resolved
+        if mint_only:
+            companion_err = _mint_only_companion_error(
+                views=views,
+                principal=principal,
+                profile=profile,
+                packet_text=packet_text,
+                transcript_id=transcript_id,
+                domain=domain,
+            )
+            if companion_err is not None:
+                return companion_err
+            return _relay_boot_mint(resolved, seat=seat)
         return run_cortex_brief(
             identity=resolved,
             role=role,

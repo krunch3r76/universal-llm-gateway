@@ -8,6 +8,7 @@ from . import (
     continuity,
     control_tower,
     legal_contacts,
+    mint,
     principal_context,
     recent_mentions,
     recent_work,
@@ -30,5 +31,6 @@ router.include_router(recent_mentions.router)
 router.include_router(recent_work.router)
 router.include_router(reflective.router)
 router.include_router(audit_counters.router)
+router.include_router(mint.router)
 
 __all__ = ["router"]

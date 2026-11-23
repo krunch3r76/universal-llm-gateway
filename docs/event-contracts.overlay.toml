@@ -162,6 +162,7 @@
 "mcp.agentbus.wait.completed" = "MCP wait relay returned"
 "mcp.agentbus.watchdog.sweep.failed" = "Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path."
 "mcp.auth.admitted" = "Request passed auth — source IP for firewall auditing"
+"mcp.cortex.boot.mint" = "Mint-only cortex_brief completed without full card fetch/render; agent is the resolved capability slug"
 "mcp.cortex.boot.card.overbudget" = "Delivered briefing card UTF-8 byte count exceeded per-seat ceiling (`web`: 19_000; `default`: 15_500); breach line appended to card before manifest assembly; per-block ledger in audit dump"
 "mcp.cortex.boot.dump.failed" = "Audit dump write failed; `stage` ∈ {`mkdir`, `write_text`}; `path` present for `write_text` stage only; boot itself succeeds (dump is best-effort)"
 "mcp.cortex.boot.dump.written" = "Per-boot audit dump written successfully to `/data/files/notes/system/audit/boots/`; `path` is the full dump file path (second-resolution filename decoupled from `session_id`); `bytes` is the UTF-8 byte count of the written file"

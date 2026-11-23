@@ -149,8 +149,9 @@ def record(
 
     Signals follow dotted convention: mcp.{domain}.{action}
 
-    Boot signals (emitted by _boot_runner / _boot_manifest):
-      mcp.cortex.boot                    — boot completed (agent)
+    Boot signals (emitted by _boot_runner / _boot_manifest / mint-only path):
+      mcp.cortex.boot                    — full brief completed (agent)
+      mcp.cortex.boot.mint               — mint-only brief (agent); no mcp.cortex.boot
       mcp.cortex.boot.manifest.assembled — manifest built (agent, artifact_count, total_bytes)
       mcp.cortex.boot.fetch.failed       — byte-count serialization failed (error, error_type)
 
