@@ -46,7 +46,11 @@ from tools._lean_document_manifest import (
     lean_list_sections,
     pdf_lean_not_applied,
 )
-from tools._lean_to_dict import _effective_to_dict_max_depth, lean_heading_tree_dict
+from tools._lean_to_dict import (
+    lean_heading_tree_dict,
+    resolve_lean_list_max_depth,
+    resolve_to_dict_max_depth,
+)
 from tools.filesystem._expected_read_sha256_boundary import (
     coerce_expected_read_sha256_at_fs_boundary,
 )
@@ -684,7 +688,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         all_occurrences: bool = False,
         size_only: bool = False,
         lean: bool = False,
-        max_depth: int = 3,
+        max_depth: int | None = None,
         offset: int | str = 0,
         sections: list[str] | None = None,
         export: bool = False,
@@ -806,7 +810,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                         sandbox=sandbox,
                         text=text,
                         read_sha256=read_sha256,
-                        max_depth=max_depth,
+                        max_depth=resolve_lean_list_max_depth(max_depth),
                         offset=offset,
                         expected_read_sha256=None,
                     )
@@ -866,10 +870,11 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 )
             if coerced_expected_read_sha256:
                 return param_not_applicable_error(parameter="expected_read_sha256")
-            tree_depth = _effective_to_dict_max_depth(max_depth)
-            sparse_data = lean_heading_tree_dict(text, max_depth=tree_depth)
-            if sparse_data.get("code"):
-                return sparse_data
+            tree_depth = resolve_to_dict_max_depth(max_depth)
+            built = lean_heading_tree_dict(text, max_depth=tree_depth)
+            if built.get("code"):
+                return built
+            sparse_data = built["tree"]
             record(
                 "mcp.tool.markdown.converted.to.dict",
                 path=path,
@@ -883,6 +888,8 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 "read_sha256": read_sha256,
                 "selection": "manifest",
                 "omitted": ["content"],
+                "max_depth_applied": built["max_depth_applied"],
+                "depth_rows_omitted": built["depth_rows_omitted"],
             }
 
         if op == "replace_section":

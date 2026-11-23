@@ -128,7 +128,55 @@ def test_md_to_dict_playbook_under_8kb(md_tool) -> None:
 
 def test_lean_heading_tree_matches_direct_helper() -> None:
     text = "# A\n\naaa\n\n## B\n\nbbb\n"
-    direct = lean_heading_tree_dict(text, max_depth=6)
+    built = lean_heading_tree_dict(text, max_depth=6)
+    direct = built["tree"]
+    assert built["max_depth_applied"] == 6
     assert "A" in direct
     assert direct["A"]["id"] == "A"
     assert isinstance(direct["A"].get("B"), dict)
+
+
+def test_md_to_dict_duplicate_sibling_titles_kept(md_tool) -> None:
+    fn, root = md_tool
+    text = "# Parent\n\n# Dup\n\none\n\n# Dup\n\ntwo\n"
+    _write(root, "dup.md", text)
+    out = fn(op="to_dict", path="dup.md", sandbox="cortex")
+    data = out.get("data") or {}
+    assert _find_node_by_id(data, "Dup#1") is not None
+    assert _find_node_by_id(data, "Dup#2") is not None
+
+
+def test_md_to_dict_heading_titled_id_does_not_clobber_metadata(md_tool) -> None:
+    fn, root = md_tool
+    text = "# Root\n\nbody\n\n## id\n\nchild\n"
+    _write(root, "meta.md", text)
+    out = fn(op="to_dict", path="meta.md", sandbox="cortex")
+    data = out.get("data") or {}
+    root_node = data["Root"]
+    assert root_node.get("id") == "Root"
+    child = root_node.get("Root/id") or _find_node_by_id(data, "Root/id")
+    assert child is not None
+    assert child.get("id") == "Root/id"
+
+
+def test_md_to_dict_max_depth_explicit_three_cuts_tree(md_tool) -> None:
+    fn, root = md_tool
+    text = "# Top\n\n## L2\n\na\n\n### L3\n\nd\n"
+    _write(root, "depth.md", text)
+    shallow = fn(op="to_dict", path="depth.md", sandbox="cortex", max_depth=3)
+    deep = fn(op="to_dict", path="depth.md", sandbox="cortex", max_depth=2)
+    assert shallow.get("max_depth_applied") == 3
+    assert deep.get("max_depth_applied") == 2
+    assert deep.get("depth_rows_omitted", 0) >= 1
+    assert _find_node_by_id(deep.get("data") or {}, "Top/L2/L3") is None
+    assert _find_node_by_id(shallow.get("data") or {}, "Top/L2/L3") is not None
+
+
+def test_md_to_dict_default_max_depth_six_includes_deep(md_tool) -> None:
+    fn, root = md_tool
+    text = "# Top\n\n## L2\n\na\n\n### L3\n\nd\n"
+    _write(root, "deep.md", text)
+    out = fn(op="to_dict", path="deep.md", sandbox="cortex")
+    assert out.get("max_depth_applied") == 6
+    assert out.get("depth_rows_omitted") == 0
+    assert _find_node_by_id(out.get("data") or {}, "Top/L2/L3") is not None

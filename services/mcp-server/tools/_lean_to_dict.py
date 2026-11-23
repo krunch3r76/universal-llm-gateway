@@ -18,11 +18,23 @@ from tools._lean_document_manifest import (
     _validate_max_depth,
 )
 
+_MD_TO_DICT_DEFAULT_MAX_DEPTH = 6
+_MD_LIST_DEFAULT_MAX_DEPTH = 3
 
-def _effective_to_dict_max_depth(max_depth: int) -> int:
-    """md_list default is 3; md_to_dict uses full playbook depth unless overridden."""
-    if max_depth == 3:
-        return 6
+_META_NEST_KEYS = frozenset(
+    {"id", "level", "char_count", "subtree_char_count", "child_count"}
+)
+
+
+def resolve_to_dict_max_depth(max_depth: int | None) -> int:
+    if max_depth is None:
+        return _MD_TO_DICT_DEFAULT_MAX_DEPTH
+    return max_depth
+
+
+def resolve_lean_list_max_depth(max_depth: int | None) -> int:
+    if max_depth is None:
+        return _MD_LIST_DEFAULT_MAX_DEPTH
     return max_depth
 
 
@@ -32,10 +44,19 @@ def _heading_tree_key(sec: Any) -> str:
     return sec.heading
 
 
+def _nest_child_key(parent: dict[str, Any], sec: Any, row_id: str) -> str:
+    key = _heading_tree_key(sec)
+    if key in _META_NEST_KEYS:
+        return row_id
+    if key in parent:
+        return row_id
+    return key
+
+
 def lean_heading_tree_dict(
     text: str, *, max_depth: int = 6
 ) -> dict[str, Any]:
-    """Title-nested dict with lean row fields per node; no section body strings."""
+    """Build title-nested tree with lean row fields per node; no body strings."""
     depth, depth_err = _validate_max_depth(max_depth)
     if depth_err is not None:
         return depth_err
@@ -43,15 +64,19 @@ def lean_heading_tree_dict(
     nav = _document_sections(text)
     if not any(s.level > 0 for s in nav):
         return {
-            UNSECTIONED_ID: {
-                "id": UNSECTIONED_ID,
-                "level": 0,
-                "char_count": len(text),
-                "subtree_char_count": len(text),
-            }
+            "tree": {
+                UNSECTIONED_ID: {
+                    "id": UNSECTIONED_ID,
+                    "level": 0,
+                    "char_count": len(text),
+                    "subtree_char_count": len(text),
+                }
+            },
+            "max_depth_applied": depth,
+            "depth_rows_omitted": 0,
         }
 
-    rows, _depth_cut = _build_lean_rows(text, nav, max_depth=depth)
+    rows, depth_cut = _build_lean_rows(text, nav, max_depth=depth)
     row_by_id = {row["id"]: dict(row) for row in rows}
 
     trimmed = [s for s in nav if not (s.level == 0 and s.chars == 0)]
@@ -83,10 +108,19 @@ def lean_heading_tree_dict(
         while stack and stack[-1][0] >= sec.level:
             stack.pop()
         parent = stack[-1][1] if stack else root
-        parent[_heading_tree_key(sec)] = node
+        nest_key = _nest_child_key(parent, sec, row_id)
+        parent[nest_key] = node
         stack.append((sec.level, node))
 
-    return root
+    return {
+        "tree": root,
+        "max_depth_applied": depth,
+        "depth_rows_omitted": depth_cut,
+    }
 
 
-__all__ = ["lean_heading_tree_dict", "_effective_to_dict_max_depth"]
+__all__ = [
+    "lean_heading_tree_dict",
+    "resolve_to_dict_max_depth",
+    "resolve_lean_list_max_depth",
+]
