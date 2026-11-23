@@ -160,7 +160,9 @@ class HarvestIncompleteError(RuntimeError):
         self.anchor_miss_cause = anchor_miss_cause
 
 
-def _anchor_miss_cause(prefixes: tuple[str, ...]) -> str:
+def _anchor_miss_cause(prefixes: tuple[str, ...], *, scan_ok: bool = True) -> str:
+    if not scan_ok:
+        return "scan_failed"
     return "needle_absent" if prefixes else "no_user_nodes"
 
 
@@ -180,15 +182,24 @@ def _anchor_miss_payload_json(
     )
 
 
-async def _collect_anchor_user_prefixes(page, anchor, state: dict) -> tuple[str, ...]:
-    """Normalized user-turn prefixes at anchor-miss raise (error path only)."""
+async def _collect_anchor_user_prefixes(
+    page, anchor, state: dict
+) -> tuple[tuple[str, ...], bool]:
+    """Normalized user-turn prefixes at anchor-miss raise (error path only).
+
+    Returns ``(prefixes, scan_ok)``. ``scan_ok`` is false when ``page.evaluate``
+    fails — diagnostic enrichment must not replace the typed anchor-miss error.
+    """
     cached = state.get("anchor_user_candidate_prefixes")
     if cached is not None:
-        return tuple(str(p) for p in cached)
-    raw = await page.evaluate(_ANCHOR_USER_SCAN_JS, anchor.js_args())
+        return tuple(str(p) for p in cached), True
+    try:
+        raw = await page.evaluate(_ANCHOR_USER_SCAN_JS, anchor.js_args())
+    except Exception:
+        return (), False
     if not isinstance(raw, dict) or "prefixes" not in raw:
-        return ()
-    return tuple(str(p) for p in (raw.get("prefixes") or []))
+        return (), True
+    return tuple(str(p) for p in (raw.get("prefixes") or [])), True
 
 
 async def _raise_anchor_incomplete(
@@ -198,8 +209,8 @@ async def _raise_anchor_incomplete(
     anchor: ReplyAnchor,
     state: dict,
 ) -> None:
-    prefixes = await _collect_anchor_user_prefixes(page, anchor, state)
-    cause = _anchor_miss_cause(prefixes)
+    prefixes, scan_ok = await _collect_anchor_user_prefixes(page, anchor, state)
+    cause = _anchor_miss_cause(prefixes, scan_ok=scan_ok)
     payload = _anchor_miss_payload_json(
         marker=anchor.marker, prefixes=prefixes, cause=cause
     )

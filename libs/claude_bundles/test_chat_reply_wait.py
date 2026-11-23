@@ -8,7 +8,11 @@ import time
 import pytest
 from chat_harvest.chrome import is_prompt_echo
 
-from claude_bundles.chat_reply_wait import HarvestIncompleteError, wait_assistant_reply
+from claude_bundles.chat_reply_wait import (
+    _ANCHOR_USER_SCAN_JS,
+    HarvestIncompleteError,
+    wait_assistant_reply,
+)
 from claude_bundles.cse_idle_probe import in_flight_from_state
 from claude_bundles.reply_completion import (
     complete_enough as _complete_enough,
@@ -871,6 +875,46 @@ async def test_structural_quiet_tier_a_does_not_complete_tool_row_with_stop(
             min_body=200,
             stable_polls=2,
         )
+
+
+@pytest.mark.asyncio
+async def test_anchor_user_scan_evaluate_failure_preserves_typed_error(
+    advance_clock,
+) -> None:
+    """Dead page / evaluate failure must not preempt HarvestIncompleteError."""
+    from claude_bundles.reply_anchor import ReplyAnchor
+
+    class _EvaluateFailOnScan(_FakePage):
+        async def evaluate(self, js, arg=None):  # noqa: ANN001
+            if js == _ANCHOR_USER_SCAN_JS:
+                raise RuntimeError("execution context was destroyed")
+            return await super().evaluate(js, arg)
+
+    page = _EvaluateFailOnScan(
+        [
+            {
+                **_state(body_len=0, n=0),
+                "anchored": True,
+                "anchor_found": False,
+                "anchor_matches": 0,
+            }
+        ]
+        * 6
+    )
+    anchor = ReplyAnchor(marker="missing-marker-xyz", prior_matches=0)
+    with pytest.raises(HarvestIncompleteError) as exc:
+        await wait_assistant_reply(
+            page,
+            anchor=anchor,
+            tail_hold=True,
+            timeout_s=2,
+            poll_ms=500,
+            stable_polls=2,
+        )
+    assert exc.value.anchor_found is False
+    assert exc.value.anchor_miss_cause == "scan_failed"
+    assert exc.value.anchor_user_candidate_prefixes == ()
+    assert "anchor not found at idle budget" in str(exc.value)
 
 
 @pytest.mark.asyncio
