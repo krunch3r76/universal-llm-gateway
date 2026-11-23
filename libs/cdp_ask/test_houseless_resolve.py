@@ -234,6 +234,32 @@ def test_bind_unified_chat_resolves_houseless_unmocked(
     assert count == 0
 
 
+def test_resolve_houseless_tab_seat_ok() -> None:
+    res = resolve_houseless_target(
+        _REG, client=_FakeClient(payload=_ok_payload(status="tab"))
+    )
+    assert res.ok is True
+    assert getattr(res, "tab", None) is True
+    assert res.chat_url == _CHAT
+
+
+@pytest.mark.parametrize(
+    "overrides,reason",
+    [
+        ({"chat_url": ""}, "no_chat_url"),
+        ({"seat_open": True}, "seat_open"),
+    ],
+)
+def test_resolve_houseless_tab_fail_closed(
+    overrides: dict[str, object], reason: str
+) -> None:
+    res = resolve_houseless_target(
+        _REG, client=_FakeClient(payload=_ok_payload(status="tab", **overrides))
+    )
+    assert res.ok is False
+    assert res.reason == reason
+
+
 def test_resolve_houseless_memoizes_per_registration() -> None:
     from cdp_ask.houseless_resolve import clear_houseless_resolve_memo
 

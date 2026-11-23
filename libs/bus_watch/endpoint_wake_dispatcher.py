@@ -40,6 +40,7 @@ from bus_watch.admit_waiter import (
     coord_admit_subject_matches,
     parse_waiter_from_admit_body,
 )
+from bus_watch.cse_wake_houseless_guard import HOUSELESS_TAB_KEY, guard_houseless_tab
 from bus_watch.endpoint_wake_orion_delivery import (
     chatgpt_work_subscription_from_actuation as _orion_synthetic_route_from_actuation,
 )
@@ -2538,7 +2539,8 @@ def _holder_for_cse_registration(
     memo = {} if delivery_phase else None
     hres = resolve_houseless_target(reg, memo=memo)
     if hres.ok and hres.chat_url:
-        return _synthetic_houseless_holder(reg, hres.chat_url)
+        holder = _synthetic_houseless_holder(reg, hres.chat_url)
+        return {**holder, HOUSELESS_TAB_KEY: True} if hres.tab else holder
     if hres.reason == "provenance_unreachable":
         return _giw_holder_lookup_failed_marker(reg)
     if hres.reason != "purpose_not_houseless":
@@ -2578,6 +2580,16 @@ def _holder_for_cse_registration(
             exc_info=True,
         )
     return None
+
+
+def _holder_for_wake_thread(
+    store: StoreClient, reg: str, *, wake_thread: str | None, delivery_phase: bool
+) -> dict[str, Any] | None:
+    return guard_houseless_tab(
+        _holder_for_cse_registration(store, reg, delivery_phase=delivery_phase),
+        wake_thread,
+        no_route_key=_HOUSELESS_NO_ROUTE,
+    )
 
 
 _CSE_WAKE_THREAD_HOLDER_MEMO = "_cse_wake_thread_holder_memo"
@@ -2799,8 +2811,8 @@ def _resolve_cse_wake_target_from_agent_id(
         if not isinstance(holder, dict) or not holder:
             return None
         return agent_id, holder
-    holder = _holder_for_cse_registration(
-        store, agent_id, delivery_phase=delivery_phase
+    holder = _holder_for_wake_thread(
+        store, agent_id, wake_thread=wake_thread, delivery_phase=delivery_phase
     )
     if not isinstance(holder, dict) or not holder:
         return None
@@ -2847,9 +2859,10 @@ def _resolve_cse_wake_target_thread_scoped(
             return None
         if not bus_holder_lookup_done:
             bus_holder_lookup_done = True
-            row = _holder_for_cse_registration(
+            row = _holder_for_wake_thread(
                 store,
                 bus_registration,
+                wake_thread=thread,
                 delivery_phase=delivery_phase,
             )
             bus_holder_cached = row if isinstance(row, dict) else None
@@ -2867,8 +2880,11 @@ def _resolve_cse_wake_target_thread_scoped(
         if source == "bus_association" and reg == bus_registration:
             holder = _cached_bus_holder()
         else:
-            holder = _holder_for_cse_registration(
-                store, reg, delivery_phase=delivery_phase
+            holder = _holder_for_wake_thread(
+                store,
+                reg,
+                wake_thread=thread,
+                delivery_phase=delivery_phase,
             )
         if not isinstance(holder, dict) or not holder:
             return None
@@ -3462,7 +3478,9 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
             primary, sub, turn_arg, paste_text=paste_text, **route_kwargs
         )
     else:
-        state, reason = _display_post_maybe_missed(primary, sub, turn_arg, **route_kwargs)
+        state, reason = _display_post_maybe_missed(
+            primary, sub, turn_arg, **route_kwargs
+        )
     from bus_watch.endpoint_wake_composer_defer import is_composer_defer_reason
 
     wake_detail: dict[str, Any] | None = None

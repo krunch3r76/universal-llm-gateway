@@ -22,6 +22,10 @@ from claude_bundles.cdp_registry.driving_seat import (
     ensure_driving_operator_seat,
     launch_or_defer,
 )
+from claude_bundles.cdp_registry.houseless_seat_row import (
+    houseless_seat_exit_branch,
+    is_houseless_tab_registration,
+)
 from claude_bundles.compose_setup_emit import compose_runner_quota_fields
 from claude_bundles.cowork_output_download import should_attempt_output_download
 from claude_bundles.cse_url import parse_claude_seat_address
@@ -265,7 +269,11 @@ def _persist_session_address(
     if not raw:
         return
     parsed = parse_claude_seat_address(raw)
-    if parsed is None or parsed.kind not in ("unified_chat", "cowork_cse", "code_session"):
+    if parsed is None or parsed.kind not in (
+        "unified_chat",
+        "cowork_cse",
+        "code_session",
+    ):
         return
     bind_url = parsed.canonical_url
     from claude_bundles.cdp_registry.models import STATUS_TAB
@@ -321,6 +329,7 @@ def _latch_streaming_attachment(
             exc_info=True,
         )
         from claude_bundles import cdp_registry_events
+
         cdp_registry_events.emit(
             cdp_registry_events.cdp_provenance_unresolved(
                 chat_url=latch_url,
@@ -850,6 +859,7 @@ async def run_execution(
         on_poll_harvest=on_poll_harvest,
     )
     retain_host = False
+    turn_ok = False
     surface = (req.claude_surface or "cowork").strip().lower()
     code_surface_extra: dict[str, Any] = {}
     effective_converse = req.converse
@@ -1004,6 +1014,7 @@ async def run_execution(
                     results[-1] = backfilled
                     last = backfilled
             conv_ok = all(r.ok for r in results)
+            turn_ok = conv_ok
             await _release_f6_and_advance_proof(
                 progress=progress,
                 ladder=ladder,
@@ -1109,6 +1120,7 @@ async def run_execution(
                 **code_surface_extra,
             }
         payload = _result_dict(result)
+        turn_ok = bool(result.ok)
         payload["registration_id"] = reg.registration_id
         _persist_session_address(
             reg.registration_id,
@@ -1149,7 +1161,11 @@ async def run_execution(
         except Exception:
             row = None
         if isinstance(row, dict) and row.get("status") == STATUS_TAB:
-            if await abort_check():
+            aborted = await abort_check()
+            seat = houseless_seat_exit_branch(row, aborted=aborted, ended_ok=turn_ok)
+            if seat is not None:
+                branch = seat
+            elif aborted:
                 branch = "abort"
             elif retain_host or (
                 escaped is not None and is_host_lost_error(str(escaped))
@@ -1162,6 +1178,11 @@ async def run_execution(
             else:
                 branch = "normal"
             await asyncio.to_thread(finish_tab_on_exit, reg, branch=branch)
+        elif row is None and is_houseless_tab_registration(reg):
+            logger.warning(
+                "tab exit registry read failed; row left as is registration_id=%s",
+                reg.registration_id,
+            )
         elif (
             retain_host
             or (teardown_check is not None and teardown_check())
