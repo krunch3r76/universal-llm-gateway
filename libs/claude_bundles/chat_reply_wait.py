@@ -34,6 +34,7 @@ Friction notes (keep when generalizing):
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -52,6 +53,58 @@ from claude_bundles.reply_completion import (
 )
 
 ANCHOR_COMMIT_GRACE_S = 120
+ANCHOR_USER_PREFIX_MAX = 80
+
+# Error-path scan only (success harvest unchanged): user-turn prefixes for anchor miss.
+_ANCHOR_USER_SCAN_JS = """
+({ userSelectors = [] }) => {
+  const normalizeAnchorText = (text) =>
+    (text || '').toLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, ' ').trim();
+  const prefixMax = %d;
+  const excludedUserNode = (el) => {
+    if (!el) return true;
+    if (el.isContentEditable) return true;
+    if (el.closest('[contenteditable="true"]')) return true;
+    const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+    if (testid.includes('composer') || testid.includes('input')) return true;
+    if (el.getAttribute('role') === 'textbox') return true;
+    return false;
+  };
+  const documentOrder = (a, b) => {
+    const pos = a.compareDocumentPosition(b);
+    if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  };
+  const pruneContained = (nodes) =>
+    nodes.filter(
+      (el) => !nodes.some((other) => other !== el && other.contains(el))
+    );
+  const userCandidates = [];
+  const userSeen = new Set();
+  const userSels = [...(userSelectors || []), '[role="article"]'];
+  for (const sel of userSels) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (userSeen.has(el) || excludedUserNode(el)) continue;
+      const t = (el.innerText || '').trim();
+      if (!t) continue;
+      if (sel === '[role="article"]' && !/^You said:\\s*/i.test(t)) continue;
+      userSeen.add(el);
+      userCandidates.push(el);
+    }
+  }
+  const userOrdered = pruneContained(userCandidates).sort(documentOrder);
+  const prefixes = [];
+  for (const el of userOrdered) {
+    const t = normalizeAnchorText(el.innerText || '');
+    if (t.length <= prefixMax) prefixes.push(t);
+    else prefixes.push(t.slice(0, prefixMax));
+  }
+  return { prefixes };
+}
+""" % (
+    ANCHOR_USER_PREFIX_MAX,
+)
 
 if TYPE_CHECKING:
     from claude_bundles.reply_anchor import ReplyAnchor
@@ -88,6 +141,9 @@ class HarvestIncompleteError(RuntimeError):
         state: dict | None = None,
         tail_hold: bool = False,
         anchor_found: bool | None = None,
+        anchor_marker: str = "",
+        anchor_user_candidate_prefixes: tuple[str, ...] = (),
+        anchor_miss_cause: str = "",
     ) -> None:
         super().__init__(message)
         if body:
@@ -99,6 +155,62 @@ class HarvestIncompleteError(RuntimeError):
         self.state = state
         self.tail_hold = tail_hold
         self.anchor_found = anchor_found
+        self.anchor_marker = anchor_marker
+        self.anchor_user_candidate_prefixes = anchor_user_candidate_prefixes
+        self.anchor_miss_cause = anchor_miss_cause
+
+
+def _anchor_miss_cause(prefixes: tuple[str, ...]) -> str:
+    return "needle_absent" if prefixes else "no_user_nodes"
+
+
+def _anchor_miss_payload_json(
+    *,
+    marker: str,
+    prefixes: tuple[str, ...],
+    cause: str,
+) -> str:
+    return json.dumps(
+        {
+            "anchor_marker": marker,
+            "anchor_user_candidate_prefixes": list(prefixes),
+            "anchor_miss_cause": cause,
+        },
+        separators=(",", ":"),
+    )
+
+
+async def _collect_anchor_user_prefixes(page, anchor, state: dict) -> tuple[str, ...]:
+    """Normalized user-turn prefixes at anchor-miss raise (error path only)."""
+    cached = state.get("anchor_user_candidate_prefixes")
+    if cached is not None:
+        return tuple(str(p) for p in cached)
+    raw = await page.evaluate(_ANCHOR_USER_SCAN_JS, anchor.js_args())
+    if not isinstance(raw, dict) or "prefixes" not in raw:
+        return ()
+    return tuple(str(p) for p in (raw.get("prefixes") or []))
+
+
+async def _raise_anchor_incomplete(
+    page,
+    *,
+    message: str,
+    anchor: ReplyAnchor,
+    state: dict,
+) -> None:
+    prefixes = await _collect_anchor_user_prefixes(page, anchor, state)
+    cause = _anchor_miss_cause(prefixes)
+    payload = _anchor_miss_payload_json(
+        marker=anchor.marker, prefixes=prefixes, cause=cause
+    )
+    raise HarvestIncompleteError(
+        f"{message} anchor_miss={payload}",
+        state=state,
+        anchor_found=False,
+        anchor_marker=anchor.marker,
+        anchor_user_candidate_prefixes=prefixes,
+        anchor_miss_cause=cause,
+    )
 
 
 async def wait_assistant_reply(
@@ -176,12 +288,15 @@ async def wait_assistant_reply(
             elif not anchor_seen and time.monotonic() >= commit_deadline:
                 matches = state.get("anchor_matches", 0)
                 prior = anchor.prior_matches
-                raise HarvestIncompleteError(
-                    "anchor not committed within grace: no user turn matched the "
-                    f"prompt marker (matches={matches}, prior={prior}, "
-                    f"grace_s={anchor_commit_grace_s}) — ¬delete",
+                await _raise_anchor_incomplete(
+                    page,
+                    message=(
+                        "anchor not committed within grace: no user turn matched the "
+                        f"prompt marker (matches={matches}, prior={prior}, "
+                        f"grace_s={anchor_commit_grace_s}) — ¬delete"
+                    ),
+                    anchor=anchor,
                     state=state,
-                    anchor_found=False,
                 )
         structural_quiet.observe(state)
         cur_len = state.get("body_len", 0)
@@ -276,11 +391,14 @@ async def wait_assistant_reply(
     if anchor is not None and not state.get("anchor_found"):
         matches = state.get("anchor_matches", 0)
         prior = anchor.prior_matches
-        raise HarvestIncompleteError(
-            "anchor not found at idle budget: no committed user turn matched the "
-            f"prompt marker (matches={matches}, prior={prior}) — ¬delete",
+        await _raise_anchor_incomplete(
+            page,
+            message=(
+                "anchor not found at idle budget: no committed user turn matched the "
+                f"prompt marker (matches={matches}, prior={prior}) — ¬delete"
+            ),
+            anchor=anchor,
             state=state,
-            anchor_found=False,
         )
     if tail_hold:
         from chat_harvest.chrome import ends_with_tool_row
