@@ -260,7 +260,9 @@ def test_stargate_stopped_probe_error_force_without_reason_refused(
     """
     import httpx
 
-    from scripts.model_manager.ui.controller import stargate_inflight_witness as sg_witness
+    from scripts.model_manager.ui.controller import (
+        stargate_inflight_witness as sg_witness,
+    )
 
     request = httpx.Request("GET", "http://127.0.0.1:9999/api/v1/admin/active-work")
     exc = httpx.ConnectError("Connection refused", request=request)
