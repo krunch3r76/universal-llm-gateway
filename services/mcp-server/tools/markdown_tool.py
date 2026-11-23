@@ -1,4 +1,9 @@
-"""Markdown section MCP tool: section-level navigation/edits via markdown_sections."""
+"""Markdown section MCP tool: list, read, and edit sections via markdown_sections.
+
+The markdown overflow tool and unified fs md_* ops both enter here. Lean
+md_list stays opt-in; every other listing offset is coerced to an int before
+descriptor paging so a digit string cannot be rejected as a lean cursor.
+"""
 
 from __future__ import annotations
 
@@ -37,9 +42,9 @@ from mcp_events import record
 from tools._document_manifest import build_document_manifest
 from tools._hashing import format_sha256_uri, sha256_hex_of_bytes
 from tools._lean_document_manifest import (
+    contain_non_lean_offset,
     lean_encoded_offset_requires_lean,
     lean_list_sections,
-    lean_listing_scope_error,
     pdf_lean_not_applied,
 )
 from tools.filesystem._expected_read_sha256_boundary import (
@@ -658,6 +663,13 @@ def _pdf_section_op(
 
 
 def register_markdown_tools(mcp: FastMCP) -> None:
+    """Attach section list, read, and write operations to one MCP server.
+
+    Lean listing is opt-in. Non-lean string offsets are coerced here as well
+    as in fs_impl, so a direct markdown call and a unified fs call agree on
+    digit strings versus lean cursors.
+    """
+
     @mcp.tool(title="Markdown Operations")
     def markdown(
         op: str,
@@ -783,7 +795,9 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                         "total_chars": len(text),
                         "read_sha256": read_sha256,
                     }
-                encoded_refusal = lean_encoded_offset_requires_lean(offset=offset, lean=lean)
+                encoded_refusal = lean_encoded_offset_requires_lean(
+                    offset=offset, lean=lean
+                )
                 if encoded_refusal is not None:
                     return encoded_refusal
                 if lean:
@@ -796,13 +810,12 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                         offset=offset,
                         expected_read_sha256=None,
                     )
-                start = 0
                 if isinstance(offset, str):
-                    return lean_listing_scope_error(
-                        offset=offset,
-                        lean=False,
-                        max_depth=max_depth,
-                    )
+                    numeric_offset, offset_err = contain_non_lean_offset(offset)
+                    if offset_err is not None:
+                        return offset_err
+                    assert numeric_offset is not None
+                    offset = numeric_offset
                 start = max(0, int(offset or 0))
                 manifest = build_document_manifest(
                     path=path,
