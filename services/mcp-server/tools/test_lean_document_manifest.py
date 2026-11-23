@@ -106,7 +106,13 @@ def test_lean_roundtrip_ids_md_read(md_tool) -> None:
                 sandbox="cortex",
                 sections=[sid],
             )
-            assert batch.get("outcome") == "ok" or batch.get("items"), (depth, sid)
+            items = batch.get("items")
+            assert items, (depth, sid, batch)
+            assert all(item.get("outcome") == "ok" for item in items), (
+                depth,
+                sid,
+                batch,
+            )
 
 
 def test_lean_parity_with_full_manifest(md_tool) -> None:
