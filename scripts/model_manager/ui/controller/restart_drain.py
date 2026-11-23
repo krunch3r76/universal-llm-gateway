@@ -513,20 +513,19 @@ def default_restart_witnesses() -> dict[str, list[InFlightWitness]]:
 
 
 async def probe_stargate_active_work(gate: RestartDrainGate) -> ActiveWork:
-    """Probe Stargate ``/admin/active-work``; map ECONNREFUSED+down to idle."""
-    from .stargate_inflight_witness import (
-        stargate_connect_refused,
-        stargate_down_witness_agrees,
-    )
+    """Probe Stargate ``/admin/active-work``; map ConnectError+down to idle."""
+    from .stargate_inflight_witness import stargate_down_witness_agrees
 
     try:
         return await gate.probe("stargate")
-    except httpx.HTTPError as exc:
-        if stargate_connect_refused(exc) and stargate_down_witness_agrees():
+    except httpx.ConnectError:
+        if stargate_down_witness_agrees():
             return ActiveWork(
                 busy=False,
                 detail={"busy": False, "probe": "econnrefused"},
             )
+        raise
+    except httpx.HTTPError:
         raise
 
 

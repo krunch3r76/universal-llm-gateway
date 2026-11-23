@@ -249,6 +249,45 @@ def test_giw_force_not_handled_here() -> None:
     assert result is None
 
 
+def test_stargate_stopped_probe_error_force_without_reason_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stopped Stargate + undetermined probe must not admit force without reason.
+
+    Breaks if down-witness idle is wired into the force gate (rival C): force
+    would proceed with no ``force_reason`` while ``restart_would_defer`` is true.
+    """
+    import httpx
+
+    from scripts.model_manager.ui.controller import stargate_inflight_witness as sg_witness
+
+    request = httpx.Request("GET", "http://127.0.0.1:9999/api/v1/admin/active-work")
+    exc = httpx.ConnectError("Connection refused", request=request)
+    exc.__context__ = OSError(errno.ECONNREFUSED, "Connection refused")
+
+    class _RaisingProbe:
+        async def snapshot(self) -> ActiveWork:
+            raise exc
+
+    gate = RestartDrainGate(probes={"stargate": _RaisingProbe()})
+    monkeypatch.setattr(sg_witness, "stargate_down_witness_agrees", lambda: True)
+
+    result = _run(
+        enforce_force_reason_if_needed(
+            gate,
+            "sync_restart",
+            "stargate",
+            force=True,
+            force_reason=None,
+            caller_requested=True,
+        )
+    )
+    assert result is not None
+    assert result["status"] == "refused"
+    assert result["status_code"] == 409
+    assert result["reason"] == REFUSE_REASON
+
+
 def test_probe_error_treated_as_busy(monkeypatch: pytest.MonkeyPatch) -> None:
     gate = RestartDrainGate()
 

@@ -32,4 +32,9 @@ land the work → path-explicit commit of session paths → recycle serving proc
 `work_complete ∉ L(x)` without quoted commit + recycle payloads. Fluency ≠ the act; trust tool payloads. "Only create commits when requested" means opportunistic/unrelated commits, **not** a veto — the seat commits session paths without asking. Checkpoint commit and `/session-end` are not work-complete.
 
 Restart-after-land is the default. The gateway GPU pre-check withholds a gateway stop when the socket is missing or uncheckable (¬ a busy-skip).
+
+## Stopped Stargate (manage host)
+
+When the down witness agrees Stargate is stopped (port closed and PID absent or dead), a non-forced `sync_restart` or `restart` on `stargate` must start lifecycle immediately or refuse naming the verb — it must **never** arm `pending_drain` because the active-work probe raised `httpx.ConnectError` (including errno on `__context__` only). Caller-requested `force=true` while the probe is undetermined still requires a coordinator `force_reason` (409); down-witness idle does **not** bypass Gate 1.
+
 detail: skill `git-posture` § Restart drain · `runbook:restart-drain`.

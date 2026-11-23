@@ -274,6 +274,14 @@ def _connect_refused_error() -> httpx.ConnectError:
     return exc
 
 
+def _connect_refused_context_only_error() -> httpx.ConnectError:
+    """httpx 0.28.x: errno 111 may live on ``__context__``, not ``__cause__``."""
+    request = httpx.Request("GET", "http://127.0.0.1:9999/api/v1/admin/active-work")
+    exc = httpx.ConnectError("Connection refused", request=request)
+    exc.__context__ = OSError(errno.ECONNREFUSED, "Connection refused")
+    return exc
+
+
 class _RaisingProbe:
     def __init__(self, exc: BaseException) -> None:
         self._exc = exc
@@ -282,6 +290,49 @@ class _RaisingProbe:
     async def snapshot(self) -> ActiveWork:
         self.snapshot_calls += 1
         raise self._exc
+
+
+@pytest.mark.parametrize("action", ["sync_restart", "restart"])
+def test_stargate_connect_error_context_only_and_down_witness_starts(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+) -> None:
+    """Down witness + ConnectError (errno on ``__context__`` only) starts immediately.
+
+    Breaks when ``probe_stargate_active_work`` requires ``stargate_connect_refused``
+    (``__cause__`` walk only): the arm path mints ``pending_drain`` instead.
+    """
+    store = RestartIntentStore(db_path=tmp_path / f"stargate-down-context-{action}.db")
+    lifecycle_calls = 0
+
+    async def _lifecycle() -> str:
+        nonlocal lifecycle_calls
+        lifecycle_calls += 1
+        return "started"
+
+    gate = RestartDrainGate(
+        probes={"stargate": _RaisingProbe(_connect_refused_context_only_error())}
+    )
+    supervisor = StargateIdleDrainSupervisor(
+        gate=gate,
+        store=store,
+        lifecycle=_lifecycle,
+    )
+    monkeypatch.setattr(sg_witness, "stargate_down_witness_agrees", lambda: True)
+
+    result = _run(
+        run_gated_stargate_idle_drain_supervised(
+            gate,
+            action,
+            store=store,
+            supervisor=supervisor,
+            reason="down stargate immediate start (context chain)",
+        )
+    )
+    assert result["status"] == "ok"
+    assert lifecycle_calls == 1
+    assert store.active_for_service("stargate") is None
 
 
 def test_stargate_econnrefused_and_down_witness_starts(
