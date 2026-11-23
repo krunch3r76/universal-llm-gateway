@@ -1,4 +1,9 @@
-"""Unified ``fs`` implementation — single surface-aware chokepoint."""
+"""Unified ``fs`` implementation — single surface-aware chokepoint.
+
+``fs`` and ``fs_read`` both enter here. Lean ``md_list`` may carry a string
+cursor; every other op has its offset coerced to int before dispatch so a
+digit string cannot reach line slicing.
+"""
 
 from __future__ import annotations
 
@@ -13,8 +18,8 @@ from fs_roots import (
 )
 from project_ops import workspaces_impl_registry
 from tool_error_enricher import fs_missing_sandbox_hint
-
 from tools._durable_write import WriteVerifyError, write_verify_error_dict
+from tools._lean_document_manifest import contain_non_lean_offset
 from tools.filesystem._batch_ingress import (
     apply_lane_ingress,
     attach_batch_key_remap,
@@ -117,7 +122,7 @@ def fs_impl(
     include_untracked: bool,
     binary: bool,
     max_depth: int,
-    offset: int,
+    offset: int | str,
     limit: int,
     expected_sha256: str,
     if_absent: bool,
@@ -129,13 +134,27 @@ def fs_impl(
     since: str = "",
     include_worktrees: bool = False,
     size_only: bool = False,
+    lean: bool = False,
     sections: list[str] | None = None,
     export: bool = False,
     expected_read_sha256: str | dict[str, str] = "",
     chunk_cursor: int | None = None,
 ) -> dict[str, Any]:
+    """Dispatch one sandboxed fs op after offset containment.
+
+    Lean ``md_list`` keeps ``offset`` as ``int | str`` so a ``d{depth}:{row}``
+    cursor still pages. Every other op coerces a digit string to ``int`` and
+    refuses other strings with an error envelope, before workspaces or cortex
+    reads slice lines. Returns the op payload or an error dict; no write.
+    """
     if not op:
         return {"error": "'op' is required"}
+    if not (op == "md_list" and lean):
+        numeric_offset, offset_err = contain_non_lean_offset(offset)
+        if offset_err is not None:
+            return offset_err
+        assert numeric_offset is not None
+        offset = numeric_offset
     if mode and mode not in SEARCH_MODES:
         return {
             "error": (
@@ -233,6 +252,7 @@ def fs_impl(
             "mode": mode,
             "include_worktrees": include_worktrees,
             "size_only": size_only,
+            "lean": lean,
             "sections": sections,
             "export": export,
             "chunk_cursor": chunk_cursor,
@@ -278,6 +298,8 @@ def fs_impl(
                     target=target,
                     all_occurrences=all_occurrences,
                     size_only=size_only,
+                    lean=lean,
+                    max_depth=max_depth,
                     offset=offset,
                     sections=sections,
                     export=export,
@@ -307,6 +329,8 @@ def fs_impl(
             target=target,
             all_occurrences=all_occurrences,
             size_only=size_only,
+            lean=lean,
+            max_depth=max_depth,
             offset=offset,
             sections=sections,
             export=export,

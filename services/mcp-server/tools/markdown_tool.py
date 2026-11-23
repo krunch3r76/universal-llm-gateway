@@ -1,4 +1,9 @@
-"""Markdown section MCP tool: section-level navigation/edits via markdown_sections."""
+"""Markdown section MCP tool: list, read, and edit sections via markdown_sections.
+
+The markdown overflow tool and unified fs md_* ops both enter here. Lean
+md_list stays opt-in; every other listing offset is coerced to an int before
+descriptor paging so a digit string cannot be rejected as a lean cursor.
+"""
 
 from __future__ import annotations
 
@@ -36,6 +41,12 @@ from mcp_events import record
 
 from tools._document_manifest import build_document_manifest
 from tools._hashing import format_sha256_uri, sha256_hex_of_bytes
+from tools._lean_document_manifest import (
+    contain_non_lean_offset,
+    lean_encoded_offset_requires_lean,
+    lean_list_sections,
+    pdf_lean_not_applied,
+)
 from tools.filesystem._expected_read_sha256_boundary import (
     coerce_expected_read_sha256_at_fs_boundary,
 )
@@ -565,6 +576,7 @@ def _pdf_section_op(
     export: bool = False,
     chunk_cursor: int | None = None,
     expected_read_sha256: str | None = None,
+    lean: bool = False,
 ) -> dict[str, Any]:
     """List/read PDF sections via the outline-driven (TOC) navigator."""
     if not resolved.exists():
@@ -572,6 +584,12 @@ def _pdf_section_op(
     try:
         if op == "list_sections":
             listing = list_pdf_sections(resolved)
+            if lean:
+                return pdf_lean_not_applied(
+                    path=path,
+                    sandbox=sandbox,
+                    listing=listing,
+                )
             record(
                 "mcp.tool.markdown.sections.listed",
                 path=path,
@@ -645,6 +663,13 @@ def _pdf_section_op(
 
 
 def register_markdown_tools(mcp: FastMCP) -> None:
+    """Attach section list, read, and write operations to one MCP server.
+
+    Lean listing is opt-in. Non-lean string offsets are coerced here as well
+    as in fs_impl, so a direct markdown call and a unified fs call agree on
+    digit strings versus lean cursors.
+    """
+
     @mcp.tool(title="Markdown Operations")
     def markdown(
         op: str,
@@ -658,7 +683,9 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         target: str = "",
         all_occurrences: bool = False,
         size_only: bool = False,
-        offset: int = 0,
+        lean: bool = False,
+        max_depth: int = 3,
+        offset: int | str = 0,
         sections: list[str] | None = None,
         export: bool = False,
         chunk_cursor: int | None = None,
@@ -736,6 +763,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 export=export,
                 chunk_cursor=chunk_cursor,
                 expected_read_sha256=coerced_expected_read_sha256,
+                lean=lean,
             )
 
         if op in ("list_sections", "read_section", "to_dict"):
@@ -744,6 +772,15 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 return {"error": err}
             read_sha256 = _read_sha256_for_file(resolved)
             if op == "list_sections":
+                if lean and size_only:
+                    record(
+                        "mcp.tool.markdown.lean.invalid_selector_combo",
+                        path=path,
+                        sandbox=sandbox,
+                    )
+                    return sparse_selector_conflict_error(
+                        "lean=true and size_only=true cannot both be set on md_list."
+                    )
                 if size_only:
                     record(
                         "mcp.tool.markdown.sections.listed",
@@ -758,6 +795,27 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                         "total_chars": len(text),
                         "read_sha256": read_sha256,
                     }
+                encoded_refusal = lean_encoded_offset_requires_lean(
+                    offset=offset, lean=lean
+                )
+                if encoded_refusal is not None:
+                    return encoded_refusal
+                if lean:
+                    return lean_list_sections(
+                        path=path,
+                        sandbox=sandbox,
+                        text=text,
+                        read_sha256=read_sha256,
+                        max_depth=max_depth,
+                        offset=offset,
+                        expected_read_sha256=None,
+                    )
+                if isinstance(offset, str):
+                    numeric_offset, offset_err = contain_non_lean_offset(offset)
+                    if offset_err is not None:
+                        return offset_err
+                    assert numeric_offset is not None
+                    offset = numeric_offset
                 start = max(0, int(offset or 0))
                 manifest = build_document_manifest(
                     path=path,

@@ -119,8 +119,9 @@ OP_DOC: dict[str, tuple[str, str]] = {
         "check whether a cited sha256 digest resolves in the content store",
     ),
     "md_list": (
-        "(path, offset?, size_only?)",
-        "manifest section index (descriptor cursor via offset; see Markdown section ops below)",
+        "(path, offset?, size_only?, lean?, max_depth?)",
+        "manifest section index (descriptor cursor via offset; lean=true for compact rows; "
+        "max_depth applies only when lean=true, default levels 1–3)",
     ),
     "md_read": (
         "(path, section?, sections?, export?, chunk_cursor?, expected_read_sha256?)",
@@ -175,6 +176,7 @@ CONTRACT_PARAMS: tuple[str, ...] = (
     "mode",
     "include_worktrees",
     "size_only",
+    "lean",
 )
 
 # Accepted values for the search `mode` selector (empty string == "auto").
@@ -193,6 +195,7 @@ PARAM_PURPOSE: dict[str, str] = {
         "when true, fs find and search include .worktrees and ulg-arc-worktrees paths"
     ),
     "size_only": "size-only list_sections flag for md_list",
+    "lean": "compact md_list rows (id, level, char_count) — opt-in; conflicts with size_only",
     "offset": "descriptor cursor for md_list pagination (not line offset)",
     "sections": "batched section ids for document read expansion",
     "export": (
@@ -232,7 +235,7 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "move": frozenset({"target"}),
     "copy": frozenset({"target", "expected_read_sha256"}),
     "delete": frozenset(),
-    "md_list": frozenset({"size_only", "offset"}),
+    "md_list": frozenset({"size_only", "offset", "lean"}),
     "md_read": frozenset(
         {"section", "sections", "export", "chunk_cursor", "expected_read_sha256"}
     ),
@@ -308,7 +311,7 @@ def _param_provided(name: str, value: Any) -> bool:
         return bool(value)  # int sentinel is 0
     if name == "chunk_cursor":
         return value is not None and value != ""
-    if name in ("all_occurrences", "include_worktrees", "size_only", "export"):
+    if name in ("all_occurrences", "include_worktrees", "size_only", "lean", "export"):
         return value is True
     if name == "sections":
         return bool(value)
@@ -389,7 +392,10 @@ def md_section_op_doc() -> str:
     """Build the fs tool docstring 'Markdown section ops' section."""
     return (
         "Markdown section ops (for large docs):\n"
-        "  md_list    (path, offset?, size_only?) — manifest section index (PDFs: embedded outline; markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` on six-block handoff packets; offset pages descriptors)\n"
+        "  md_list    (path, offset?, size_only?, lean?, max_depth?) — manifest section index "
+        "(lean=true: compact rows, max_depth=heading-level cutoff default 3; PDFs: embedded outline; "
+        "markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` "
+        "on six-block handoff packets; offset pages descriptors)\n"
         "  md_read    (path, section?, sections?, export?, expected_read_sha256?) — default manifest; section/sections/export expand. XML block keys: `<tag>` or bare `tag`\n"
         "  md_to_dict (path, expected_read_sha256?) — heading tree manifest without bodies; expected_read_sha256 is param_not_applicable\n"
         "  md_replace (path, section, target, content, all_occurrences?)  — patch target substring within the section body only; target required; cannot truncate unmentioned content; the section span includes child headings\n"
