@@ -36,6 +36,10 @@ from mcp_events import record
 
 from tools._document_manifest import build_document_manifest
 from tools._hashing import format_sha256_uri, sha256_hex_of_bytes
+from tools._lean_document_manifest import (
+    build_lean_document_manifest,
+    lean_listing_scope_error,
+)
 from tools.filesystem._expected_read_sha256_boundary import (
     coerce_expected_read_sha256_at_fs_boundary,
 )
@@ -565,6 +569,7 @@ def _pdf_section_op(
     export: bool = False,
     chunk_cursor: int | None = None,
     expected_read_sha256: str | None = None,
+    lean: bool = False,
 ) -> dict[str, Any]:
     """List/read PDF sections via the outline-driven (TOC) navigator."""
     if not resolved.exists():
@@ -572,6 +577,24 @@ def _pdf_section_op(
     try:
         if op == "list_sections":
             listing = list_pdf_sections(resolved)
+            if lean:
+                record(
+                    "mcp.tool.markdown.sections.listed",
+                    path=path,
+                    sandbox=sandbox,
+                    count=len(listing["sections"]),
+                    source=listing["source"],
+                    lean_requested=True,
+                    lean_applied=False,
+                )
+                return {
+                    "path": path,
+                    "sandbox": sandbox,
+                    "lean_requested": True,
+                    "lean_applied": False,
+                    "lean_reason": "pdf_outline",
+                    **listing,
+                }
             record(
                 "mcp.tool.markdown.sections.listed",
                 path=path,
@@ -658,6 +681,9 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         target: str = "",
         all_occurrences: bool = False,
         size_only: bool = False,
+        lean: bool = False,
+        max_depth: int = 3,
+        cursor_scope_depth: int = 0,
         offset: int = 0,
         sections: list[str] | None = None,
         export: bool = False,
@@ -736,6 +762,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 export=export,
                 chunk_cursor=chunk_cursor,
                 expected_read_sha256=coerced_expected_read_sha256,
+                lean=lean,
             )
 
         if op in ("list_sections", "read_section", "to_dict"):
@@ -744,6 +771,10 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 return {"error": err}
             read_sha256 = _read_sha256_for_file(resolved)
             if op == "list_sections":
+                if lean and size_only:
+                    return sparse_selector_conflict_error(
+                        "lean=true and size_only=true cannot both be set on md_list."
+                    )
                 if size_only:
                     record(
                         "mcp.tool.markdown.sections.listed",
@@ -759,6 +790,36 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                         "read_sha256": read_sha256,
                     }
                 start = max(0, int(offset or 0))
+                if start > 0 and not lean and int(cursor_scope_depth or 0) > 0:
+                    return lean_listing_scope_error(
+                        offset=start,
+                        lean=False,
+                        max_depth=max_depth,
+                    )
+                if lean:
+                    scope = int(cursor_scope_depth or 0)
+                    if scope <= 0 and start > 0:
+                        scope = max_depth
+                    manifest = build_lean_document_manifest(
+                        path=path,
+                        sandbox=sandbox,
+                        text=text,
+                        read_sha256=read_sha256,
+                        max_depth=max_depth,
+                        descriptor_offset=start,
+                        cursor_scope_depth=scope if start > 0 else 0,
+                    )
+                    if manifest.get("code") == "invalid_cursor_scope":
+                        return manifest
+                    record(
+                        "mcp.tool.markdown.sections.listed",
+                        path=path,
+                        sandbox=sandbox,
+                        count=len(manifest.get("rows") or []),
+                        lean=True,
+                        max_depth_applied=manifest.get("max_depth_applied"),
+                    )
+                    return manifest
                 manifest = build_document_manifest(
                     path=path,
                     sandbox=sandbox,
