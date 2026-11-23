@@ -112,11 +112,13 @@ def _wire_model_callbacks(
         error: str,
         worker_snapshot: dict[str, Any] | None = None,
         gateway_state_snapshot: dict[str, Any] | None = None,
+        failure_reason: str | None = None,
     ) -> None:
         """Forward MODEL_LOAD_FAILED to Master.
 
         Snapshots are forwarded so master-side ModelLoadingFailed emission
         carries the same worker/gateway-state forensics the edge captured.
+        ``failure_reason`` is the optional classified code from the gateway.
         """
         _ = asyncio.create_task(
             telemetry_sender.on_model_load_failed(
@@ -124,6 +126,7 @@ def _wire_model_callbacks(
                 error,
                 worker_snapshot=worker_snapshot,
                 gateway_state_snapshot=gateway_state_snapshot,
+                failure_reason=failure_reason,
             ),
             name=f"federation-telemetry-load-failed-{model_id}",
         )

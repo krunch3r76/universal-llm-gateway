@@ -79,6 +79,7 @@ def build_sync_message(signal: str, payload: dict[str, Any]) -> WebSocketMessage
             model_id=p.get("model_id", "unknown"),
             error_message=p.get("error_message", "Unknown error"),
             worker_snapshot=p.get("worker_snapshot"),
+            failure_reason=p.get("failure_reason"),
         ),
         MODEL_UNLOADED: lambda p: create_model_unloaded_message(
             model_id=p.get("model_id", "unknown")

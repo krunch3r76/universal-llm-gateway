@@ -1,4 +1,9 @@
-"""Factory functions for `model_lifecycle` scheduling events. Builds `Event` objects via `event_factory` from this package's signal constants (model availability, load/unload, execution start/complete/fail, capacity freed, worker eviction) for callers importing from `src.scheduling.events.model_lifecycle`."""
+"""Factory functions for `model_lifecycle` scheduling events.
+
+Builds `Event` objects via `event_factory` from this package's signal constants
+(model availability, load/unload, execution start/complete/fail, capacity freed,
+worker eviction) for callers importing from `src.scheduling.events.model_lifecycle`.
+"""
 
 # ruff: noqa: N802
 
@@ -196,6 +201,7 @@ def ModelLoadingFailed(
     gateway_name: str | None = None,
     gateway_state_snapshot: dict | None = None,
     worker_snapshot: dict | None = None,
+    failure_reason: str | None = None,
 ) -> Event:
     """
     Create MODEL_LOAD_FAILED event.
@@ -203,7 +209,7 @@ def ModelLoadingFailed(
     Args:
         url: Gateway URL
         model_id: Model that failed to load
-        error: Error message
+        error: Bounded process text from the edge (federation key ``error``)
         gateway_name: Optional gateway name (for enriched events)
         gateway_state_snapshot: Optional master-side cached view of the
             gateway at failure time (loaded/busy/loading models, per-model
@@ -212,6 +218,8 @@ def ModelLoadingFailed(
         worker_snapshot: Optional edge-side worker/process/resource dump
             forwarded over the WebSocket MODEL_LOAD_FAILED message.
             Forensics-only, may be None.
+        failure_reason: Optional classified reason code. Omitted when empty
+            so a payload without the field stays valid.
 
     Returns:
         Event with MODEL_LOAD_FAILED signal.
@@ -223,6 +231,7 @@ def ModelLoadingFailed(
         "gateway_name": gateway_name,
         "gateway_state_snapshot": gateway_state_snapshot,
         "worker_snapshot": worker_snapshot,
+        "failure_reason": failure_reason,
     }
     payload = {k: v for k, v in payload.items() if v is not None}
     return Event(

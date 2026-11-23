@@ -191,12 +191,18 @@ def create_model_load_failed(
     worker_snapshot: dict[str, Any] | None = None,
     gateway_state_snapshot: dict[str, Any] | None = None,
     source: dict[str, Any] | None = None,
+    failure_reason: str | None = None,
 ) -> MessageEnvelope:
-    """Create MODEL_LOAD_FAILED message with typed payload."""
+    """Create MODEL_LOAD_FAILED message with typed payload.
+
+    ``error`` is process text. ``failure_reason`` is optional and omitted
+    from the wire dict when empty.
+    """
     typed_source = TelemetrySource.from_dict(source) if source else None
     payload = ModelLoadFailed(
         model_id=model_id,
         error=error,
+        failure_reason=failure_reason,
         worker_snapshot=worker_snapshot,
         gateway_state_snapshot=gateway_state_snapshot,
         source=typed_source,

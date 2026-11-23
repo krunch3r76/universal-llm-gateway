@@ -117,16 +117,22 @@ def create_model_load_failed_message(
     model_id: str,
     error_message: str,
     worker_snapshot: dict[str, Any] | None = None,
+    failure_reason: str | None = None,
 ) -> WebSocketMessage:
     """Create MODEL_LOAD_FAILED event message.
 
     Forwards the optional `worker_snapshot` (process tree + hardware
     resources captured by the gateway at failure time) so Stargate can
     surface it on the master-side `model.load.failed` event.
+
+    ``failure_reason`` is the classified reason code. It is omitted when
+    absent so an older Stargate ignores the key rather than requiring it.
     """
     data: dict[str, Any] = {"model_id": model_id, "error_message": error_message}
     if worker_snapshot is not None:
         data["worker_snapshot"] = worker_snapshot
+    if failure_reason:
+        data["failure_reason"] = failure_reason
     return WebSocketMessage(
         type=MessageType.MODEL_LOAD_FAILED,
         data=data,

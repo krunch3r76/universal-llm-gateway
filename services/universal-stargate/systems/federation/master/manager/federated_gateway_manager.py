@@ -2104,10 +2104,17 @@ class FederatedGatewayManager(Sequential):
         # so the master-published event carries the same forensics local edge
         # subscribers see.
         if self._event_bus:
+            from universal_protocol.messages.telemetry import bound_process_text
+
             from src.scheduling.events import ModelLoadingFailed
 
             error_raw = parsed.get("error")
             error_str = error_raw if isinstance(error_raw, str) else "unknown"
+            error_str = bound_process_text(error_str)
+            reason_raw = parsed.get("failure_reason")
+            failure_reason = (
+                reason_raw if isinstance(reason_raw, str) and reason_raw else None
+            )
             worker_snapshot_raw = parsed.get("worker_snapshot")
             worker_snapshot = (
                 worker_snapshot_raw if isinstance(worker_snapshot_raw, dict) else None
@@ -2127,6 +2134,7 @@ class FederatedGatewayManager(Sequential):
                         gateway_name=gw.gateway_id,
                         worker_snapshot=worker_snapshot,
                         gateway_state_snapshot=gateway_state_snapshot,
+                        failure_reason=failure_reason,
                     )
                 )
             )

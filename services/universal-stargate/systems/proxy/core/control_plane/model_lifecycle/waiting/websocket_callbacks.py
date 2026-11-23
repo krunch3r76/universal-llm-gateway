@@ -163,6 +163,7 @@ class WebSocketCallbackFactory:
             error_message: str,
             worker_snapshot: dict | None = None,
             gateway_state_snapshot: dict | None = None,
+            failure_reason: str | None = None,
         ) -> None:
             from model_id import ModelId
 
@@ -196,6 +197,7 @@ class WebSocketCallbackFactory:
                     error_message,
                     worker_snapshot,
                     gateway_state_snapshot,
+                    failure_reason,
                 )
 
         return on_model_load_failed
