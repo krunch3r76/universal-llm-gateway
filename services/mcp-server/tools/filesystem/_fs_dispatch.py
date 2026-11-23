@@ -128,8 +128,9 @@ OP_DOC: dict[str, tuple[str, str]] = {
         "read manifest or expand sections (see Markdown section ops below)",
     ),
     "md_to_dict": (
-        "(path, expected_read_sha256?)",
-        "heading tree manifest without bodies; expected_read_sha256 is param_not_applicable",
+        "(path, max_depth?, expected_read_sha256?)",
+        "heading tree manifest without bodies (max_depth 1–6, default 6); "
+        "expected_read_sha256 is param_not_applicable",
     ),
     "md_replace": (
         "(path, section, target, content, all_occurrences?)",
@@ -397,7 +398,8 @@ def md_section_op_doc() -> str:
         "markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` "
         "on six-block handoff packets; offset pages descriptors)\n"
         "  md_read    (path, section?, sections?, export?, expected_read_sha256?) — default manifest; section/sections/export expand. XML block keys: `<tag>` or bare `tag`\n"
-        "  md_to_dict (path, expected_read_sha256?) — heading tree manifest without bodies; expected_read_sha256 is param_not_applicable\n"
+        "  md_to_dict (path, max_depth?, expected_read_sha256?) — heading tree manifest "
+        "without bodies (max_depth default 6); expected_read_sha256 is param_not_applicable\n"
         "  md_replace (path, section, target, content, all_occurrences?)  — patch target substring within the section body only; target required; cannot truncate unmentioned content; the section span includes child headings\n"
         "  md_rewrite_section (path, section, content)  — replace the entire section body (explicit rewrite after md_read); response includes mutation and _warning when body shrinks by >50% or children_removed when the rewrite drops nested headings; the section span includes child headings\n"
         "  md_append  (path, section, content)  — append to section body (text files only); same heading-less-content contract as md_replace\n"

@@ -17,7 +17,6 @@ from markdown_sections import (
     SectionError,
     dict_from_json,
     dict_to_markdown,
-    sections_to_dict,
 )
 from markdown_sections import (
     append_section as md_append_section,
@@ -47,6 +46,7 @@ from tools._lean_document_manifest import (
     lean_list_sections,
     pdf_lean_not_applied,
 )
+from tools._lean_to_dict import _effective_to_dict_max_depth, lean_heading_tree_dict
 from tools.filesystem._expected_read_sha256_boundary import (
     coerce_expected_read_sha256_at_fs_boundary,
 )
@@ -866,26 +866,15 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 )
             if coerced_expected_read_sha256:
                 return param_not_applicable_error(parameter="expected_read_sha256")
-            try:
-                data = sections_to_dict(text)
-            except SectionError as e:
-                return {"error": str(e)}
-
-            def _strip_bodies(node: Any) -> Any:
-                if isinstance(node, dict):
-                    return {
-                        k: _strip_bodies(v) for k, v in node.items() if k != "_content"
-                    }
-                if isinstance(node, list):
-                    return [_strip_bodies(v) for v in node]
-                return node
-
-            sparse_data = _strip_bodies(data)
+            tree_depth = _effective_to_dict_max_depth(max_depth)
+            sparse_data = lean_heading_tree_dict(text, max_depth=tree_depth)
+            if sparse_data.get("code"):
+                return sparse_data
             record(
                 "mcp.tool.markdown.converted.to.dict",
                 path=path,
                 sandbox=sandbox,
-                keys=len(data),
+                keys=len(sparse_data),
             )
             return {
                 "data": sparse_data,
