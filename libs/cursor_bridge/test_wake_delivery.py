@@ -138,6 +138,13 @@ def test_wake_line_single_and_multi_turn() -> None:
         wake_line("15851", [1649, 1647, 1648])
         == "BRIDGE_WAKE thread=15851 turn=1647,1648,1649"
     )
+    assert (
+        wake_line("15851", 1647, mailbox="cursor-interlocutor")
+        == "BRIDGE_WAKE thread=15851 turn=1647 to=cursor-interlocutor"
+    )
+    assert wake_line("15851", 1647, mailbox="Bad_Mailbox") == (
+        "BRIDGE_WAKE thread=15851 turn=1647"
+    )
     from cursor_bridge.chat_target import wake_lines
 
     tab = "21060be7-f0a6-4fa1-9058-b117ce4fc526"
@@ -183,6 +190,43 @@ async def test_deliver_wake_free_text_gate_unchanged() -> None:
         wake_groups=[{"thread_id": "22517", "turn": 1}],
     )
     assert both["reason"] == "bad_options"
+
+
+def _noop_paste_lock(*_a: Any, **_k: Any) -> Any:
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _inner():
+        yield
+
+    return _inner()
+
+
+@pytest.mark.asyncio
+async def test_deliver_wake_invalid_mailbox_not_bad_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, str] = {}
+
+    async def _deliver_locked(**kwargs: Any) -> dict[str, Any]:
+        captured["line"] = str(kwargs.get("line") or "")
+        return {"pasted": True, "reason": "match", "delivered": True}
+
+    monkeypatch.setattr(wd, "_deliver_locked", _deliver_locked)
+    monkeypatch.setattr(wd, "agent_paste_lock", _noop_paste_lock)
+
+    out = await deliver_wake(
+        display="8",
+        app="cursor",
+        thread="25029",
+        title="t",
+        turn=1,
+        mailbox="cursor_Bad_Mailbox",
+        from_sender="cursor-sdk",
+    )
+    assert out.get("reason") != "bad_options"
+    assert "to=" not in captured.get("line", "")
+    assert " from=cursor-sdk" in captured.get("line", "")
 
 
 def test_stale_wake_predicate_shared_by_all_sites() -> None:

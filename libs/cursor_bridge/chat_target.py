@@ -132,11 +132,11 @@ def exchange_lines(rows: Sequence[dict[str, Any]]) -> str:
     return "\n\n".join(blocks)
 
 
-def _guard_wake_mailbox(value: object) -> str:
+def _guard_wake_mailbox(value: object) -> str | None:
     text = str(value or "").strip().lower()
     if re.fullmatch(_WAKE_MAILBOX, text):
         return text
-    raise ValueError("mailbox must match [a-z0-9-]{1,64}")
+    return None
 
 
 def _guard_wake_from(value: object) -> str:
@@ -161,7 +161,8 @@ def wake_line(
     ``turn`` may be a positive int, a comma-separated string of positive ints,
     or a non-empty sequence of positive ints (sorted and deduplicated).
     The thread id is a single line. Optional ``tab`` appends one `` tab=<uuid>``.
-    Optional ``mailbox`` and ``from_sender`` append ``to=`` and guarded ``from=``.
+    Optional ``mailbox`` and ``from_sender`` append guarded ``to=`` and ``from=``.
+    Invalid mailbox shape omits ``to=``; invalid ``from_sender`` becomes ``from=unknown``.
     No I/O.
     """
     thread_s = _one_line(thread, "thread")
@@ -172,7 +173,9 @@ def wake_line(
         if TAB_UUID_RE.match(tab_s):
             line += f" tab={tab_s}"
     if mailbox is not None:
-        line += f" to={_guard_wake_mailbox(mailbox)}"
+        guarded_mailbox = _guard_wake_mailbox(mailbox)
+        if guarded_mailbox is not None:
+            line += f" to={guarded_mailbox}"
     if from_sender is not None:
         line += f" from={_guard_wake_from(from_sender)}"
     return line

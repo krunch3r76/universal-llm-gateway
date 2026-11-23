@@ -35,9 +35,19 @@ def test_wake_line_mailbox_and_guarded_from() -> None:
     assert "to=cursor-wake-slug" in bad
 
 
-def test_wake_line_rejects_bad_mailbox() -> None:
-    try:
-        wake_line("1", 1, mailbox="NOT VALID")
-    except ValueError:
-        return
-    raise AssertionError("expected ValueError for invalid mailbox")
+def test_wake_line_omits_invalid_mailbox_to() -> None:
+    assert wake_line("1", 1, mailbox="NOT VALID") == "BRIDGE_WAKE thread=1 turn=1"
+    assert wake_line("1", 1, mailbox="Bad_Mailbox") == "BRIDGE_WAKE thread=1 turn=1"
+    over64 = "a" * 65
+    assert wake_line("1", 1, mailbox=over64) == "BRIDGE_WAKE thread=1 turn=1"
+    assert (
+        wake_line("1", 1, mailbox="cursor-valid", from_sender="Bad_Sender")
+        == "BRIDGE_WAKE thread=1 turn=1 to=cursor-valid from=unknown"
+    )
+
+
+def test_wake_line_mailbox_valid_still_emits_to() -> None:
+    assert (
+        wake_line("25022", 3, mailbox="cursor-wake-slug")
+        == "BRIDGE_WAKE thread=25022 turn=3 to=cursor-wake-slug"
+    )
