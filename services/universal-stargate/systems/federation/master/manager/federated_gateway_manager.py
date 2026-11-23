@@ -157,8 +157,7 @@ class FederatedGatewayManager(Sequential):
             os.getenv("ULG_FEDERATION_LIVENESS_ALERT_THRESHOLD_MS", "300000")
         )
         self._liveness_sweep_interval_s = (
-            int(os.getenv("ULG_FEDERATION_LIVENESS_SWEEP_INTERVAL_MS", "60000"))
-            / 1000
+            int(os.getenv("ULG_FEDERATION_LIVENESS_SWEEP_INTERVAL_MS", "60000")) / 1000
         )
         self._liveness_alerted: set[str] = set()
         self._liveness_alerted_at: dict[str, float] = {}
@@ -718,10 +717,12 @@ class FederatedGatewayManager(Sequential):
         return new_gateway
 
     def _telemetry_poll_interval_ms(self, gw: FederatedGateway) -> int:
+        """Poll interval for HTTP unacked grace; LocalEdgeConfig has none → 5000."""
         remote_cfg = self._remote_configs.get(gw.remote_stargate_id)
-        if remote_cfg is not None:
-            return remote_cfg.telemetry_poll_interval_ms
-        return 5000
+        if remote_cfg is None:
+            return 5000
+        # LocalEdgeConfig has no poll field; Remote default is 5000.
+        return int(getattr(remote_cfg, "telemetry_poll_interval_ms", 5000))
 
     def _unacked_grace_s(self, gw: FederatedGateway) -> float:
         return LoadingLeaseTable.effective_unacked_grace_s(
@@ -2007,9 +2008,7 @@ class FederatedGatewayManager(Sequential):
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
                 break
-            await self.wait_for_state_change(
-                state_version, min(remaining, 0.25)
-            )
+            await self.wait_for_state_change(state_version, min(remaining, 0.25))
         return False
 
     def apply_gateway_forensics_snapshot(

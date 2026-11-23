@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from model_id import ModelId
 
+from systems.federation.common.config.schema import LocalEdgeConfig
 from systems.federation.common.types import FederatedGateway
 from systems.routing.selection.decision.resource_checks import _check_resources
 from systems.routing.selection.types import Gateway, Placement
@@ -125,6 +126,33 @@ def test_late_started_after_expiry_creates_fresh_acked_lease() -> None:
     table.expire_gateway("gw1", unacked_grace_s=15)
     table.ack("gw1", mid)
     assert mid in table.loading_models_for("gw1")
+
+
+def test_local_edge_config_uses_default_poll_interval() -> None:
+    """LocalEdgeConfig in _remote_configs must not AttributeError on expire."""
+    manager = FederatedGatewayManager(event_bus=MagicMock(), load_ack_grace_s=15)
+    edge = LocalEdgeConfig(
+        socket_path="/tmp/edge.sock",
+        stargate_id="edge-local",
+        api_key="k",
+    )
+    manager.register_remote(
+        "edge-local",
+        "unix:///tmp/edge.sock",
+        is_http_polling=False,
+        config=edge,
+    )
+    gw = FederatedGateway(
+        gateway_id="jupiter",
+        remote_stargate_id="edge-local",
+        remote_stargate_url="unix:///tmp/edge.sock",
+    )
+    manager._gateways["jupiter"] = gw
+    mid = ModelId.parse("m1")
+    manager._loading_leases.mark("jupiter", mid, LeaseOrigin.OPTIMISTIC)
+    manager._sync_loading_models(gw)
+    assert manager._telemetry_poll_interval_ms(gw) == 5000
+    manager._expire_and_project("jupiter", gw)  # must not raise
 
 
 @pytest.mark.asyncio
