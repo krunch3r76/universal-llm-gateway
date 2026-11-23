@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 from universal_protocol.messages import TelemetrySource
+from universal_protocol.messages.telemetry import bound_process_text
 
 from ..common.protocol import FederationMessageType
 
@@ -373,14 +374,23 @@ def create_model_lifecycle_callbacks(
         error: str,
         worker_snapshot: dict[str, Any] | None = None,
         gateway_state_snapshot: dict[str, Any] | None = None,
+        failure_reason: str | None = None,
     ) -> None:
         """Forward MODEL_LOAD_FAILED to connected peers.
 
         Snapshots are forensics-only and forwarded as opaque dicts so the
         master can enrich its own MODEL_LOAD_FAILED event with the same
         worker / gateway-state context the edge captured at failure time.
+
+        ``error`` is bounded process text. ``failure_reason`` is optional
+        and omitted when absent so an older master ignores the extra key.
         """
-        payload: dict[str, Any] = {"model_id": model_id, "error": error}
+        payload: dict[str, Any] = {
+            "model_id": model_id,
+            "error": bound_process_text(error),
+        }
+        if failure_reason:
+            payload["failure_reason"] = failure_reason
         if worker_snapshot is not None:
             payload["worker_snapshot"] = worker_snapshot
         if gateway_state_snapshot is not None:

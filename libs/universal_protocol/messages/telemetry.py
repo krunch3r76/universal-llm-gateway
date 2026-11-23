@@ -392,6 +392,21 @@ class ModelLoadingProgressPayload(TelemetryPayload):
         )
 
 
+PROCESS_TEXT_LIMIT = 512
+
+
+def bound_process_text(text: str, limit: int = PROCESS_TEXT_LIMIT) -> str:
+    """Truncate process text to ``limit`` Unicode characters.
+
+    Slicing keeps code points intact, so the result is valid UTF-8 and never
+    ends on a partial character. Context dumps are not accepted here; callers
+    pass only the allowlisted process string.
+    """
+    if len(text) <= limit:
+        return text
+    return text[:limit]
+
+
 @dataclass(slots=True, kw_only=True)
 class ModelLoadFailedPayload(TelemetryPayload):
     """Payload for MODEL_LOAD_FAILED telemetry.
@@ -399,18 +414,27 @@ class ModelLoadFailedPayload(TelemetryPayload):
     Snapshots are forensics-only diagnostic enrichment. Both are optional and
     forwarded as opaque dicts so the protocol does not need to track every
     field the gateway/edge stargate decides to capture.
+
+    ``error`` is bounded process text (federation key). ``failure_reason`` is
+    an optional classified code. Absent or unknown keys stay optional so an
+    older peer can omit or ignore them.
     """
 
     model_id: str
     error: str | None = None
+    failure_reason: str | None = None
     worker_snapshot: dict[str, Any] | None = None
     gateway_state_snapshot: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result = TelemetryPayload.to_dict(self)
         result["model_id"] = self.model_id
-        if self.error is not None:
+        if isinstance(self.error, str):
+            result["error"] = bound_process_text(self.error)
+        elif self.error is not None:
             result["error"] = self.error
+        if self.failure_reason:
+            result["failure_reason"] = self.failure_reason
         if self.worker_snapshot is not None:
             result["worker_snapshot"] = self.worker_snapshot
         if self.gateway_state_snapshot is not None:
@@ -426,9 +450,16 @@ class ModelLoadFailedPayload(TelemetryPayload):
         if "source" in data and data["source"]:
             source = TelemetrySource.from_dict(data["source"])
 
+        error = data.get("error")
+        if isinstance(error, str):
+            error = bound_process_text(error)
+        reason = data.get("failure_reason")
+        failure_reason = reason if isinstance(reason, str) and reason else None
+
         return ModelLoadFailed(
             model_id=data["model_id"],
-            error=data.get("error"),
+            error=error,
+            failure_reason=failure_reason,
             worker_snapshot=data.get("worker_snapshot"),
             gateway_state_snapshot=data.get("gateway_state_snapshot"),
             source=source,
@@ -689,15 +720,19 @@ def ModelLoadFailed(  # noqa: N802
     worker_snapshot: dict[str, Any] | None = None,
     gateway_state_snapshot: dict[str, Any] | None = None,
     source: TelemetrySource | None = None,
+    failure_reason: str | None = None,
 ) -> ModelLoadFailedPayload:
     """
     Create telemetry.model.loading.failed payload.
 
     Signal: TELEMETRY_MODEL_LOADING_FAILED
+
+    ``failure_reason`` is optional. ``error`` is bounded when serialized.
     """
     return ModelLoadFailedPayload(
         model_id=model_id,
         error=error,
+        failure_reason=failure_reason,
         worker_snapshot=worker_snapshot,
         gateway_state_snapshot=gateway_state_snapshot,
         source=source,

@@ -159,6 +159,12 @@ class ModelLoadFailedHandler(SyncMessageHandler):
         model_id = data.get("model_id")
         error_message = data.get("error_message", "Unknown error")
         worker_snapshot = data.get("worker_snapshot")
+        failure_reason_raw = data.get("failure_reason")
+        failure_reason = (
+            failure_reason_raw
+            if isinstance(failure_reason_raw, str) and failure_reason_raw
+            else None
+        )
         if not model_id:
             logger.debug("MODEL_LOAD_FAILED missing model_id")
             return
@@ -192,7 +198,13 @@ class ModelLoadFailedHandler(SyncMessageHandler):
         if ctx.on_model_load_failed:
             ctx.schedule_callback(
                 ctx.on_model_load_failed,
-                (model_id, error_message, worker_snapshot, gateway_state_snapshot),
+                (
+                    model_id,
+                    error_message,
+                    worker_snapshot,
+                    gateway_state_snapshot,
+                    failure_reason,
+                ),
             )
 
 

@@ -15,12 +15,16 @@ from systems.federation.common.types import FederatedGateway  # noqa: E402
 from systems.federation.master.manager.federated_gateway_manager import (  # noqa: E402
     FederatedGatewayManager,
 )
+from systems.federation.master.manager.loading_leases import (  # noqa: E402
+    LoadingLeaseTable,
+)
 
 
 def _manager_with_gateway(vram_free_mb: int) -> FederatedGatewayManager:
     mgr = FederatedGatewayManager.__new__(FederatedGatewayManager)
     mgr._event_bus = None
     mgr._load_resource_baseline = {}
+    mgr._loading_leases = LoadingLeaseTable()
     mgr._gateways = {
         "edge-jupiter-gateway": FederatedGateway(
             gateway_id="edge-jupiter-gateway",

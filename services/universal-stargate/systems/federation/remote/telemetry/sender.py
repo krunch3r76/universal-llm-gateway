@@ -408,11 +408,17 @@ class RemoteTelemetrySender:
         error: str,
         worker_snapshot: dict | None = None,
         gateway_state_snapshot: dict | None = None,
+        failure_reason: str | None = None,
     ) -> None:
-        """Handle model load failed from local Gateway."""
+        """Handle model load failed from local Gateway.
+
+        ``error`` is process text (bounded on serialize). ``failure_reason``
+        is optional and omitted from the envelope when empty.
+        """
         msg_payload = ModelLoadFailed(
             model_id=model_id,
             error=error,
+            failure_reason=failure_reason,
             worker_snapshot=worker_snapshot,
             gateway_state_snapshot=gateway_state_snapshot,
             source=self._source,

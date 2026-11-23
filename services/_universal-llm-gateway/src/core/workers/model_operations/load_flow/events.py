@@ -2,6 +2,8 @@
 
 from typing import TYPE_CHECKING
 
+from universal_protocol.messages.telemetry import bound_process_text
+
 from .deps import get_event_classes, publish_event
 from .failure_classify import classify_load_failure
 
@@ -32,6 +34,7 @@ async def emit_loading_event(
         event_to_publish = model_loading_started(model_id=model_id)
     elif status == "failed":
         classified_error, failure_reason = classify_load_failure(error or "Unknown")
+        classified_error = bound_process_text(classified_error)
         from ..failure_snapshot import build_worker_snapshot
 
         worker_snapshot = build_worker_snapshot(controller, model_id)
