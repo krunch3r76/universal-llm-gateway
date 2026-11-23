@@ -30,7 +30,7 @@ When the plan may assign **host-checkout diagnostics or named pytest** (not lane
 | `lane` | no | `B` | Leg 3 lane | `{{lane}}` |
 | `density_triage` | no | `mechanical` | Todo attribute; Leg 3 flag | `{{density_triage}}` |
 | `planner` | no | `here` | `here` or `glass:<n>` — selects § Wake registration subsection | prose |
-| `planner_model` | no | `claude-sonnet-5-5` | Glass spawn model (not `cursor/grok-4.7`) | `{{planner_model}}` |
+| `planner_model` | no | `claude-fable-5-2` | Glass spawn model: bare catalog id or `cursor/<id>` (e.g. `claude-fable-5-2` / `cursor/claude-fable-5-2` — hyphenated, never `claude-fable-5.2`); never `cursor/grok-4.7` as planner | `{{planner_model}}` |
 | `planner_effort` | no | `high` | Glass spawn effort | `{{planner_effort}}` |
 | `wake` | no | `subscribe` (**standing operator rule: always register**) | `subscribe` or `none` — `none` only when the operator types `wake=none` in this invocation; never inferred, never chosen to dodge a registration error — § No-wake resume and mailbox routing vs § Wake registration | prose |
 
@@ -49,7 +49,7 @@ Prose parameters (`planner`, `wake`) are not `{{slots}}`; the template names whi
 
 ## Procedure
 
-1. **Parse** parameters and defaults; infer `slug` when absent. Echo resolved values in ≤8 lines.
+1. **Parse** parameters and defaults; infer `slug` when absent. Echo resolved values in ≤8 lines. **Explicit `planner_model` → glass:** when the operator **names** `planner_model=…` in this invocation (not the default alone) and `planner` is omitted or `planner=here`, upgrade to `planner=glass:8` (or keep `planner=glass:<n>` if already set) and echo that upgrade — a tab already running cannot remint its model. **Default-only** `planner_model` with `planner=here` stays on this tab (no auto-spawn).
 2. **Rename this tab** — once `slug` is resolved, rename the tab that runs the legs with Cursor's `rename_chat`: title `lean-ladder {slug}`; when the run has a bus thread id `{n}` (after § Wake registration, or the first worker thread when `wake=none`), rename once more to `{n} {slug}`; after § Completion housekeeping on a successful arc (no Auto-runnable work left; residuals already imprinted), rename once more to `{n} [closed] {slug}` (or `lean-ladder [closed] {slug}` only if no bus thread id ever existed). `BLOCKED` or an open operator gate ⇒ keep `{n} {slug}` without `[closed]`. Invoking `/lean-ladder` is the rename ask: do not wait to be asked again. `rename_chat` unavailable or failed ⇒ say so once and continue; no retry loop. With `planner=glass:<n>` the spawned tab renames itself, not the spawning seat.
 3. **Register wakes first (default, not optional)** — unless the operator passed `wake=none`, run § Wake registration (`whereami` → `subscribe` → `subscriptions` verify; mailbox `cursor-{slug}`, scope = the arc thread) immediately after the arc thread exists and before retrieval, packets, or any dispatch. Quote the verified row id. `whereami` unresolved, a refused `subscribe`, or no row ⇒ post BLOCKED / report and stop; never fall back to `wake=none`. After every admit, end the turn idle for `BRIDGE_WAKE`.
 4. **Template** — substitute slots and prose flags, then follow the template only:

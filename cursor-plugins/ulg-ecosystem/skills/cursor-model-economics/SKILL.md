@@ -32,6 +32,14 @@ usage shape:
 
 Rates (both Fable ids): `$10 / $50 / $0.25 / $12.50` input/output/cache-read/cache-write per M — pinned in `config/model_rates.yaml`.
 
+## Fable 5.2 (2026-11-23) — ~20% under 5.1 headline
+
+Headline $/M on Cursor (`cursor/claude-fable-5-2`): **`$8 / $40 / $0.20 / $10`** input/output/cache-read/cache-write per M — pinned in `config/model_rates.yaml`; provenance `cursor.com/docs/models-and-pricing` read 2026-11-23. Catalog id is hyphenated (`claude-fable-5-2`), not dotted (`claude-fable-5.2`).
+
+The Fable 5.1 **block above stays authoritative** for 5.0/5.1 ids and CDP/cost verdict splits. For **lean-ladder** only: an operator-pinned **planner** on Fable 5.2 is an **exception** to the short-context judgment/implement cost block — the ladder's cache-heavy multi-turn planner shape (confer → plan → dispatch harvests) can amortize cache reads; that does **not** lift the block on ad-hoc judgment/implement binds elsewhere.
+
+**lean-dispatch** readers: cite this skill for $/M and conductor economics — do not paste the rate table into `lean-dispatch` / SKILL bodies.
+
 ## Conductor seat table
 
 Cheaper model at higher effort beats a wider seat at default effort.
