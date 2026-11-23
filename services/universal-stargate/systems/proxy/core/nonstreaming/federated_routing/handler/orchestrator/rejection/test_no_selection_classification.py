@@ -2,6 +2,7 @@
 
 import importlib.util
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -134,6 +135,7 @@ async def test_transient_constraints_enter_wait_with_transient_capacity_mode(
         _capacity_deadline_mono=None,
     )
 
+    routing_start_time = time.time() - 2.0
     with pytest.raises(HTTPException) as exc_info:
         await rejection_mod.handle_selection_rejection(
             selected_gateway=None,
@@ -147,6 +149,7 @@ async def test_transient_constraints_enter_wait_with_transient_capacity_mode(
             placement=SimpleNamespace(model_id=TARGET),
             gateways_for_routing=[],
             stability_tracker=SimpleNamespace(),
+            routing_start_time=routing_start_time,
         )
 
     wait_mock.assert_awaited_once()
@@ -160,6 +163,9 @@ async def test_transient_constraints_enter_wait_with_transient_capacity_mode(
     )
     assert "retry_guidance" in detail["data"]
     assert "eviction=" in detail["message"]
+    elapsed = detail["data"]["request_elapsed_ms"]
+    assert isinstance(elapsed, int)
+    assert elapsed >= 1500
 
 
 @pytest.mark.asyncio

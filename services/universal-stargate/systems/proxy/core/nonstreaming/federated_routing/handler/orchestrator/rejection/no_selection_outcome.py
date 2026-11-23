@@ -80,6 +80,7 @@ async def handle_selection_rejection(
     stability_tracker: "StickyPlacementTracker",
     capacity_pool: "CapacityPool | None" = None,
     routing_key_tracker: "RoutingKeyTracker | None" = None,
+    routing_start_time: float | None = None,
 ) -> "Gateway":
     """
     Resolve no-selection outcomes by waiting, classifying, or failing with context.
@@ -232,6 +233,7 @@ async def handle_selection_rejection(
                 waited_ms=waited_ms,
                 failure_reason="capacity_exhausted",
                 all_capacity_constraints=all_capacity_constraints,
+                routing_start_time=routing_start_time,
             )
 
             await _emit_terminal_failure_events(

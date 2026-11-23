@@ -788,6 +788,7 @@ async def test_requeue_depth_cap_raises_with_depth_guidance_before_wait(
         _eviction_requeue_depth=max_depth,
     )
 
+    routing_start_time = time.time() - 2.0
     with pytest.raises(HTTPException) as exc_info:
         await requeue_mod.requeue_after_transient_eviction(
             context=context,
@@ -801,7 +802,7 @@ async def test_requeue_depth_cap_raises_with_depth_guidance_before_wait(
             placement=SimpleNamespace(model_id=TARGET),
             event_bus=None,
             stability_tracker=SimpleNamespace(),
-            routing_start_time=time.time(),
+            routing_start_time=routing_start_time,
             eviction_cooldown_s=120.0,
             capacity_pool=None,
             routing_key_tracker=None,
@@ -819,6 +820,9 @@ async def test_requeue_depth_cap_raises_with_depth_guidance_before_wait(
     assert data["reason"] == "eviction_blocked_queue_timeout"
     assert "depth cap" in data["retry_guidance"]
     assert "requeue_depth=" in detail["message"]
+    elapsed = data["request_elapsed_ms"]
+    assert isinstance(elapsed, int)
+    assert elapsed >= 1500
 
 
 @pytest.mark.asyncio

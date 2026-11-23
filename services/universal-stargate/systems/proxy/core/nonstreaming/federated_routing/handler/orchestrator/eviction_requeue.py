@@ -90,6 +90,7 @@ async def requeue_after_transient_eviction(
             requeue_depth=depth,
             requeue_max_depth=max_depth,
             budget_exhausted=False,
+            routing_start_time=routing_start_time,
         )
         if timeout_reason:
             summary["reason"] = timeout_reason
