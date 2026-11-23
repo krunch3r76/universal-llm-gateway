@@ -351,6 +351,7 @@ def _parse_orchestration(orch_data: dict[str, Any] | None) -> OrchestrationConfi
         load_timeout=orch_data.get("load_timeout", 330),
         coalesce_wait_timeout=orch_data.get("coalesce_wait_timeout", 360),
         load_idle_budget=orch_data.get("load_idle_budget", 60),
+        load_ack_grace_s=orch_data.get("load_ack_grace_s", 15),
         telemetry_staleness_threshold=orch_data.get(
             "telemetry_staleness_threshold", 10.0
         ),

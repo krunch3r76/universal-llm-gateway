@@ -13,6 +13,7 @@ CRITICAL: Uses @sequential decorator for lock-free sequential execution.
 import asyncio
 import os
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -38,6 +39,14 @@ if TYPE_CHECKING:
 
     from ...common.config.schema import RemoteStargateConfig
     from ..circuit_breaker import FederationCircuitBreaker
+
+from ..orchestration.config import MODEL_LOAD_IDLE_BUDGET_S
+from .loading_leases import (
+    DEFAULT_LOAD_ACK_GRACE_S,
+    ExpiredLease,
+    LeaseOrigin,
+    LoadingLeaseTable,
+)
 
 logger = get_logger(__name__)
 
@@ -90,11 +99,22 @@ class FederatedGatewayManager(Sequential):
         event_bus: "EventBus",
         capacity_pool: "CapacityPool | None" = None,
         circuit_breaker: "FederationCircuitBreaker | None" = None,
+        *,
+        load_ack_grace_s: int | None = None,
+        load_idle_budget: int = MODEL_LOAD_IDLE_BUDGET_S,
+        loading_lease_clock: Callable[[], float] | None = None,
     ):
         super().__init__()
         self._event_bus = event_bus
         self._capacity_pool = capacity_pool
         self._circuit_breaker = circuit_breaker
+        self._loading_leases = LoadingLeaseTable(
+            load_ack_grace_s=load_ack_grace_s
+            if load_ack_grace_s is not None
+            else DEFAULT_LOAD_ACK_GRACE_S,
+            load_idle_budget=load_idle_budget,
+            clock=loading_lease_clock,
+        )
 
         # Gateway state by gateway_id
         self._gateways: dict[str, FederatedGateway] = {}
@@ -475,6 +495,7 @@ class FederatedGatewayManager(Sequential):
             self._capacity_pool.remove_gateway(gateway_id)
             logger.debug(f"📊 Capacity pool: removed gateway {gateway_id}")
         self.clear_inference_bans(gateway_id)
+        self._loading_leases.clear_gateway(gateway_id)
         del self._gateways[gateway_id]
 
         if not self._event_bus:
@@ -696,13 +717,104 @@ class FederatedGatewayManager(Sequential):
 
         return new_gateway
 
+    def _telemetry_poll_interval_ms(self, gw: FederatedGateway) -> int:
+        remote_cfg = self._remote_configs.get(gw.remote_stargate_id)
+        if remote_cfg is not None:
+            return remote_cfg.telemetry_poll_interval_ms
+        return 5000
+
+    def _unacked_grace_s(self, gw: FederatedGateway) -> float:
+        return LoadingLeaseTable.effective_unacked_grace_s(
+            floor_s=self._loading_leases.load_ack_grace_s,
+            is_http_polling=gw.is_http_polling,
+            telemetry_poll_interval_ms=self._telemetry_poll_interval_ms(gw),
+        )
+
+    def _emit_loading_lease_expired(self, expired: ExpiredLease) -> None:
+        if not self._event_bus:
+            return
+        from src.scheduling.events.federation_signaling import (
+            FederationLoadingLeaseExpired,
+        )
+
+        asyncio.create_task(
+            self._event_bus.publish_nowait(
+                FederationLoadingLeaseExpired(
+                    gateway_id=expired.gateway_id,
+                    model_id=str(expired.model_id),
+                    reason=expired.reason.value,
+                    age_s=expired.age_s,
+                    origin=expired.origin.value,
+                )
+            ),
+            name=(
+                f"emit-loading-lease-expired-{expired.gateway_id}-"
+                f"{expired.model_id.routing_key}"
+            ),
+        )
+
+    def _sync_loading_models(self, gw: FederatedGateway) -> FederatedGateway:
+        projected = self._loading_leases.loading_models_for(gw.gateway_id)
+        if projected != gw.loading_models:
+            return self._replace_gateway(gw, loading_models=projected)
+        return gw
+
+    def _expire_and_project(
+        self, gateway_id: str, gw: FederatedGateway
+    ) -> FederatedGateway:
+        expired = self._loading_leases.expire_gateway(
+            gateway_id,
+            unacked_grace_s=self._unacked_grace_s(gw),
+        )
+        for item in expired:
+            self._emit_loading_lease_expired(item)
+        return self._sync_loading_models(gw)
+
+    def _parse_positive_loading_field(
+        self, value: object | None
+    ) -> frozenset[ModelId] | None:
+        """Positive-only HTTP loading ack; never infer from loaded_models absence."""
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return self._parse_model_ids(value)
+        if isinstance(value, dict):
+            added = value.get("added", [])
+            if added:
+                return self._parse_model_ids(added)
+        return None
+
+    def _apply_http_loading_hooks(
+        self,
+        gateway_id: str,
+        gw: FederatedGateway,
+        *,
+        positive_loading: frozenset[ModelId] | None,
+        loaded_models: frozenset[ModelId] | None,
+    ) -> FederatedGateway:
+        # no positive loading field on poll payload; unacked grace applies
+        if positive_loading:
+            for model_id in positive_loading:
+                self._loading_leases.ack(gateway_id, model_id)
+        if loaded_models is not None:
+            self._loading_leases.release_loaded(gateway_id, loaded_models)
+        return self._sync_loading_models(gw)
+
     def get_gateway(self, gateway_id: str) -> FederatedGateway | None:
         """Get gateway by ID."""
-        return self._gateways.get(gateway_id)
+        gw = self._gateways.get(gateway_id)
+        if gw is None:
+            return None
+        gw = self._coerce_gateway_if_stale(gateway_id, gw)
+        return self._expire_and_project(gateway_id, gw)
 
     def get_all_gateways(self) -> list[FederatedGateway]:
         """Get all federated gateways (for routing)."""
-        return list(self._gateways.values())
+        result: list[FederatedGateway] = []
+        for gateway_id, gw in list(self._gateways.items()):
+            gw = self._coerce_gateway_if_stale(gateway_id, gw)
+            result.append(self._expire_and_project(gateway_id, gw))
+        return result
 
     def has_any_catalog_data(self) -> bool:
         """True iff any registered gateway has a populated catalog.
@@ -729,6 +841,7 @@ class FederatedGatewayManager(Sequential):
         for gateway_id, gw in list(self._gateways.items()):
             # Coerce stale instances before evaluation
             gw = self._coerce_gateway_if_stale(gateway_id, gw)
+            gw = self._expire_and_project(gateway_id, gw)
 
             if gw.is_unreachable:
                 age_ms = gw.heartbeat_age_ms
@@ -924,6 +1037,13 @@ class FederatedGatewayManager(Sequential):
             )
             return False
 
+        if gw.is_cloud:
+            logger.debug(
+                f"🔄 OPTIMISTIC MARK skipped: cloud gateway {gateway_id} "
+                f"(model: {model_id})"
+            )
+            return False
+
         if model_id in gw.loaded_models:
             logger.info(
                 f"🔄 OPTIMISTIC MARK skipped: {model_id} already loaded on "
@@ -931,10 +1051,8 @@ class FederatedGatewayManager(Sequential):
             )
             return False
 
-        gw = self._replace_gateway(
-            gw,
-            loading_models=gw.loading_models | {model_id},
-        )
+        self._loading_leases.mark(gateway_id, model_id, LeaseOrigin.OPTIMISTIC)
+        gw = self._sync_loading_models(gw)
         logger.info(
             f"🔄 OPTIMISTIC MARK: {model_id} → {gateway_id} "
             f"(loading_count={len(gw.loading_models)})"
@@ -949,10 +1067,8 @@ class FederatedGatewayManager(Sequential):
         if not gw:
             return
         if model_id in gw.loading_models:
-            gw = self._replace_gateway(
-                gw,
-                loading_models=gw.loading_models - {model_id},
-            )
+            self._loading_leases.release(gateway_id, model_id)
+            gw = self._sync_loading_models(gw)
             logger.debug(
                 f"🔄 Cleared optimistic loading state for {model_id} on {gateway_id} "
                 f"(loading_count={len(gw.loading_models)})"
@@ -983,11 +1099,8 @@ class FederatedGatewayManager(Sequential):
             )
             return
 
-        # Add to loading set
-        gw = self._replace_gateway(
-            gw,
-            loading_models=gw.loading_models | {model_id},
-        )
+        self._loading_leases.mark(gateway_id, model_id, LeaseOrigin.ORCHESTRATOR)
+        gw = self._sync_loading_models(gw)
         logger.debug(
             f"🔄 Marked {model_id} as loading on {gateway_id} "
             f"(loading_count={len(gw.loading_models)})"
@@ -1010,10 +1123,8 @@ class FederatedGatewayManager(Sequential):
             return
 
         if model_id in gw.loading_models:
-            gw = self._replace_gateway(
-                gw,
-                loading_models=gw.loading_models - {model_id},
-            )
+            self._loading_leases.release(gateway_id, model_id)
+            gw = self._sync_loading_models(gw)
             logger.debug(
                 f"🔄 Cleared loading state for {model_id} on {gateway_id} "
                 f"(loading_count={len(gw.loading_models)})"
@@ -1465,7 +1576,7 @@ class FederatedGatewayManager(Sequential):
                 f"(prev={len(prev_loaded)}, snapshot={len(snapshot_loaded)})"
             )
 
-        loading_models = gw.loading_models - snapshot_loaded
+        self._loading_leases.release_loaded(gw.gateway_id, snapshot_loaded)
 
         # Seed eviction hysteresis for newly-visible loaded models
         now = time.monotonic()
@@ -1492,9 +1603,9 @@ class FederatedGatewayManager(Sequential):
             model_resources=state.get("model_resources", {}),
             loaded_models=snapshot_loaded,
             busy_models=snapshot_busy,
-            loading_models=loading_models,
             model_loaded_at=model_loaded_at,
         )
+        gw = self._sync_loading_models(gw)
 
         for mid in snapshot_loaded - prev_loaded:
             if self.restore_model_capacity(gw, mid):
@@ -1674,10 +1785,11 @@ class FederatedGatewayManager(Sequential):
             )
             return gw
 
-        gw = self._replace_gateway(
-            gw,
-            loading_models=gw.loading_models | {model_id},
+        self._loading_leases.mark(
+            gw.gateway_id, model_id, LeaseOrigin.TELEMETRY
         )
+        self._loading_leases.ack(gw.gateway_id, model_id)
+        gw = self._sync_loading_models(gw)
         logger.debug(
             f"📊 Telemetry MODEL_LOADING_STARTED: {model_id} on {gw.gateway_id} "
             f"(loading_count={len(gw.loading_models)})"
@@ -1710,6 +1822,9 @@ class FederatedGatewayManager(Sequential):
         pct = parsed.get("pct")
         if not model_id or not phase:
             return gw
+
+        self._loading_leases.touch_progress(gw.gateway_id, model_id)
+        gw = self._sync_loading_models(gw)
 
         if self._event_bus:
             from src.scheduling.events import ModelLoadingProgress
@@ -1753,7 +1868,7 @@ class FederatedGatewayManager(Sequential):
 
         # Apply update (idempotent set union)
         loaded_models = gw.loaded_models | {model_id}
-        loading_models = gw.loading_models - {model_id}
+        self._loading_leases.release(gw.gateway_id, model_id)
         model_loaded_at = dict(gw.model_loaded_at)
 
         # Eviction hysteresis: record load timestamp (idempotent — keeps first)
@@ -1763,9 +1878,9 @@ class FederatedGatewayManager(Sequential):
         gw = self._replace_gateway(
             gw,
             loaded_models=loaded_models,
-            loading_models=loading_models,
             model_loaded_at=model_loaded_at,
         )
+        gw = self._sync_loading_models(gw)
 
         # Restore capacity in ledger (symmetric with remove_model in unload handler).
         # model_resources persists across unload/reload cycles (populated from initial
@@ -1822,13 +1937,14 @@ class FederatedGatewayManager(Sequential):
         # Eviction hysteresis: clear load timestamp
         model_loaded_at = dict(gw.model_loaded_at)
         model_loaded_at.pop(model_id, None)
+        self._loading_leases.release(gw.gateway_id, model_id)
         gw = self._replace_gateway(
             gw,
             loaded_models=gw.loaded_models - {model_id},
             busy_models=gw.busy_models - {model_id},
-            loading_models=gw.loading_models - {model_id},
             model_loaded_at=model_loaded_at,
         )
+        gw = self._sync_loading_models(gw)
 
         # Remove capacity from ledger (admission control)
         if self._capacity_pool:
@@ -1975,10 +2091,8 @@ class FederatedGatewayManager(Sequential):
             gw = self._merge_forensics_gateway_snapshot(
                 gw, snapshot_raw, apply_resources=apply_resources
             )
-        gw = self._replace_gateway(
-            gw,
-            loading_models=gw.loading_models - {model_id},
-        )
+        self._loading_leases.release(gw.gateway_id, model_id)
+        gw = self._sync_loading_models(gw)
         self.clear_load_resource_baseline(gw.gateway_id, routing_key)
         logger.debug(
             f"📊 Telemetry MODEL_LOAD_FAILED: cleared loading for {model_id} "
@@ -2120,7 +2234,13 @@ class FederatedGatewayManager(Sequential):
         updates = self._compute_delta_updates(gateway, delta)
 
         # Commit updates
-        self._commit_gateway_update(gateway_id, gateway, updates, sequence_number)
+        self._commit_gateway_update(
+            gateway_id,
+            gateway,
+            updates,
+            sequence_number,
+            delta_raw=delta,
+        )
 
         if sequence_number != -1:
             committed = self._gateways[gateway_id]
@@ -2226,6 +2346,9 @@ class FederatedGatewayManager(Sequential):
         gateway: FederatedGateway,
         updates: dict[str, Any],
         sequence_number: int,
+        *,
+        delta_raw: dict[str, Any] | None = None,
+        snapshot_raw: dict[str, Any] | None = None,
     ) -> None:
         """
         Commit gateway state updates with sequence number tracking.
@@ -2256,14 +2379,34 @@ class FederatedGatewayManager(Sequential):
                 updated_gateway.loaded_models & updated_gateway.loading_models
             )
             if stale_loading:
-                updated_gateway.loading_models = (
-                    updated_gateway.loading_models - stale_loading
+                self._loading_leases.release_loaded(
+                    gateway_id, frozenset(stale_loading)
                 )
+                updated_gateway = self._sync_loading_models(updated_gateway)
                 logger.warning(
                     f"🔄 Reconciled stale loading_models on {gateway_id}: "
                     f"removed {[str(m) for m in stale_loading]} "
                     f"(already in loaded_models)"
                 )
+
+            positive_loading = None
+            if delta_raw is not None:
+                positive_loading = self._parse_positive_loading_field(
+                    delta_raw.get("loading_models")
+                )
+            elif snapshot_raw is not None:
+                positive_loading = self._parse_positive_loading_field(
+                    snapshot_raw.get("loading_models")
+                )
+            loaded_for_release = (
+                updated_gateway.loaded_models if "loaded_models" in updates else None
+            )
+            updated_gateway = self._apply_http_loading_hooks(
+                gateway_id,
+                updated_gateway,
+                positive_loading=positive_loading,
+                loaded_models=loaded_for_release,
+            )
 
             # Reconcile model_loaded_at with loaded_models changes
             now = time.monotonic()
@@ -2342,7 +2485,13 @@ class FederatedGatewayManager(Sequential):
         updates = self._compute_snapshot_updates(snapshot)
 
         # Commit updates
-        self._commit_gateway_update(gateway_id, gateway, updates, sequence_number)
+        self._commit_gateway_update(
+            gateway_id,
+            gateway,
+            updates,
+            sequence_number,
+            snapshot_raw=snapshot,
+        )
 
         committed = self._gateways[gateway_id]
         self._publish_telemetry_received(

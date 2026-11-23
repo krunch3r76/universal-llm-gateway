@@ -186,7 +186,12 @@ class MasterIntegration:
         """
         if self._event_bus is None:
             raise RuntimeError("EventBus required for FederatedGatewayManager")
-        manager = FederatedGatewayManager(event_bus=self._event_bus)
+        orch = self._config.orchestration
+        manager = FederatedGatewayManager(
+            event_bus=self._event_bus,
+            load_ack_grace_s=orch.load_ack_grace_s,
+            load_idle_budget=orch.load_idle_budget,
+        )
         await manager.start()
 
         from .telemetry.receiver import MasterTelemetryReceiver

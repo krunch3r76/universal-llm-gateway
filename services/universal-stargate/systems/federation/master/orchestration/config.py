@@ -35,6 +35,9 @@ MODEL_LOAD_BACKSTOP_TIMEOUT_S = (
 MODEL_LOAD_IDLE_BUDGET_S = 60
 """Progress silence threshold before idle LOAD_TIMEOUT (seconds)."""
 
+MODEL_LOAD_ACK_GRACE_S = 15
+"""Unacked loading mark grace before reservation expires (seconds)."""
+
 _COALESCE_BUFFER_S = 30
 
 
@@ -59,6 +62,9 @@ class OrchestrationConfig:
 
     load_idle_budget: int = MODEL_LOAD_IDLE_BUDGET_S
     """Progress silence (seconds) before idle LOAD_TIMEOUT."""
+
+    load_ack_grace_s: int = MODEL_LOAD_ACK_GRACE_S
+    """Unacked mark grace (seconds) before loading reservation expires."""
 
     coalesce_wait_timeout: int = MODEL_LOAD_BACKSTOP_TIMEOUT_S + _COALESCE_BUFFER_S
     """Max seconds follower waits (>= load_timeout + RPC buffer)."""
@@ -98,6 +104,10 @@ class OrchestrationConfig:
         if self.load_idle_budget <= 0:
             raise ValueError(
                 f"load_idle_budget must be > 0, got {self.load_idle_budget}"
+            )
+        if self.load_ack_grace_s <= 0:
+            raise ValueError(
+                f"load_ack_grace_s must be > 0, got {self.load_ack_grace_s}"
             )
         if self.coalesce_wait_timeout < self.load_timeout + 30:
             raise ValueError(
@@ -143,6 +153,7 @@ class OrchestrationConfig:
         return cls(
             load_timeout=orch.get("load_timeout", MODEL_LOAD_BACKSTOP_TIMEOUT_S),
             load_idle_budget=orch.get("load_idle_budget", MODEL_LOAD_IDLE_BUDGET_S),
+            load_ack_grace_s=orch.get("load_ack_grace_s", MODEL_LOAD_ACK_GRACE_S),
             coalesce_wait_timeout=orch.get(
                 "coalesce_wait_timeout",
                 MODEL_LOAD_BACKSTOP_TIMEOUT_S + _COALESCE_BUFFER_S,

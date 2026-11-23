@@ -56,6 +56,10 @@ from .routing_decisions import (
     FederationVramRequestSent,
     FederationVramResponseReceived,
 )
+from .loading import (
+    FEDERATION_LOADING_LEASE_EXPIRED,
+    FederationLoadingLeaseExpired,
+)
 from .telemetry import (
     FEDERATED_GATEWAY_REMOVED,
     FEDERATION_MODEL_LIFECYCLE_EVENT,
@@ -79,6 +83,7 @@ __all__ = [
     "FEDERATION_CONNECTION_AUTHENTICATED",
     "FEDERATION_PEER_AUTH_FAILED",
     "FEDERATION_PEER_DISCONNECTED",
+    "FEDERATION_LOADING_LEASE_EXPIRED",
     "FEDERATION_TELEMETRY_RECEIVED",
     "FEDERATION_TELEMETRY_MARKED_STALE",
     "FEDERATION_TELEMETRY_APPLIED",
@@ -106,6 +111,7 @@ __all__ = [
     "FederationConnectionAuthenticated",
     "FederationPeerAuthFailed",
     "FederationPeerDisconnected",
+    "FederationLoadingLeaseExpired",
     "FederationTelemetryReceived",
     "FederationTelemetryMarkedStale",
     "FederationTelemetryApplied",

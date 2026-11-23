@@ -270,7 +270,7 @@ def _check_resources(
             else ""
         )
         reserved_info = (
-            f" ({vram_reserved}MB reserved by {len(loading_details)} loading model(s))"
+            f" ({vram_reserved}MB reserved by loading {loading_details})"
             if vram_reserved > 0
             else ""
         )
@@ -316,7 +316,7 @@ def _check_resources(
     # Check RAM with loading reservation
     if gw_ram_mb > 0 and effective_ram_free < ram_needed:
         reserved_info = (
-            f" ({ram_reserved}MB reserved by {len(loading_details)} loading model(s))"
+            f" ({ram_reserved}MB reserved by loading {loading_details})"
             if ram_reserved > 0
             else ""
         )

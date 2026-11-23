@@ -76,6 +76,7 @@ def wire_orchestration(
     orch_config = OrchestrationConfig(
         load_timeout=orch_schema.load_timeout,
         load_idle_budget=orch_schema.load_idle_budget,
+        load_ack_grace_s=orch_schema.load_ack_grace_s,
         coalesce_wait_timeout=orch_schema.coalesce_wait_timeout,
         telemetry_staleness_threshold=orch_schema.telemetry_staleness_threshold,
         load_retry_count=orch_schema.load_retry_count,

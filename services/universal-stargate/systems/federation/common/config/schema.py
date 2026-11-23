@@ -269,6 +269,7 @@ class OrchestrationConfigSchema:
     load_timeout: int = 330
     coalesce_wait_timeout: int = 360
     load_idle_budget: int = 60
+    load_ack_grace_s: int = 15
     telemetry_staleness_threshold: float = 10.0
     load_retry_count: int = 2
     load_retry_delay: float = 1.0
