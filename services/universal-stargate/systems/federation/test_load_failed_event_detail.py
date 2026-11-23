@@ -292,3 +292,89 @@ def test_boot_smoke_master_local_edge_register() -> None:
     assert callable(initialize_federation_runtime)
     assert callable(MasterIntegration._register_local_edge_remote)
     assert callable(MasterIntegration._start_local_edge_client)
+
+
+def test_ws_receive_handler_reads_failure_reason_into_fifth_arg() -> None:
+    """WS-receive hop: ModelLoadFailedHandler copies the WS field into arg 5."""
+    from gateway_websocket.handler.model_loading import ModelLoadFailedHandler
+
+    class _Ctx:
+        def __init__(self) -> None:
+            self.loading_models: set[str] = set()
+            self.loading_since: dict[str, float] = {}
+            self.model_load_failed_callbacks: dict = {}
+            self.on_model_load_failed = object()
+            self.scheduled: list[tuple] = []
+
+        def capture_gateway_state_snapshot(self) -> dict:
+            return {"snap": True}
+
+        def schedule_model_load_failed(self, *_args: object) -> None:
+            return None
+
+        def schedule_callback(self, callback: object, args: tuple) -> None:
+            self.scheduled.append((callback, args))
+
+    ctx = _Ctx()
+    ModelLoadFailedHandler().handle(
+        {
+            "model_id": "qwen3-14b-q4-k-m-40960",
+            "error_message": "ProcessError: llama exited 1",
+            "failure_reason": "oom",
+        },
+        ctx,
+    )
+    assert ctx.scheduled[0][0] is ctx.on_model_load_failed
+    assert ctx.scheduled[0][1][4] == "oom"
+
+    absent = _Ctx()
+    ModelLoadFailedHandler().handle(
+        {
+            "model_id": "qwen3-14b-q4-k-m-40960",
+            "error_message": "ProcessError: llama exited 1",
+        },
+        absent,
+    )
+    assert absent.scheduled[0][1][4] is None
+
+
+def test_e8ea2e99_receiver_tolerates_new_shaped_payload(tmp_path) -> None:
+    """Skew (ii): e8ea2e99 ModelLoadFailedPayload.from_dict drops new keys."""
+    import importlib.util
+    import subprocess
+    import sys
+
+    repo = subprocess.check_output(
+        ["git", "rev-parse", "--show-toplevel"], text=True
+    ).strip()
+    blob = subprocess.check_output(
+        [
+            "git",
+            "show",
+            "e8ea2e99359508f51f7d261acdb41ed41821dfb8:libs/universal_protocol/messages/telemetry.py",
+        ],
+        cwd=repo,
+    )
+    path = tmp_path / "telemetry_e8ea2e99.py"
+    path.write_bytes(blob)
+    name = "telemetry_e8ea2e99_receiver"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+        data = {
+            **FIXTURE_5BE8CF77,
+            "failure_reason": "timeout",
+            "context": {"token": "SECRETTOKEN"},
+            "not_a_field": 1,
+        }
+        parsed = mod.ModelLoadFailedPayload.from_dict(data)
+        wire = parsed.to_dict()
+    finally:
+        sys.modules.pop(name, None)
+    assert parsed.error == FIXTURE_5BE8CF77["error"]
+    assert "failure_reason" not in wire
+    assert "SECRETTOKEN" not in str(wire)
+    assert not hasattr(parsed, "failure_reason")
