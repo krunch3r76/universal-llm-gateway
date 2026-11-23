@@ -2,47 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+from fastmcp.tools.base import ToolResult
+from mcp.types import CallToolRequestParams, TextContent
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "libs"))
 
-from fastmcp.tools.base import ToolResult
-from mcp.types import TextContent
-from response_size_guard import _measure_result
+from cortex_store.routes.boot.mint import perform_boot_mint
+from request_profile import bind_request
+from response_size_guard import ResponseSizeGuard, _measure_result
 
 from tools.cortex_named_tools import _orchestration_tools as orchestration_tools
 from tools.cortex_named_tools._boot_runner import BootMode
 
 _FIXED = datetime(2026, 11, 23, 8, 0, 0, tzinfo=UTC)
-
-_MINT_PAYLOAD = {
-    "session_id": "web-anthropic-2026-11-23-080000-abc",
-    "session_identity": {
-        "session_id": "web-anthropic-2026-11-23-080000-abc",
-        "agent": "claude-web",
-    },
-    "boot_identity": {
-        "family": "claude",
-        "platform": "web",
-        "agent": "claude-web",
-        "capability_slug": "claude-web",
-        "session_prefix": "web-anthropic",
-        "inbox_recipient": "claude-web",
-        "self_entity_id": "ai_agent:claude",
-        "is_logical": False,
-    },
-    "mode": "live",
-    "utc_now": "2026-11-23T08:00:00Z",
-    "local_time": "2026-11-23T00:00:00-0800",
-    "mint_only": True,
-    "briefing_card_hint": "For the full briefing card, call cortex_brief without mint_only=true.",
-}
 
 _FORBIDDEN_KEYS = frozenset(
     {
@@ -75,6 +57,17 @@ def _boot_tool_result(payload: dict[str, Any]) -> ToolResult:
     )
 
 
+async def _guard_cortex_brief(result: ToolResult) -> ToolResult:
+    ctx = MagicMock()
+    ctx.message = CallToolRequestParams(name="cortex_brief", arguments={})
+
+    async def call_next(_ctx: object) -> ToolResult:
+        return result
+
+    with bind_request("default", structured_capable=False):
+        return await ResponseSizeGuard().on_call_tool(ctx, call_next)
+
+
 def test_mint_only_returns_without_briefing_card(monkeypatch: Any) -> None:
     events: list[str] = []
 
@@ -82,7 +75,7 @@ def test_mint_only_returns_without_briefing_card(monkeypatch: Any) -> None:
         assert method == "POST"
         assert path == "/boot-mint"
         assert body and body.get("seat") == "web-anthropic"
-        return dict(_MINT_PAYLOAD)
+        return perform_boot_mint("web-anthropic", at=_FIXED)
 
     monkeypatch.setattr(orchestration_tools, "cx", _cx)
     monkeypatch.setattr(
@@ -149,8 +142,8 @@ def test_default_path_still_runs_full_brief(monkeypatch: Any) -> None:
 
 
 def test_fetch_raise_mint_only_ok_default_fails(monkeypatch: Any) -> None:
-    def _cx(*_a: Any, **_k: Any) -> dict[str, Any]:
-        return dict(_MINT_PAYLOAD)
+    def _cx(*_a: Any, **_kw: Any) -> dict[str, Any]:
+        return perform_boot_mint("web-anthropic", at=_FIXED)
 
     def _run_raise(*_a: Any, **_kw: Any) -> dict[str, Any]:
         raise RuntimeError("fetch layer failed")
@@ -170,33 +163,19 @@ def test_fetch_raise_mint_only_ok_default_fails(monkeypatch: Any) -> None:
 
 @pytest.mark.parametrize("seat", ["web-anthropic", "cursor"])
 def test_mint_only_wire_under_2kb(seat: str, monkeypatch: Any) -> None:
-    payload = dict(_MINT_PAYLOAD)
-    if seat == "cursor":
-        payload = {
-            **payload,
-            "session_id": "cursor-2026-11-23-080000-abc",
-            "session_identity": {
-                "session_id": "cursor-2026-11-23-080000-abc",
-                "agent": "claude-cursor",
-            },
-            "boot_identity": {
-                **payload["boot_identity"],
-                "platform": "cursor",
-                "agent": "claude-cursor",
-                "capability_slug": "claude-cursor",
-                "session_prefix": "cursor",
-                "inbox_recipient": "claude-cursor",
-            },
-        }
+    def _cx(_method: str, _path: str, body: dict[str, Any] | None = None, **_kw: Any) -> dict:
+        assert body is not None
+        return perform_boot_mint(body["seat"], at=_FIXED)
 
-    monkeypatch.setattr(orchestration_tools, "cx", lambda *_a, **_k: dict(payload))
+    monkeypatch.setattr(orchestration_tools, "cx", _cx)
     monkeypatch.setattr(orchestration_tools, "record", lambda *_a, **_k: None)
 
     mcp = _DummyMcp()
     orchestration_tools.register_orchestration_tools(mcp)
-    result = mcp.tools["cortex_brief"](seat=seat, mint_only=True)
+    payload = mcp.tools["cortex_brief"](seat=seat, mint_only=True)
 
-    wire_bytes = _measure_result(_boot_tool_result(result))
+    guarded = asyncio.run(_guard_cortex_brief(_boot_tool_result(payload)))
+    wire_bytes = _measure_result(guarded)
     assert wire_bytes < 2000
 
 

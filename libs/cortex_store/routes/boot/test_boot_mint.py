@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from agent_seat.boot_identity import legacy_boot_identity
 from agent_seat.session_id import SESSION_ID_RE
 
-from cortex_store.dispatch_ops._related_edges import prepare_related_edges
-from cortex_store.dispatch_ops.ops_edges import _op_edge_create
+from cortex_store.dispatch_ops.ops_assertions_friction import _op_friction
+from cortex_store.dispatch_ops.ops_assertions_write import _op_assert
 from cortex_store.routes.boot.mint import perform_boot_mint
 
 _FIXED = datetime(2026, 11, 23, 8, 0, 0, tzinfo=UTC)
@@ -26,6 +28,20 @@ _FORBIDDEN_FULL_BRIEF_KEYS = frozenset(
         "auto_inject_skills_ref",
     }
 )
+
+
+@pytest.fixture()
+def related_db(migrated_db_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    from cortex_store import db as cortex_db
+
+    monkeypatch.setattr(cortex_db, "_CORTEX_DB", migrated_db_path)
+    with cortex_db.cortex_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO entities (id, type, name) VALUES (?, 'service', ?)",
+            ("service:mcp-server", "mcp-server"),
+        )
+        conn.commit()
+    return migrated_db_path
 
 
 def test_perform_boot_mint_web_anthropic_shape() -> None:
@@ -59,32 +75,62 @@ def test_perform_boot_mint_seat_unresolved() -> None:
     assert payload.get("reason") == "seat_unresolved"
 
 
-def test_mint_session_id_passes_edge_create_grammar() -> None:
+@pytest.mark.offline
+def test_mint_session_id_accepted_by_assert_op(related_db: Path) -> None:
     payload = perform_boot_mint("web-anthropic", at=_FIXED)
     sid = payload["session_id"]
-    with patch(
-        "cortex_store.dispatch_ops.ops_edges._create_edge_impl",
-        return_value={"edge_id": 1},
-    ):
-        edge = _op_edge_create(
-            session_id=sid,
-            agent="claude-web",
-            from_node="assertion:1",
-            to_node="service:mcp-server",
-            edge_type="relates_to",
-        )
-    assert edge.get("reason") != "session_id_grammar"
-
-
-def test_mint_session_id_passes_friction_related_grammar() -> None:
-    payload = perform_boot_mint("web-anthropic", at=_FIXED)
-    sid = payload["session_id"]
-    conn = MagicMock()
-    conn.execute.return_value.fetchall.return_value = [{"type": "relates_to"}]
-    _, err = prepare_related_edges(
-        conn,
-        [{"to_node": "service:mcp-server"}],
+    created = _op_assert(
+        entity_id="service:mcp-server",
+        claim="Mint-only boot session_id must pass assert related= grammar gate",
+        confidence="believed",
+        evidence="verified in libs/cortex_store/routes/boot/test_boot_mint.py",
+        evidence_uris=["cortex://notes/system/threads/15851-plan-cortex-link-and-grok-bot-seat-fable.md"],
+        seeded_by="claude-web",
+        derivation_type="agent_observation",
+        confidence_score=0.75,
         session_id=sid,
-        agent="claude-web",
+        dry_run=True,
+        related=[{"to_node": "service:mcp-server"}],
     )
-    assert err is None or err.get("reason") != "session_id_grammar"
+    assert "error" not in created, created
+    assert created.get("reason") != "session_id_grammar"
+    assert created["dry_run"] is True
+    assert len(created["related_preview"]) == 1
+
+
+@pytest.mark.offline
+def test_mint_session_id_accepted_by_friction_file_dispatch(
+    related_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    mcp_server = Path(__file__).resolve().parents[4] / "services" / "mcp-server"
+    sys.path.insert(0, str(mcp_server))
+
+    payload = perform_boot_mint("cursor", at=_FIXED)
+    sid = payload["session_id"]
+
+    def _inproc_file_friction(**kwargs: object) -> dict:
+        return _op_friction(
+            owner=str(kwargs["owner"]),
+            category=str(kwargs.get("category") or "tool_error"),
+            note=str(kwargs["note"]),
+            agent=str(kwargs["agent"]) if kwargs.get("agent") else None,
+            session_id=sid,
+        )
+
+    monkeypatch.setattr(
+        "tools.agent_bus.friction_file.file_friction",
+        _inproc_file_friction,
+    )
+    monkeypatch.setattr("tools.agent_bus.friction_file.record", lambda *_a, **_k: None)
+    from tools.agent_bus.friction_file import _friction_file_dispatch
+
+    result = _friction_file_dispatch(
+        owner="service:mcp-server",
+        note="substrate_friction_file path with mint-backed session_id at cortex",
+        agent="claude-cursor",
+    )
+    assert "error" not in result, result
+    assert result.get("reason") != "session_id_grammar"
+    assert int(result["assertion_id"]) > 0
