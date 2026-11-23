@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES
+from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES, STATUS_TAB
 from claude_bundles.what_is_running_view import is_houseless_purpose
 
 from cdp_ask.operator_seat_resolve import _provenance_get_checked
@@ -18,6 +18,7 @@ class HouselessResolution:
     ok: bool
     reason: str
     chat_url: str | None = None
+    tab: bool = False
 
 
 _RESOLVE_MEMO: dict[str, HouselessResolution] = {}
@@ -45,7 +46,12 @@ def resolve_houseless_target(
     client: Any | None = None,
     memo: dict[str, HouselessResolution] | None = None,
 ) -> HouselessResolution:
-    """Resolve a houseless mailbox target from authoritative Jupiter provenance."""
+    """Resolve a houseless mailbox target from authoritative Jupiter provenance.
+
+    A ``status: tab`` parked houseless seat passes the same ``seat_open`` and
+    ``chat_url`` checks and returns ``tab=True``; routing to it is the caller's
+    job to guard against the bus association.
+    """
     rid = (registration_id or "").strip()
     if not rid:
         return HouselessResolution(ok=False, reason="no_row")
@@ -74,7 +80,8 @@ def resolve_houseless_target(
             cache[rid] = out
         return out
     status = str(data.get("status") or "")
-    if status not in _HOST_LISTABLE_STATUSES:
+    tab = status == STATUS_TAB
+    if not tab and status not in _HOST_LISTABLE_STATUSES:
         out = HouselessResolution(ok=False, reason="status_unlisted")
         if memo is None:
             cache[rid] = out
@@ -90,7 +97,7 @@ def resolve_houseless_target(
         if memo is None:
             cache[rid] = out
         return out
-    out = HouselessResolution(ok=True, reason="ok", chat_url=chat_url)
+    out = HouselessResolution(ok=True, reason="ok", chat_url=chat_url, tab=tab)
     if memo is None:
         cache[rid] = out
     return out
