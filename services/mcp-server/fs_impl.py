@@ -13,7 +13,6 @@ from fs_roots import (
 )
 from project_ops import workspaces_impl_registry
 from tool_error_enricher import fs_missing_sandbox_hint
-
 from tools._durable_write import WriteVerifyError, write_verify_error_dict
 from tools.filesystem._batch_ingress import (
     apply_lane_ingress,
@@ -117,7 +116,7 @@ def fs_impl(
     include_untracked: bool,
     binary: bool,
     max_depth: int,
-    offset: int,
+    offset: int | str,
     limit: int,
     expected_sha256: str,
     if_absent: bool,
@@ -130,7 +129,6 @@ def fs_impl(
     include_worktrees: bool = False,
     size_only: bool = False,
     lean: bool = False,
-    cursor_scope_depth: int = 0,
     sections: list[str] | None = None,
     export: bool = False,
     expected_read_sha256: str | dict[str, str] = "",
@@ -283,7 +281,6 @@ def fs_impl(
                     size_only=size_only,
                     lean=lean,
                     max_depth=max_depth,
-                    cursor_scope_depth=cursor_scope_depth,
                     offset=offset,
                     sections=sections,
                     export=export,
@@ -315,7 +312,6 @@ def fs_impl(
             size_only=size_only,
             lean=lean,
             max_depth=max_depth,
-            cursor_scope_depth=cursor_scope_depth,
             offset=offset,
             sections=sections,
             export=export,

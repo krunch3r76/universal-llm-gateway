@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
-from unittest import mock
 
 import pymupdf
 import pytest
@@ -17,6 +15,7 @@ from tools._lean_document_manifest import (
     LEAN_MAX_DESCRIPTOR_JSON_BYTES,
     build_lean_document_manifest,
 )
+from tools._lean_offset_codec import encode_lean_descriptor_offset
 from tools.markdown_tool import register_markdown_tools
 
 pytestmark = pytest.mark.offline
@@ -92,6 +91,7 @@ def test_lean_roundtrip_ids_md_read(md_tool) -> None:
     for depth in (1, 2, 3):
         listed = _list(fn, root, "rt.md", text, lean=True, max_depth=depth)
         for row in listed["rows"]:
+            assert {"id", "level", "char_count"} <= row.keys(), (depth, row)
             sid = row["id"]
             single = fn(
                 op="read_section",
@@ -132,6 +132,8 @@ def test_lean_parity_with_full_manifest(md_tool) -> None:
         assert row["id"] == full_row["id"]
         assert row["level"] == full_row["level"]
         assert row["char_count"] == full_row["char_count"]
+        assert row.get("start_line") is None
+        assert row.get("title") is None
         if "subtree_char_count" in row:
             assert row["subtree_char_count"] == full_row["subtree_char_count"]
 
@@ -153,6 +155,7 @@ def test_non_lean_md_list_unchanged(md_tool) -> None:
             sandbox="cortex",
             max_depth=max_depth,
         )
+        assert via_tool.get("lean") is not True
         assert json.dumps(via_tool, sort_keys=True) == json.dumps(
             build_document_manifest(
                 path="reg.md",
@@ -163,6 +166,7 @@ def test_non_lean_md_list_unchanged(md_tool) -> None:
             sort_keys=True,
         )
     assert via_tool == direct
+    assert "sections" in via_tool and "rows" not in via_tool
 
 
 def test_lean_budget_and_paging_synthetic(md_tool) -> None:
@@ -176,23 +180,19 @@ def test_lean_budget_and_paging_synthetic(md_tool) -> None:
         assert row_bytes <= LEAN_MAX_DESCRIPTOR_JSON_BYTES, depth
     seen: set[str] = set()
     page = depth2
-    offset = 0
-    scope = page["cursor_scope_depth"]
     while True:
         for row in page["rows"]:
             assert row["id"] not in seen
             seen.add(row["id"])
         if not page.get("truncated") or page.get("cursor") is None:
             break
-        offset = int(page["cursor"])
         page = fn(
             op="list_sections",
             path="syn.md",
             sandbox="cortex",
             lean=True,
             max_depth=2,
-            offset=offset,
-            cursor_scope_depth=scope,
+            offset=page["cursor"],
         )
     depth3 = _list(fn, root, "syn3.md", text, lean=True, max_depth=3)
     page = depth3
@@ -206,7 +206,6 @@ def test_lean_budget_and_paging_synthetic(md_tool) -> None:
             lean=True,
             max_depth=3,
             offset=page["cursor"],
-            cursor_scope_depth=page["cursor_scope_depth"],
         )
 
 
@@ -238,6 +237,10 @@ def test_lean_max_depth_level_cutoff(md_tool) -> None:
     d2 = _list(fn, root, "depth.md", text, lean=True, max_depth=2)
     assert any(r["level"] == 2 for r in d2["rows"])
     assert all(r["level"] <= 2 for r in d2["rows"])
+    bad_low = _list(fn, root, "depth.md", text, lean=True, max_depth=0)
+    assert bad_low.get("code") == "invalid_max_depth"
+    bad_high = _list(fn, root, "depth.md", text, lean=True, max_depth=9)
+    assert bad_high.get("code") == "invalid_max_depth"
 
 
 def test_lean_pdf_not_applied(md_tool) -> None:
@@ -272,7 +275,7 @@ def test_lean_cursor_scope(md_tool) -> None:
     page0 = _list(fn, root, "cur.md", text, lean=True, max_depth=2)
     assert page0.get("truncated")
     cursor = page0["cursor"]
-    scope = page0["cursor_scope_depth"]
+    assert isinstance(cursor, str) and cursor.startswith("d2:")
     bad = fn(
         op="list_sections",
         path="cur.md",
@@ -280,7 +283,6 @@ def test_lean_cursor_scope(md_tool) -> None:
         lean=True,
         max_depth=3,
         offset=cursor,
-        cursor_scope_depth=scope,
     )
     assert bad.get("code") == "invalid_cursor_scope"
     no_lean = fn(
@@ -289,6 +291,59 @@ def test_lean_cursor_scope(md_tool) -> None:
         sandbox="cortex",
         lean=False,
         offset=cursor,
-        cursor_scope_depth=scope,
     )
     assert no_lean.get("code") == "invalid_cursor_scope"
+
+
+def test_lean_cursor_continuation_without_scope_param(md_tool) -> None:
+    fn, root = md_tool
+    text = _synthetic_reasoning_shaped(h2=60, h3=8, pad=60_000)
+    first = _list(fn, root, "enc.md", text, lean=True, max_depth=2)
+    assert first.get("truncated")
+    cursor = first["cursor"]
+    second = fn(
+        op="list_sections",
+        path="enc.md",
+        sandbox="cortex",
+        lean=True,
+        max_depth=2,
+        offset=cursor,
+    )
+    assert second.get("code") is None
+    assert second.get("rows")
+    ids_first = {r["id"] for r in first["rows"]}
+    ids_second = {r["id"] for r in second["rows"]}
+    assert ids_first.isdisjoint(ids_second)
+
+
+def test_lean_cursor_forged_and_bare_int(md_tool) -> None:
+    fn, root = md_tool
+    text = "# A\n\n## B\n\nc\n"
+    _list(fn, root, "forg.md", text, lean=True, max_depth=2)
+    forged = fn(
+        op="list_sections",
+        path="forg.md",
+        sandbox="cortex",
+        lean=True,
+        max_depth=2,
+        offset="not-a-cursor",
+    )
+    assert forged.get("code") == "invalid_cursor_scope"
+    mismatch = fn(
+        op="list_sections",
+        path="forg.md",
+        sandbox="cortex",
+        lean=True,
+        max_depth=2,
+        offset=encode_lean_descriptor_offset(1, 5),
+    )
+    assert mismatch.get("code") == "invalid_cursor_scope"
+    bare = fn(
+        op="list_sections",
+        path="forg.md",
+        sandbox="cortex",
+        lean=True,
+        max_depth=2,
+        offset=3,
+    )
+    assert bare.get("code") == "invalid_cursor_scope"
