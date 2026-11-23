@@ -30,7 +30,7 @@ from ....wait_continuation import (
     get_eviction_wait_budget_s,
 )
 from ....wait_logic import _wait_and_retry_selection
-from .capacity_details import _build_capacity_details
+from .capacity_details import build_sticky_capacity_failure_summary
 from .terminal_events import _emit_terminal_failure_events
 from .topology_snapshot import _build_topology_snapshot
 
@@ -216,16 +216,22 @@ async def handle_selection_rejection(
             raise_insufficient_resources_error(selected_model_key, failure_reason)
 
         if has_capacity_failure:
-            all_capacity_constraints = _ALL_CAPACITY_CONSTRAINTS
-            capacity_details = _build_capacity_details(
-                context.selected_model,
-                trace,
-                all_capacity_constraints,
-                federated_gateways,
+            all_capacity_constraints = set(_ALL_CAPACITY_CONSTRAINTS)
+            waited_ms = (
+                int(queue_timeout_info["waited_ms"])
+                if queue_timeout_info and "waited_ms" in queue_timeout_info
+                else 0
             )
-
-            if queue_timeout_info:
-                capacity_details.update(queue_timeout_info)
+            capacity_details = build_sticky_capacity_failure_summary(
+                model=context.selected_model,
+                trace=trace,
+                routing_config=routing_config,
+                context=context,
+                federated_gateways=federated_gateways,
+                waited_ms=waited_ms,
+                failure_reason="capacity_exhausted",
+                all_capacity_constraints=all_capacity_constraints,
+            )
 
             await _emit_terminal_failure_events(
                 event_bus=event_bus,

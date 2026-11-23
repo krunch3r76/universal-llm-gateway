@@ -453,6 +453,9 @@ async def test_blocked_deadline_past_raises_capacity_without_load(
     detail = exc_info.value.detail
     assert detail["code"] == ErrorCode.STICKY_CAPACITY
     assert detail["data"]["reason"] == "eviction_blocked_queue_timeout"
+    assert detail["data"]["wait_budget_s"] == 300.0
+    assert "requeue_depth" not in detail["data"]
+    assert "eviction=" in detail["message"]
     assert load_orchestrator.load_calls == []
 
 
