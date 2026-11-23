@@ -7,6 +7,7 @@ Includes sticky-bound gateway detection and URL resolution for capacity failures
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any, Literal
 
 from model_id import ModelId
@@ -197,9 +198,13 @@ def format_sticky_capacity_message(model_routing_key: str, data: dict[str, Any])
             f"requeue_depth={data['requeue_depth']}/"
             f"{data['requeue_max_depth']}; "
         )
+    reason = data.get("reason")
+    reason_line = f"reason={reason}; " if reason else ""
+    retry = data.get("retry_guidance") or ""
     return (
         f"Sticky model {model_routing_key}: {holder_line}; "
-        f"{eviction_line}; {depth_line}{wait_line}"
+        f"{eviction_line}; {depth_line}{reason_line}{wait_line}; "
+        f"retry: {retry}"
     )
 
 
@@ -216,10 +221,12 @@ def build_sticky_capacity_failure_summary(
     requeue_max_depth: int | None = None,
     budget_exhausted: bool | None = None,
     all_capacity_constraints: set[str] | None = None,
+    routing_start_time: float | None = None,
 ) -> dict[str, Any]:
     """Structured STICKY_CAPACITY payload shared by all raise sites."""
     from systems.proxy.core.nonstreaming.federated_routing.wait_continuation import (
         arm_or_remaining_eviction_budget,
+        eviction_budget_consumed_ms,
         get_eviction_wait_budget_s,
     )
 
@@ -253,17 +260,17 @@ def build_sticky_capacity_failure_summary(
 
     if candidate is not None:
         holders_payload: dict[str, Any] = _routing_keys_on_gateway(candidate.gateway)
-    elif gateway_id and trace is not None:
+    elif trace is not None:
         holders_payload = {
             "holders_unknown": True,
-            "holders_unknown_reason": (
-                "bound_gateway_named_on_trace_but_no_capacity_candidate"
-            ),
+            "holders_unknown_reason": "no_capacity_candidate_on_trace",
         }
+        if gateway_id:
+            holders_payload["bound_gateway_id"] = gateway_id
     else:
         holders_payload = {
             "holders_unknown": True,
-            "holders_unknown_reason": "no_trace_or_bound_gateway",
+            "holders_unknown_reason": "no_trace",
         }
 
     eviction = _eviction_block(candidate)
@@ -273,6 +280,21 @@ def build_sticky_capacity_failure_summary(
         failure_reason=failure_reason,
     )
 
+    budget_consumed_ms = (
+        eviction_budget_consumed_ms(context) if context is not None else 0
+    )
+    if budget_exhausted and budget_consumed_ms <= 0 and context is not None:
+        arm_or_remaining_eviction_budget(context, wait_budget_s)
+        budget_consumed_ms = eviction_budget_consumed_ms(context)
+        if budget_consumed_ms <= 0:
+            budget_consumed_ms = int(wait_budget_s * 1000)
+
+    request_elapsed_ms = (
+        int(max(0.0, time.time() - routing_start_time) * 1000)
+        if routing_start_time is not None
+        else None
+    )
+
     data: dict[str, Any] = {
         "model_id": model_routing_key,
         "gateway_id": gateway_id,
@@ -280,9 +302,15 @@ def build_sticky_capacity_failure_summary(
         "eviction": eviction,
         "wait_budget_s": wait_budget_s,
         "waited_ms": waited_ms,
+        "budget_consumed_ms": budget_consumed_ms,
         "budget_exhausted": bool(budget_exhausted),
         "retry_guidance": retry_guidance,
     }
+    if request_elapsed_ms is not None:
+        data["request_elapsed_ms"] = request_elapsed_ms
+
+    if bool(budget_exhausted):
+        data["retry_after_s"] = max(1, int(wait_budget_s))
 
     if failure_reason is not None:
         data["reason"] = failure_reason

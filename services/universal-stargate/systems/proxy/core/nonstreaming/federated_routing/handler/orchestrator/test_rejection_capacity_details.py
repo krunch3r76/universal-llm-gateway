@@ -1,4 +1,5 @@
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -195,6 +196,7 @@ def test_build_summary_holders_unknown_without_trace() -> None:
     )
 
     assert data["holders"]["holders_unknown"] is True
+    assert data["holders"]["holders_unknown_reason"] == "no_trace"
     assert data["requeue_depth"] == 3
     assert data["requeue_max_depth"] == 3
 
@@ -246,3 +248,64 @@ def test_format_message_includes_holder_and_eviction() -> None:
     message = format_sticky_capacity_message("m-target", data)
     assert "loaded=" in message
     assert "eviction=refused" in message
+
+
+def test_holders_unknown_reason_split() -> None:
+    target = ModelId.parse("qwen3-32b-awq-16384")
+    trace = DecisionTrace(
+        model_id=target.routing_key,
+        original_model_id=None,
+        request_id="req-split",
+        candidates=(),
+        selection_reason="no_feasible_gateways",
+    )
+    data = build_sticky_capacity_failure_summary(
+        model=target,
+        trace=trace,
+        routing_config=None,
+        waited_ms=0,
+    )
+    assert data["holders"]["holders_unknown_reason"] == "no_capacity_candidate_on_trace"
+
+
+def test_capacity_details_three_clocks() -> None:
+    target = ModelId.parse("qwen3-32b-awq-16384")
+    now_mono = time.monotonic()
+    context = SimpleNamespace(
+        _eviction_wait_deadline_mono=now_mono - 1.0,
+        _eviction_wait_armed_mono=now_mono - 301.0,
+    )
+    routing_start = time.time() - 5.0
+    data = build_sticky_capacity_failure_summary(
+        model=target,
+        trace=None,
+        routing_config={"eviction_wait_timeout_s": 300.0},
+        context=context,
+        waited_ms=0,
+        budget_exhausted=True,
+        routing_start_time=routing_start,
+    )
+    assert data["budget_exhausted"] is True
+    assert data["budget_consumed_ms"] > 0
+    assert data["waited_ms"] == 0
+    assert data["request_elapsed_ms"] is not None
+    assert data["request_elapsed_ms"] >= 4000
+
+
+def test_sticky_capacity_message_and_retry_after() -> None:
+    target = ModelId.parse("qwen3-32b-awq-16384")
+    summary = build_sticky_capacity_failure_summary(
+        model=target,
+        trace=None,
+        routing_config={"eviction_wait_timeout_s": 60.0},
+        waited_ms=0,
+        failure_reason="eviction_blocked_queue_timeout",
+        budget_exhausted=True,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        raise_capacity_error(target.routing_key, summary)
+    message = exc_info.value.detail["message"]
+    assert "reason=eviction_blocked_queue_timeout" in message
+    assert "retry:" in message
+    assert exc_info.value.headers is not None
+    assert exc_info.value.headers.get("Retry-After") == "60"

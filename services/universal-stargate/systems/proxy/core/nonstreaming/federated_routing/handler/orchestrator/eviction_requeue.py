@@ -37,6 +37,7 @@ DEFAULT_EVICTION_REQUEUE_MAX_DEPTH = 3
 async def requeue_after_transient_eviction(
     *,
     context: RequestContext,
+    trace: Any = None,
     federated_manager: FederatedGatewayManager,
     federated_load_orchestrator: Any,
     federation_forwarder: FederatedRequestForwarder | None,
@@ -98,10 +99,33 @@ async def requeue_after_transient_eviction(
 
     config_timeout = get_eviction_wait_budget_s(routing_config)
     timeout_s = arm_or_remaining_eviction_budget(context, config_timeout)
+    if timeout_s <= 0.0:
+        from ...wait_emit import emit_eviction_wait_budget_exhausted_before_entry
+
+        await emit_eviction_wait_budget_exhausted_before_entry(
+            event_bus=event_bus,
+            request_id=context.request_id,
+            model_id=str(context.selected_model),
+            trace=trace,
+        )
+        summary = build_sticky_capacity_failure_summary(
+            model=context.selected_model,
+            trace=trace,
+            routing_config=routing_config,
+            context=context,
+            waited_ms=0,
+            failure_reason=timeout_reason,
+            budget_exhausted=True,
+            routing_start_time=routing_start_time,
+        )
+        if timeout_reason:
+            summary["reason"] = timeout_reason
+        raise_capacity_error(context.selected_model.routing_key, summary)
     starvation_drain_threshold_s = float(
         rc.get("starvation_drain_threshold_s", 15.0)
     )
     drain_duration_s = float(rc.get("drain_duration_s", 30.0))
+    prior_trace = trace
 
     if continuation_mode == "vram_refusal":
         from ...wait_logic import _wait_vram_refusal_and_retry_selection
@@ -115,8 +139,10 @@ async def requeue_after_transient_eviction(
                 event_bus=event_bus,
                 timeout_s=timeout_s,
                 stability_tracker=stability_tracker,
+                caller_trace=trace,
             )
         )
+        prior_trace = trace
     else:
         defer_first_select = cooldown_hold_key is None
         selected_gateway, trace, waited_ms = await _wait_and_retry_selection(
@@ -135,15 +161,18 @@ async def requeue_after_transient_eviction(
             cooldown_hold_key=cooldown_hold_key,
             per_wake_cap_s=per_wake_cap_s,
             defer_first_select=defer_first_select,
+            caller_trace=trace,
         )
+        prior_trace = trace
     if selected_gateway is None:
         summary = build_sticky_capacity_failure_summary(
             model=context.selected_model,
-            trace=trace,
+            trace=trace or prior_trace,
             routing_config=routing_config,
             context=context,
             waited_ms=int(waited_ms),
             failure_reason=timeout_reason,
+            routing_start_time=routing_start_time,
         )
         if timeout_reason:
             summary["reason"] = timeout_reason

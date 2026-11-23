@@ -144,6 +144,7 @@ async def handle_selection_rejection(
                 starvation_drain_threshold_s=starvation_drain_threshold_s,
                 drain_duration_s=drain_duration_s,
                 continuation_mode="transient_capacity",
+                caller_trace=trace,
             )
             if selected_gateway is None:
                 queue_timeout_info = {"waited_ms": waited_ms}

@@ -393,3 +393,120 @@ async def test_vram_refusal_two_requests_do_not_share_context_state(
     await asyncio.gather(_run(ctx_a), _run(ctx_b))
     assert ctx_a._vram_refusal_telemetry_baseline == 1.0
     assert ctx_b._vram_refusal_telemetry_baseline == 50.0
+
+
+@pytest.mark.asyncio
+async def test_wait_preserves_caller_trace_on_zero_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.scheduling.events.routing_signal_constants_routing_waits import (
+        ROUTING_EVICTION_WAIT_TIMEOUT,
+    )
+
+    from systems.routing.selection.decision import DecisionTrace, FeasibilityTier
+
+    caller_trace = DecisionTrace(
+        model_id="m1",
+        original_model_id=None,
+        request_id="req-z",
+        candidates=(),
+        selection_tier=FeasibilityTier.T0_INFEASIBLE,
+    )
+
+    class _Bus:
+        def __init__(self) -> None:
+            self.events: list = []
+
+        async def publish_nowait(self, event) -> None:
+            self.events.append(event)
+
+    bus = _Bus()
+    context = SimpleNamespace(
+        request_id="req-z",
+        model_sticky=True,
+        excluded_gateway_ids=set(),
+    )
+    placement = SimpleNamespace(model_id="m1")
+    _selected, trace_out, waited_ms = await _wait_vram_refusal_and_retry_selection(
+        federated_manager=_Mgr([_Gw("edge-jupiter-gateway", ts=1.0)]),
+        decision_engine=SimpleNamespace(
+            select=lambda **_k: (None, SimpleNamespace(candidates=()))
+        ),
+        placement=placement,
+        context=context,
+        event_bus=bus,
+        timeout_s=0.0,
+        stability_tracker=SimpleNamespace(),
+        caller_trace=caller_trace,
+    )
+    assert _selected is None
+    assert trace_out is caller_trace
+    assert waited_ms == 0
+    timeouts = [
+        e
+        for e in bus.events
+        if getattr(e, "signal", None) == ROUTING_EVICTION_WAIT_TIMEOUT
+    ]
+    assert len(timeouts) == 1
+    assert timeouts[0].payload["exit_reason"] == "budget_exhausted_before_wait"
+
+
+@pytest.mark.asyncio
+async def test_budget_exhausted_before_wait_event_from_generic_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.scheduling.events.routing_signal_constants_routing_waits import (
+        ROUTING_EVICTION_WAIT_TIMEOUT,
+    )
+
+    from systems.proxy.core.nonstreaming.federated_routing.wait_logic import (
+        _wait_and_retry_selection,
+    )
+    from systems.routing.selection.decision import DecisionTrace, FeasibilityTier
+
+    caller_trace = DecisionTrace(
+        model_id="m1",
+        original_model_id=None,
+        request_id="req-w",
+        candidates=(),
+        selection_tier=FeasibilityTier.T0_INFEASIBLE,
+    )
+
+    class _Bus:
+        def __init__(self) -> None:
+            self.events: list = []
+
+        async def publish_nowait(self, event) -> None:
+            self.events.append(event)
+
+    bus = _Bus()
+    monkeypatch.setattr(
+        "systems.routing.selection.stargate_collector.federated_gateways_to_routing_candidates",
+        lambda gateways: [],
+    )
+    context = SimpleNamespace(
+        request_id="req-w",
+        selected_model="m1",
+        model_sticky=False,
+        excluded_gateway_ids=set(),
+    )
+    _gw, trace_out, _waited = await _wait_and_retry_selection(
+        federated_manager=_Mgr([_Gw("g1", ts=1.0)]),
+        decision_engine=SimpleNamespace(
+            select=lambda **_k: (None, SimpleNamespace(candidates=()))
+        ),
+        placement=SimpleNamespace(model_id="m1"),
+        context=context,
+        event_bus=bus,
+        timeout_s=0.0,
+        stability_tracker=SimpleNamespace(),
+        caller_trace=caller_trace,
+    )
+    assert _gw is None
+    assert trace_out is caller_trace
+    timeouts = [
+        e
+        for e in bus.events
+        if getattr(e, "signal", None) == ROUTING_EVICTION_WAIT_TIMEOUT
+    ]
+    assert timeouts[0].payload["exit_reason"] == "budget_exhausted_before_wait"

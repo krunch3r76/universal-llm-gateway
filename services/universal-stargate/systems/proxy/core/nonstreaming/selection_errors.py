@@ -65,6 +65,10 @@ def raise_capacity_error(
     )
 
     message = format_sticky_capacity_message(model_routing_key, capacity_details)
+    headers: dict[str, str] = {}
+    retry_after = capacity_details.get("retry_after_s")
+    if retry_after is not None:
+        headers["Retry-After"] = str(int(retry_after))
     raise HTTPException(
         status_code=get_http_status(ErrorCode.STICKY_CAPACITY),
         detail=error_envelope(
@@ -74,6 +78,7 @@ def raise_capacity_error(
             retryable=True,
             data=capacity_details,
         ),
+        headers=headers or None,
     )
 
 

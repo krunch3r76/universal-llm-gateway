@@ -13,7 +13,10 @@ from universal_logging import get_logger
 
 from .events import _emit_event_safe
 from .wait_continuation import ContinuationMode, continuation_still_transient
-from .wait_emit import build_exit_constraint_summary
+from .wait_emit import (
+    build_exit_constraint_summary,
+    emit_eviction_wait_budget_exhausted_before_entry,
+)
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -244,6 +247,7 @@ async def _wait_vram_refusal_and_retry_selection(
     event_bus: "EventBus | None",
     timeout_s: float,
     stability_tracker: "StickyPlacementTracker",
+    caller_trace: Any = None,
 ) -> tuple[Any, Any, int]:
     """Post-load VRAM refusal: dwell/backoff on gateway RESOURCE_UPDATE, then select."""
     from src.scheduling.events.routing import (
@@ -258,7 +262,15 @@ async def _wait_vram_refusal_and_retry_selection(
 
     global _eviction_wait_queue_depth
     wait_start = time.monotonic()
-    trace: Any = None
+    trace: Any = caller_trace
+    if timeout_s <= 0.0:
+        await emit_eviction_wait_budget_exhausted_before_entry(
+            event_bus=event_bus,
+            request_id=context.request_id,
+            model_id=str(placement.model_id),
+            trace=trace,
+        )
+        return None, trace, 0
     dwell_s = VRAM_REFUSAL_INITIAL_DWELL_S
     refused_gw = getattr(context, "_vram_refusal_gateway_id", None)
     baseline_ts = float(
@@ -394,6 +406,7 @@ async def _wait_and_retry_selection(
     cooldown_hold_key: Any | None = None,
     per_wake_cap_s: float | None = None,
     defer_first_select: bool = False,
+    caller_trace: Any = None,
 ) -> tuple[Any, Any, int]:
     """
     Wait for federated state changes, then retry selection until success or timeout.
@@ -435,7 +448,15 @@ async def _wait_and_retry_selection(
 
     global _eviction_wait_queue_depth
     wait_start = time.monotonic()
-    trace: Any = None
+    trace: Any = caller_trace
+    if timeout_s <= 0.0:
+        await emit_eviction_wait_budget_exhausted_before_entry(
+            event_bus=event_bus,
+            request_id=context.request_id,
+            model_id=str(placement.model_id),
+            trace=trace,
+        )
+        return None, trace, 0
     last_drain_at: float | None = None
     deferred_first_select = False
 

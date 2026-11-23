@@ -51,6 +51,7 @@ from systems.routing.selection.decision.eviction_cooldown_policy import (  # noq
     record_cooldown_override,
 )
 from systems.routing.selection.decision.types import (  # noqa: E402
+    ConstraintFailure,
     DecisionTrace,
     EvictionPlanSummary,
     FeasibilityTier,
@@ -1042,3 +1043,104 @@ async def test_abab_swap_inside_120s_holds_then_proceeds_without_early_sticky(
     assert clock["t"] - 5_000.0 < 300.0
     assert all(d < 3 for d in depth_samples)
     assert len(load_orchestrator.load_calls) == len(swap_sequence)
+
+
+@pytest.mark.parametrize(
+    "continuation_mode,timeout_reason",
+    [
+        ("cooldown_blocked", "eviction_blocked_queue_timeout"),
+        ("execution_failure", "eviction_execute_failure_queue_timeout"),
+        ("vram_refusal", "eviction_queue_timeout_post_load_fail"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_zero_budget_requeue_preserves_trace(
+    monkeypatch: pytest.MonkeyPatch,
+    continuation_mode: str,
+    timeout_reason: str,
+) -> None:
+    """Expired shared budget: no wait, STICKY_CAPACITY keeps the caller trace."""
+    from src.scheduling.events.routing_signal_constants_routing_waits import (
+        ROUTING_EVICTION_WAIT_TIMEOUT,
+    )
+
+    wait_mock = AsyncMock()
+    vram_wait_mock = AsyncMock()
+    monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", wait_mock)
+    monkeypatch.setattr(
+        _wait_logic_mod,
+        "_wait_vram_refusal_and_retry_selection",
+        vram_wait_mock,
+    )
+    trace = DecisionTrace(
+        model_id=str(TARGET),
+        original_model_id=None,
+        request_id="req-zero-budget",
+        candidates=(
+            GatewayCandidate(
+                gateway=_gateway(),
+                tier=FeasibilityTier.T2_FEASIBLE_EVICT,
+                constraints_failed=(
+                    ConstraintFailure(
+                        constraint="eviction_blocked_by_busy_models",
+                        reason="busy",
+                        details={},
+                    ),
+                ),
+                eviction_plan=_plan(),
+            ),
+        ),
+        selection_tier=FeasibilityTier.T2_FEASIBLE_EVICT,
+        selection_reason=(
+            "sticky_capacity_wait: bound=edge-jupiter-gateway, at_capacity"
+        ),
+    )
+    context = SimpleNamespace(
+        request_id="req-zero-budget",
+        selected_model=TARGET,
+        model_sticky=False,
+        capacity_token=_FakeToken("edge-jupiter-gateway"),
+        selected_gateway=None,
+        excluded_gateway_ids=set(),
+        _eviction_wait_deadline_mono=time.monotonic() - 1.0,
+        _eviction_wait_armed_mono=time.monotonic() - 301.0,
+        _eviction_requeue_depth=0,
+    )
+    event_bus = _FakeEventBus()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await requeue_mod.requeue_after_transient_eviction(
+            context=context,
+            trace=trace,
+            federated_manager=_FakeFederatedManager([]),
+            federated_load_orchestrator=_FakeLoadOrchestrator(),
+            federation_forwarder=_FakeForwarder(),
+            routing_config={"eviction_wait_timeout_s": 300.0},
+            decision_engine=SimpleNamespace(),
+            placement=SimpleNamespace(model_id=TARGET),
+            event_bus=event_bus,
+            stability_tracker=SimpleNamespace(),
+            routing_start_time=time.time() - 2.0,
+            eviction_cooldown_s=120.0,
+            capacity_pool=None,
+            routing_key_tracker=None,
+            continuation_mode=continuation_mode,
+            timeout_reason=timeout_reason,
+        )
+
+    wait_mock.assert_not_awaited()
+    vram_wait_mock.assert_not_awaited()
+    detail = exc_info.value.detail
+    assert detail["code"] == ErrorCode.STICKY_CAPACITY
+    assert detail["data"]["reason"] == timeout_reason
+    assert detail["data"]["budget_exhausted"] is True
+    assert detail["data"]["gateway_id"] == "edge-jupiter-gateway"
+    assert detail["data"]["holders"].get("holders_unknown") is not True
+    assert detail["data"]["budget_consumed_ms"] > 0
+    timeout_events = [
+        e
+        for e in event_bus.events
+        if getattr(e, "signal", None) == ROUTING_EVICTION_WAIT_TIMEOUT
+    ]
+    assert len(timeout_events) == 1
+    assert timeout_events[0].payload["exit_reason"] == "budget_exhausted_before_wait"

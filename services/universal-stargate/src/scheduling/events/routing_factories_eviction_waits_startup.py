@@ -92,8 +92,8 @@ def RoutingEvictionWaitTimeout(
 ) -> Event:
     """Emit when the eviction wait exits without a resolved placement.
 
-    exit_reason ∈ {"budget_exhausted", "non_transient"}. See signal docstring
-    for semantics.
+    exit_reason ∈ {"budget_exhausted", "non_transient", "budget_exhausted_before_wait"}.
+    See signal docstring for semantics.
     """
     return Event(
         signal=ROUTING_EVICTION_WAIT_TIMEOUT,

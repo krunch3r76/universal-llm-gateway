@@ -9,7 +9,10 @@ bail when the retry trace no longer carries eviction_blocked_by_busy_models).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from universal_event_bus import EventBus
 
 
 def build_exit_constraint_summary(trace: Any) -> list[dict]:
@@ -29,3 +32,30 @@ def build_exit_constraint_summary(trace: Any) -> list[dict]:
         }
         for c in trace.candidates
     ]
+
+
+async def emit_eviction_wait_budget_exhausted_before_entry(
+    *,
+    event_bus: "EventBus | None",
+    request_id: str,
+    model_id: str,
+    trace: Any,
+) -> None:
+    """Emit routing.eviction.wait.timeout without entering the wait loop."""
+    if event_bus is None:
+        return
+    from src.scheduling.events.routing import RoutingEvictionWaitTimeout
+
+    from .events import _emit_event_safe
+
+    await _emit_event_safe(
+        event_bus,
+        RoutingEvictionWaitTimeout(
+            request_id=request_id,
+            model_id=model_id,
+            waited_ms=0,
+            exit_reason="budget_exhausted_before_wait",
+            exit_constraint_summary=build_exit_constraint_summary(trace),
+        ),
+        "routing.eviction.wait.timeout",
+    )

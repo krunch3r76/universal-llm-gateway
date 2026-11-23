@@ -26,8 +26,11 @@ versus the configured wait budget.
 | `holders` | `loaded`, `busy`, and `loading` routing keys on the bound gateway, or `holders_unknown` with `holders_unknown_reason` |
 | `eviction` | `disposition` ∈ `attempted`, `refused`, `not_applicable`, plus `constraint` and `reason` |
 | `wait_budget_s` | Per-request `eviction_wait_timeout_s` (default 300s) |
-| `waited_ms` | Milliseconds spent in the wait path before this raise |
+| `waited_ms` | Milliseconds in the **last** wait invocation only (not cumulative across requeues) |
+| `budget_consumed_ms` | Milliseconds spent against the shared eviction wait deadline for this request |
+| `request_elapsed_ms` | Wall-clock milliseconds since routing start when the summary is built |
 | `budget_exhausted` | Whether the shared eviction wait budget is exhausted |
+| `retry_after_s` | HTTP `Retry-After` hint (seconds) when `budget_exhausted` |
 | `retry_guidance` | Operator-facing retry hint |
 | `reason` | Site-specific failure reason when the raise path sets one (e.g. `capacity_exhausted`, `eviction_blocked_queue_timeout`) |
 | `requeue_depth` / `requeue_max_depth` | Present on finalize requeue depth-cap failures |
@@ -47,5 +50,11 @@ merged into `data` when a capacity candidate exists on the trace.
 
 While waiting, Stargate emits `routing.eviction.wait.*` events including
 `routing.eviction.wait.timeout` with `exit_reason`, `waited_ms`, and
-`exit_constraint_summary`. Those fields inform `budget_exhausted` and eviction
+`exit_constraint_summary`. `exit_reason` may be `budget_exhausted`,
+`non_transient`, or `budget_exhausted_before_wait` (budget already spent;
+no wait entered). Those fields inform `budget_exhausted` and eviction
 disposition in the HTTP envelope but are not copied verbatim into `data`.
+
+`holders_unknown_reason` when holders cannot be resolved from the trace is
+`no_trace` or `no_capacity_candidate_on_trace` (never the retired
+`no_trace_or_bound_gateway` alias).

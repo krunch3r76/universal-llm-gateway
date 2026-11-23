@@ -52,13 +52,15 @@ ROUTING_EVICTION_WAIT_TIMEOUT = "routing.eviction.wait.timeout"
 """
 Eviction wait exited without a resolved placement.
 
-`exit_reason` distinguishes two terminal conditions under one signal:
+`exit_reason` distinguishes terminal conditions under one signal:
   - "budget_exhausted": waited the full eviction_wait_timeout_s budget
     without any candidate becoming feasible.
   - "non_transient": first-iteration exit because no candidate still carries
     eviction_blocked_by_busy_models — the state that made the wait-entry
     classifier call this transient no longer holds. Typically accompanies
     waited_ms ≈ 0.
+  - "budget_exhausted_before_wait": shared eviction budget already spent;
+    wait loop not entered (`waited_ms` = 0).
 
 `exit_constraint_summary` captures the trace candidates' constraint sets at
 exit so post-hoc queries can identify which constraint replaced the transient
@@ -68,7 +70,7 @@ Payload: {
     "request_id": str,
     "model_id": str,
     "waited_ms": int,
-    "exit_reason": str,              # "budget_exhausted" | "non_transient"
+    "exit_reason": str,  # budget_exhausted | non_transient | budget_exhausted_before_wait
     "exit_constraint_summary": list[dict],
         # [{gateway_id, constraints_failed: [str]}]
 }

@@ -107,7 +107,20 @@ def arm_or_remaining_eviction_budget(
         if cap is not None:
             deadline = min(deadline, cap)
         context._eviction_wait_deadline_mono = deadline
+        context._eviction_wait_armed_mono = now  # noqa: SLF001
     return max(0.0, deadline - now)
+
+
+def eviction_budget_consumed_ms(context: RequestContext) -> int:
+    """Milliseconds spent against the shared eviction wait deadline for this request."""
+    armed = getattr(context, "_eviction_wait_armed_mono", None)
+    deadline = getattr(context, "_eviction_wait_deadline_mono", None)
+    if armed is None or deadline is None:
+        return 0
+    budget_s = max(0.0, deadline - armed)
+    remaining_s = max(0.0, deadline - time.monotonic())
+    consumed_s = max(0.0, budget_s - remaining_s)
+    return int(consumed_s * 1000)
 
 
 def _is_permanent_resource_or_structural(candidate: Any) -> bool:

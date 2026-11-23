@@ -288,6 +288,7 @@ async def finalize_selection_and_load(
                     marked_loading = False
                 return await requeue_after_transient_eviction(
                     context=context,
+                    trace=trace,
                     federated_manager=federated_manager,
                     federated_load_orchestrator=federated_load_orchestrator,
                     federation_forwarder=federation_forwarder,
@@ -364,6 +365,7 @@ async def finalize_selection_and_load(
                     marked_loading = False
                 return await requeue_after_transient_eviction(
                     context=context,
+                    trace=trace,
                     federated_manager=federated_manager,
                     federated_load_orchestrator=federated_load_orchestrator,
                     federation_forwarder=federation_forwarder,
@@ -413,6 +415,7 @@ async def finalize_selection_and_load(
                 )
                 return await requeue_after_transient_eviction(
                     context=context,
+                    trace=trace,
                     federated_manager=federated_manager,
                     federated_load_orchestrator=federated_load_orchestrator,
                     federation_forwarder=federation_forwarder,
