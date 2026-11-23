@@ -20,6 +20,7 @@ from scripts.model_manager.ui.controller.restart_drain import (
     DrainOutcome,
     RestartDrainGate,
     StargateIdleDrainSupervisor,
+    default_restart_witnesses,
     resume_drain_supervision,
     run_gated,
     run_gated_deferred,
@@ -269,7 +270,12 @@ def test_stargate_stopped_probe_error_force_without_reason_refused(
         async def snapshot(self) -> ActiveWork:
             raise exc
 
-    gate = RestartDrainGate(probes={"stargate": _RaisingProbe()})
+    witnesses = default_restart_witnesses()
+    assert "stargate" not in witnesses
+    gate = RestartDrainGate(
+        probes={"stargate": _RaisingProbe()},
+        witnesses=witnesses,
+    )
     monkeypatch.setattr(sg_witness, "stargate_down_witness_agrees", lambda: True)
 
     result = _run(

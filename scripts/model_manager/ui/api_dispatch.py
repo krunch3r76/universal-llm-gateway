@@ -350,6 +350,14 @@ async def _execute_dispatch(
                     intent_ttl_s=giw_intent_ttl_s_from_params(params),
                     caller_agent=caller_agent_from_manage_request(params),
                 )
+            elif service == "stargate" and not force:
+                result = await _stargate_idle_drain_supervised(
+                    ctl,
+                    "restart",
+                    code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
+                    row_id=_optional_attr_str(params, "row_id"),
+                    caller_agent=caller_agent_from_manage_request(params),
+                )
             else:
                 preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
                 if preempted is not None:
@@ -844,7 +852,8 @@ async def _stargate_idle_drain_supervised(
     row_id: str | None = None,
     caller_agent: str = "manage",
 ) -> dict[str, Any]:
-    """Non-force stargate sync_restart — durable intent + idle/ceiling supervisor."""
+    """Non-force stargate restart/sync_restart — durable intent + idle/ceiling supervisor."""
+    restart_fn = _restart_cycle if action == "restart" else _sync_restart
     supervisor = StargateIdleDrainSupervisor(
         gate=ctl.restart_gate,
         store=ctl.restart_intent_store,
@@ -852,7 +861,7 @@ async def _stargate_idle_drain_supervised(
             ctl,
             "stargate",
             action,
-            lambda: _sync_restart(ctl, "stargate"),
+            lambda: restart_fn(ctl, "stargate"),
         ),
     )
     return await run_gated_stargate_idle_drain_supervised(

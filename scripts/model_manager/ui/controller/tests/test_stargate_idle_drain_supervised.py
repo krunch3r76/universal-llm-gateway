@@ -611,6 +611,51 @@ def test_stargate_busy_report_timeout_undetermined_with_down_witness(
     assert row["restart_would_defer"] is True
 
 
+def test_execute_stargate_restart_connect_error_down_witness_starts(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production ``restart`` on stopped Stargate runs lifecycle (Bind B).
+
+    Breaks when non-force ``restart`` falls through to ``run_gated`` with
+    production witnesses: ConnectError yields ``probe_error`` deferred-only.
+    """
+    store = RestartIntentStore(db_path=tmp_path / "execute-restart-down.db")
+    gate = RestartDrainGate(
+        probes={"stargate": _RaisingProbe(_connect_refused_context_only_error())}
+    )
+    lifecycle_calls = 0
+
+    async def _restart_cycle(_ctl: Any, _service: str) -> str:
+        nonlocal lifecycle_calls
+        lifecycle_calls += 1
+        return "restarted"
+
+    monkeypatch.setattr(sg_witness, "stargate_down_witness_agrees", lambda: True)
+    monkeypatch.setattr(api_dispatch, "_restart_cycle", _restart_cycle)
+    monkeypatch.setattr(
+        api_dispatch,
+        "_sync_restart",
+        AsyncMock(side_effect=AssertionError("restart must not call sync_restart")),
+    )
+    monkeypatch.setattr(
+        api_dispatch,
+        "run_gated",
+        AsyncMock(side_effect=AssertionError("run_gated must not run for stargate")),
+    )
+
+    async def _finalize(
+        _ctl: Any, _service: str, result: dict[str, Any], **_: Any
+    ) -> dict[str, Any]:
+        return result
+
+    monkeypatch.setattr(api_dispatch, "_finalize_restart_rebuild", _finalize)
+    ctl = MagicMock(restart_gate=gate, restart_intent_store=store)
+    result = _run(api_dispatch.execute(ctl, "restart", "stargate", {}))
+    assert result["status"] == "ok"
+    assert lifecycle_calls == 1
+    assert store.active_for_service("stargate") is None
+
+
 def test_giw_force_still_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         api_dispatch,
