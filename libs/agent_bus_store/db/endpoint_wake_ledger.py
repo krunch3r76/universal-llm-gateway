@@ -801,6 +801,9 @@ ENDPOINT_WAKE_DEBOUNCE_S_DEFAULT = 600
 ENDPOINT_WAKE_DEBOUNCE_S_ORION_CHAT = 30
 ENDPOINT_WAKE_TAB_COALESCE_S_DEFAULT = 3.0
 ENDPOINT_WAKE_TAB_COALESCE_MAX_S_DEFAULT = 15.0
+ENDPOINT_WAKE_CSE_COALESCE_S_DEFAULT = 30.0
+ENDPOINT_WAKE_CSE_COALESCE_MAX_S_DEFAULT = 90.0
+_WAKE_GATE_OR_DIRECTIVE_RULE = "wake_gate_or_directive"
 ORION_DEFERRED_STREAMING_MAX_ATTEMPTS = 25
 ORION_COMPOSER_DEFER_MAX_ATTEMPTS = 25
 ORION_DEFERRED_RETRY_BASE_S = 30
@@ -879,6 +882,61 @@ def _endpoint_wake_tab_coalesce_max_s() -> float:
     return value
 
 
+def _endpoint_wake_cse_coalesce_s() -> float:
+    raw = os.environ.get(
+        "ENDPOINT_WAKE_CSE_COALESCE_S",
+        str(ENDPOINT_WAKE_CSE_COALESCE_S_DEFAULT),
+    )
+    try:
+        value = float(raw)
+    except ValueError:
+        return ENDPOINT_WAKE_CSE_COALESCE_S_DEFAULT
+    if not math.isfinite(value) or value <= 0:
+        return ENDPOINT_WAKE_CSE_COALESCE_S_DEFAULT
+    return value
+
+
+def _endpoint_wake_cse_coalesce_max_s() -> float:
+    raw = os.environ.get(
+        "ENDPOINT_WAKE_CSE_COALESCE_MAX_S",
+        str(ENDPOINT_WAKE_CSE_COALESCE_MAX_S_DEFAULT),
+    )
+    try:
+        value = float(raw)
+    except ValueError:
+        return ENDPOINT_WAKE_CSE_COALESCE_MAX_S_DEFAULT
+    if not math.isfinite(value) or value <= 0:
+        return ENDPOINT_WAKE_CSE_COALESCE_MAX_S_DEFAULT
+    return value
+
+
+def _cse_coalesce_applies_to_agent(agent: str) -> bool:
+    """Burst gather hold for CSE-routed mailboxes (not Cursor tab coalesce)."""
+    norm = normalize_bus_address(agent)
+    if norm == "orion":
+        return False
+    if norm in MAESTRO_WEB_ALIAS_PAIR:
+        return True
+    return norm == "maestro"
+
+
+def _wake_gate_bypasses_hold(rows: Sequence[sqlite3.Row]) -> bool:
+    return any(
+        str(row["decided_by_rule"] or "") == _WAKE_GATE_OR_DIRECTIVE_RULE for row in rows
+    )
+
+
+def _cse_hold_from_rows(rows: Sequence[sqlite3.Row], *, stamp: str) -> bool:
+    """Hold CSE claims until quiet window or max-hold over pending rows."""
+    if not rows:
+        return False
+    oldest = min(str(row["created_at"]) for row in rows)
+    newest = max(str(row["created_at"]) for row in rows)
+    quiet_before = _shift(stamp, -int(_endpoint_wake_cse_coalesce_s()))
+    max_hold_before = _shift(stamp, -int(_endpoint_wake_cse_coalesce_max_s()))
+    return newest > quiet_before and oldest > max_hold_before
+
+
 def _tab_coalesce_applies_to_agent(agent: str) -> bool:
     """Per-tab burst merge skips Orion and web-anthropic / maestro alias mailboxes."""
     if normalize_bus_address(agent) == "orion":
@@ -931,6 +989,7 @@ def _due_wake_group_sql(orion_next_gate: str, *, delivery_agent_id: str | None) 
                       AND NOT EXISTS (
                         SELECT 1 FROM turns t
                         WHERE datetime(t.created_at) > datetime(d.finished_at)
+                          AND t.thread = p.thread_id
                           AND (
                             lower(trim(t.from_agent))=lower(trim(p.agent))
                             OR (
@@ -1831,6 +1890,13 @@ def claim_due_wakes(
             if not claimable:
                 all_skipped.extend(skipped)
                 continue
+            if (
+                not tab_merge
+                and _cse_coalesce_applies_to_agent(str(group["agent"]))
+                and not _wake_gate_bypasses_hold(rows)
+                and _cse_hold_from_rows(claimable, stamp=stamp)
+            ):
+                continue
             wake_id = uuid.uuid4().hex
             ids = [int(r["id"]) for r in claimable]
             conn.execute(
@@ -1844,6 +1910,7 @@ def claim_due_wakes(
                     """
                     SELECT endpoint_wake_ledger.*,
                            turns.body AS body,
+                           turns.subject AS subject,
                            turns.from_agent AS from_agent,
                            turns.to_agent AS to_agent
                     FROM endpoint_wake_ledger

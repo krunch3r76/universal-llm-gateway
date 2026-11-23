@@ -10,6 +10,7 @@ import os
 import re
 import time
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -28,7 +29,7 @@ from cdp_ask.houseless_resolve import (
     resolve_houseless_target,
 )
 from claude_bundles.holder_strings import holder_id_from_chat_url
-from cursor_bridge.chat_target import exchange_lines
+from cursor_bridge.chat_target import _guard_wake_from, exchange_lines
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 from web_chat_relay.orion_wake import (
     conversation_id_from_url,
@@ -148,6 +149,8 @@ CSE_WAKE_SUBJECT_HEADS = frozenset(
         "RULING",
     }
 )
+# Digest paste closed set (superset of wake-eligibility heads for gate tokens like CLOSEOUT).
+WAKE_DIGEST_SUBJECT_HEADS = CSE_WAKE_SUBJECT_HEADS | frozenset({"CLOSEOUT"})
 _GROK_NOPIPE_WAKE_HEADS = frozenset(
     {"DONE", "FAILED", "BLOCKED", "QUESTION", "REQUEST"}
 )
@@ -2977,9 +2980,48 @@ def deliver(
     holder: dict[str, Any],
     *,
     target_lane: str | None = None,
+    wake_id: str | None = None,
 ) -> tuple[str, str, str | None]:
     """Thin handler: CSE followup wake delivery."""
-    return _deliver_cse(rows, holder, target_lane=target_lane)
+    return _deliver_cse(rows, holder, target_lane=target_lane, wake_id=wake_id)
+
+
+def format_wake_digest_line(row: dict[str, Any]) -> str:
+    """One described wake line: thread#turn from= head= chars=; body and subject tail omitted."""
+    thread = str(row["thread_id"])
+    turn = int(row["turn_number"])
+    from_g = _guard_wake_from(row.get("from_agent") or row.get("from"))
+    body = str(row.get("body") or "")
+    subject = str(row.get("subject") or "")
+    head = _segment_subject_head(subject)
+    if head and head not in WAKE_DIGEST_SUBJECT_HEADS:
+        token = (maestro_subject_head(subject) or head).upper()
+        head = token if token in WAKE_DIGEST_SUBJECT_HEADS else "UNKNOWN"
+    if not head:
+        head = "UNKNOWN"
+    return f"{thread}#{turn} from={from_g} head={head} chars={len(body)}"
+
+
+def build_cse_wake_induction(rows: list[dict[str, Any]]) -> str:
+    ordered = sorted(rows, key=lambda row: int(row["turn_number"]))
+    lines = [format_wake_digest_line(row) for row in ordered]
+    header = f"Wake digest ({len(lines)} turns):"
+    return header + "\n" + "\n".join(lines)
+
+
+def _gather_seconds_held(rows: Sequence[dict[str, Any]]) -> float:
+    parsed: list[datetime] = []
+    for row in rows:
+        raw = str(row.get("created_at") or "").strip()
+        if not raw:
+            continue
+        try:
+            parsed.append(datetime.fromisoformat(raw.replace(" ", "T")))
+        except ValueError:
+            continue
+    if len(parsed) < 2:
+        return 0.0
+    return max((max(parsed) - min(parsed)).total_seconds(), 0.0)
 
 
 def _deliver_cse(
@@ -2987,16 +3029,14 @@ def _deliver_cse(
     holder: dict[str, Any],
     *,
     target_lane: str | None = None,
+    wake_id: str | None = None,
 ) -> tuple[str, str, str | None]:
     from bus_watch.cse_followup import fire_cse_followup
+    from bus_watch.events import emit_endpoint_wake_gather
 
     thread = str(rows[0]["thread_id"])
     lane = str(target_lane or thread).strip() or thread
-    numbers = ", ".join(str(r["turn_number"]) for r in rows)
-    if thread != lane:
-        induction = f"wake thread {thread} turns {numbers}"
-    else:
-        induction = f"wake turns {numbers}"
+    induction = build_cse_wake_induction(rows)
     fallback_url = holder.get("chat_url")
     fallback_reg = holder.get("registration_id")
     houseless = _holder_is_houseless(holder)
@@ -3030,6 +3070,12 @@ def _deliver_cse(
         **followup_kw,
     )
     state, reason = classify_cse(live if isinstance(live, dict) else {})
+    if state == "delivered" and wake_id:
+        emit_endpoint_wake_gather(
+            wake_id=str(wake_id),
+            count=len(rows),
+            seconds_held=_gather_seconds_held(rows),
+        )
     return state, reason, str(live.get("registration_id") or "") or None
 
 
@@ -3183,7 +3229,9 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                 subscription_id=None,
                 cse_registration_id=None,
             )
-        state, reason, reg = deliver(rows, holder, target_lane=lane)
+        state, reason, reg = deliver(
+            rows, holder, target_lane=lane, wake_id=str(wake_id)
+        )
         return _finish(
             outcome=state,
             reason=reason,
@@ -3276,7 +3324,9 @@ def fire_due_wakes(store: StoreClient) -> dict[str, Any] | None:
                     stamp_chat_url=stamp_url,
                 )
                 return claimed
-        state, reason, reg = deliver(rows, holder, target_lane=lane)
+        state, reason, reg = deliver(
+            rows, holder, target_lane=lane, wake_id=str(wake_id)
+        )
         stamp_reg = maestro_stamp.registration_id if maestro_stamp else ""
         stamp_url = maestro_stamp.chat_url if maestro_stamp else ""
         post_paste_mismatch = (

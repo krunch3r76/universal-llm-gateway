@@ -595,6 +595,30 @@ def EndpointWakeOverdueSurfaced(  # noqa: N802
     )
 
 
+@event_factory
+def EndpointWakeGather(  # noqa: N802
+    *,
+    wake_id: str,
+    count: int,
+    seconds_held: float,
+) -> Event:
+    """Observation: one CSE digest paste gathered ``count`` pending rows."""
+    return Event(
+        signal="endpoint_wake.gather",
+        role="observation",
+        payload={
+            "wake_id": wake_id,
+            "count": count,
+            "seconds_held": seconds_held,
+        },
+        scope="global",
+    )
+
+
+def emit_endpoint_wake_gather(**kwargs: Any) -> None:
+    _emit(EndpointWakeGather(**kwargs))
+
+
 def emit_endpoint_wake_overdue_surfaced(**kwargs: Any) -> None:
     _emit(EndpointWakeOverdueSurfaced(**kwargs))
 

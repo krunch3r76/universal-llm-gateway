@@ -1425,6 +1425,7 @@ def test_fire_due_wakes_paste_prefixes_missed_once_then_stamps_surfaced(
         *,
         text: str = "",
         wake_groups: list[dict[str, Any]] | None = None,
+        **_kwargs: object,
     ) -> tuple[str, str]:
         del wake_groups
         pasted.append(text)
@@ -2089,9 +2090,14 @@ def test_fire_due_wakes_passes_coalesced_turn_numbers_to_display_post(db: None) 
             )
 
     def _capture(
-        row: dict, sub: dict, turn: int | str, *, text: str = ""
+        row: dict,
+        sub: dict,
+        turn: int | str,
+        *,
+        text: str = "",
+        **_kwargs: object,
     ) -> tuple[str, str]:
-        del text
+        del row, sub, text
         turn_args.append(turn)
         return ("delivered", "match")
 
@@ -2201,6 +2207,7 @@ def test_fire_due_wakes_pastes_one_line_per_thread(db: None) -> None:
         *,
         text: str = "",
         wake_groups: list[dict[str, Any]] | None = None,
+        **_kwargs: object,
     ) -> tuple[str, str]:
         del row, sub, turn
         captured.append({"text": text, "wake_groups": wake_groups})
@@ -2216,8 +2223,8 @@ def test_fire_due_wakes_pastes_one_line_per_thread(db: None) -> None:
     ):
         fire_due_wakes(Store())  # type: ignore[arg-type]
     assert captured == [{"text": "", "wake_groups": expected_groups}]
-    assert wake_lines(expected_groups) == (
-        f"BRIDGE_WAKE thread={d1['id']} turn={n1}\n"
+    assert wake_lines(expected_groups, mailbox="cursor-sdk") == (
+        f"BRIDGE_WAKE thread={d1['id']} turn={n1} to=cursor-sdk\n"
         f"BRIDGE_WAKE thread={d2['id']} turn={n2}"
     )
     with connect() as conn:
@@ -2464,6 +2471,7 @@ def test_fire_due_wakes_orders_threads_by_turn_id(db: None) -> None:
         *,
         text: str = "",
         wake_groups: list[dict[str, Any]] | None = None,
+        **_kwargs: object,
     ) -> tuple[str, str]:
         del sub, turn, text
         primary_threads.append(str(row["thread_id"]))
@@ -2609,7 +2617,8 @@ def test_fire_due_wakes_multi_thread_real_display_path(db: None) -> None:
         [
             {"thread_id": str(d1["id"]), "turn": n1},
             {"thread_id": str(d2["id"]), "turn": n2},
-        ]
+        ],
+        mailbox="cursor-sdk",
     )
     with (
         patch(
@@ -2939,10 +2948,13 @@ def test_fire_maestro_cse_routes_holder_agent_id(db: None) -> None:
             },
         }
 
+    from bus_watch.endpoint_wake_dispatcher import build_cse_wake_induction
+
+    expected = build_cse_wake_induction(claimed["rows"])
     with patch("bus_watch.cse_followup.fire_cse_followup", side_effect=_capture):
         fire_due_wakes(store)  # type: ignore[arg-type]
-    assert bodies[0] == f"wake thread {bus_thread} turns {number}"
-    assert bodies[1] == f"wake thread {bus_thread} turns {number}"
+    assert bodies[0] == expected
+    assert bodies[1] == expected
     assert alerts == []
 
 
@@ -4761,7 +4773,7 @@ def test_fire_due_wakes_delivers_worker_closeout_to_parent_lane(
         def result(self, **payload: object) -> dict:
             return payload
 
-    def _deliver(rows, holder, target_lane=None):
+    def _deliver(rows, holder, target_lane=None, **_kwargs: object):
         delivered.append((str(target_lane), str(holder.get("registration_id"))))
         return "delivered", "send_verified=True", "R"
 
