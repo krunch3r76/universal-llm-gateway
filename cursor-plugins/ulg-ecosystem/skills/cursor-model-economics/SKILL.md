@@ -32,13 +32,17 @@ usage shape:
 
 Rates (both Fable ids): `$10 / $50 / $0.25 / $12.50` input/output/cache-read/cache-write per M — pinned in `config/model_rates.yaml`.
 
-## Fable 5.2 (2026-11-23) — ~20% under 5.1 headline
+## Fable 5.2 — lean-ladder planner exception (read rates live)
 
-Headline $/M on Cursor (`cursor/claude-fable-5-2`): **`$8 / $40 / $0.20 / $10`** input/output/cache-read/cache-write per M — pinned in `config/model_rates.yaml`; provenance `cursor.com/docs/models-and-pricing` read 2026-11-23. Catalog id is hyphenated (`claude-fable-5-2`), not dotted (`claude-fable-5.2`).
+**$/M SOT:** `config/model_rates.yaml` row `cursor/claude-fable-5-2` (and `anthropic/claude-fable-5-2`) — do not paste numbers into commands, packets, or lean-dispatch. Catalog id is **hyphenated** (`claude-fable-5-2` / `cursor/claude-fable-5-2`), not dotted (`claude-fable-5.2`); alias map resolves bare `fable-5.2` only.
 
-The Fable 5.1 **block above stays authoritative** for 5.0/5.1 ids and CDP/cost verdict splits. For **lean-ladder** only: an operator-pinned **planner** on Fable 5.2 is an **exception** to the short-context judgment/implement cost block — the ladder's cache-heavy multi-turn planner shape (confer → plan → dispatch harvests) can amortize cache reads; that does **not** lift the block on ad-hoc judgment/implement binds elsewhere.
+Card knobs (`libs/cursor_capabilities`): `context` / `effort` / `fast` — **no `thinking`**. Default effort already `high`. Other Models pool is `explicit_pin_only` — always pass `model=`; no `ban_override` (Fable ∉ `model_bans`).
 
-**lean-dispatch** readers: cite this skill for $/M and conductor economics — do not paste the rate table into `lean-dispatch` / SKILL bodies.
+Shape (not a rate table): Fable is dearer on fresh input/output than Grok and cheaper on cache-read — suits a **planner** with a big cached prefix and terse rulings; Grok suits diagnosis; `cursor/composer-2.5` stays mechanical (R9: no mechanical work on a Fable/Opus wire).
+
+The Fable 5.1 **block above stays authoritative** for 5.0/5.1 ids and CDP/cost verdict splits. For **lean-ladder** only: an operator-pinned **planner** on Fable 5.2 is an **exception** to the short-context judgment/implement cost block — the ladder's cache-heavy multi-turn planner shape can amortize cache reads; that does **not** lift the block on ad-hoc judgment/implement binds elsewhere.
+
+**lean-dispatch** / **/lean-ladder** readers: cite this skill for shape/verdict and `config/model_rates.yaml` for $/M — never inline rates into those bodies.
 
 ## Conductor seat table
 
