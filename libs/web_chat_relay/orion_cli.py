@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 
+from web_chat_relay.orion_cdp import refresh_connectors_diagnostic
 from web_chat_relay.orion_session import (
     DEFAULT_CDP_URL,
     billing_probe_orion,
@@ -48,21 +49,9 @@ async def _run(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2))
         return 0 if result.get("ok") else 1
     if args.cmd == "refresh-connectors":
-        print(
-            json.dumps(
-                {
-                    "ok": False,
-                    "error": "not_implemented",
-                    "hint": (
-                        "After Plus/Pro/Business subscription: add custom MCP plugins "
-                        "for /mcp/life and /mcp/code in chatgpt.com Settings → Apps. "
-                        "Automation will mirror claude-ai refresh-operator-connectors."
-                    ),
-                },
-                indent=2,
-            )
-        )
-        return 2
+        result = await refresh_connectors_diagnostic(cdp_url=args.cdp_url)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("ok") else 2
     return 2
 
 

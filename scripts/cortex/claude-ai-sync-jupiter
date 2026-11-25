@@ -611,15 +611,21 @@ case "$cmd" in
       ${perm_args[@]+"${perm_args[@]}"}
     ;;
   refresh-operator-connectors)
+  mcp_life=$(python3 -c "import yaml, pathlib; c=yaml.safe_load(pathlib.Path.home().joinpath('.gateway/mcp.yaml').read_text()) or {}; u=(c.get('oauth') or {}).get('issuer','https://mcp.k-1.me').rstrip('/'); print(u+'/mcp/life')")
+  mcp_code=$(python3 -c "import yaml, pathlib; c=yaml.safe_load(pathlib.Path.home().joinpath('.gateway/mcp.yaml').read_text()) or {}; print((c.get('mcp_server_url') or 'https://mcp.k-1.me/mcp/code').strip())")
     # Life first. Code uses --add-only so this refresh cannot Remove toys.
     "$0" refresh-connector \
-      --mcp-url "https://mcp.k-1.me/mcp/life" \
-      --connector-name toys
+      --mcp-url "$mcp_life" \
+      --connector-name toys \
+      --force-reconnect
     "$0" refresh-connector \
-      --mcp-url "https://mcp.k-1.me/mcp/code" \
+      --mcp-url "$mcp_code" \
       --connector-name ulg-code \
       --add-only \
+      --force-reconnect \
       --timeout 90
+    "$0" set-tool-permissions --mcp-url "$mcp_life" --connector-name toys
+    "$0" set-tool-permissions --mcp-url "$mcp_code" --connector-name ulg-code
     ;;
   project-chrome)
     ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"

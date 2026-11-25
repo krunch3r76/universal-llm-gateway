@@ -1048,6 +1048,15 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
         env["XAI_API_KEY"] = cfg.xai_api_key
     if cfg.mcp_server_url:
         env["MCP_SERVER_URL"] = cfg.mcp_server_url
+        env["MCP_PUBLIC_URL"] = cfg.mcp_server_url
+        env["MCP_RESOURCE_SERVER_URL"] = (
+            cfg.mcp_server_url.rstrip("/").rsplit("/", 1)[0]
+        )
+    if cfg.tls_cert_dir:
+        cert_dir = Path(cfg.tls_cert_dir).expanduser()
+        env["MCP_LETSENCRYPT_DIR"] = str(cert_dir.parents[1])
+        # Container sees certs under /etc/letsencrypt (host dir bind-mounted there).
+        env["MCP_TLS_CERT_DIR"] = f"/etc/letsencrypt/live/{cert_dir.name}"
     if cfg.web_fetcher_url:
         env["WEB_FETCHER_URL"] = cfg.web_fetcher_url
     if cfg.project_ask_url:
@@ -1085,6 +1094,12 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
             logger.warning("Failed to parse %s for x_account env", _MCP_CONFIG_PATH)
     apply_x_account_env(env, raw=raw)
     oauth_block = raw.get("oauth") if isinstance(raw.get("oauth"), dict) else {}
+    issuer = oauth_block.get("issuer")
+    if isinstance(issuer, str) and issuer.strip():
+        env["MCP_OAUTH_ISSUER"] = issuer.strip().rstrip("/")
+    letsencrypt_dir = raw.get("letsencrypt_dir")
+    if isinstance(letsencrypt_dir, str) and letsencrypt_dir.strip():
+        env["MCP_LETSENCRYPT_DIR"] = str(Path(letsencrypt_dir).expanduser())
     redirect_hosts = oauth_block.get("dynamic_client_redirect_hosts")
     if isinstance(redirect_hosts, list):
         hosts = [

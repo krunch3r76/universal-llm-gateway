@@ -24,7 +24,7 @@ services:
       - "443:443"
     volumes:
       # Mount entire letsencrypt dir so relative symlinks in live/ resolve correctly
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ${MCP_LETSENCRYPT_DIR:-/etc/letsencrypt}:/etc/letsencrypt:ro
       - ${MCP_DATA_DIR:-${HOME}/mcp-data}/files:/data/files:rw
       # project mount: read/write by default
       - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}:/data/project:${MCP_PROJECT_MOUNT_MODE:-rw}
@@ -78,6 +78,10 @@ services:
       - CLAUDEBURST_EVENTS_QUERY_SOCK=/tmp/universal-protocol/claudeburst-events-query.sock
       - MCP_OAUTH_ENABLED=${MCP_OAUTH_ENABLED:-true}
       - MCP_OAUTH_ISSUER=${MCP_OAUTH_ISSUER:-https://mcp.k-1.me}
+      - MCP_TLS_CERTFILE=${MCP_TLS_CERTFILE:-}
+      - MCP_TLS_KEYFILE=${MCP_TLS_KEYFILE:-}
+      - MCP_TLS_CERT_DIR=${MCP_TLS_CERT_DIR:-}
+      - MCP_RESOURCE_SERVER_URL=${MCP_RESOURCE_SERVER_URL:-}
       - MCP_OAUTH_DYNAMIC_REDIRECT_HOSTS=${MCP_OAUTH_DYNAMIC_REDIRECT_HOSTS:-claude.ai,claude.com,grok.com,*.grok.com,x.ai,*.x.ai,cursor.com,*.cursor.com,cursor.sh,*.cursor.sh}
       - BRIDGE_TOKEN=${BRIDGE_TOKEN:-}
       - AGENT_BUS_TOKEN=${AGENT_BUS_TOKEN:-}

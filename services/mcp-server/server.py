@@ -68,8 +68,20 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _AUTH_TOKEN_ENV = "MCP_AUTH_TOKEN"
-_CERT_FILE = "/etc/letsencrypt/live/mcp.k-1.me/fullchain.pem"
-_KEY_FILE = "/etc/letsencrypt/live/mcp.k-1.me/privkey.pem"
+_DEFAULT_TLS_CERT = "/etc/letsencrypt/live/mcp.k-1.me/fullchain.pem"
+_DEFAULT_TLS_KEY = "/etc/letsencrypt/live/mcp.k-1.me/privkey.pem"
+
+
+def _tls_cert_paths() -> tuple[str, str]:
+    """Resolve TLS material from env overrides or the default k-1.me live dir."""
+    cert = os.getenv("MCP_TLS_CERTFILE", "").strip()
+    key = os.getenv("MCP_TLS_KEYFILE", "").strip()
+    if cert and key:
+        return cert, key
+    cert_dir = os.getenv("MCP_TLS_CERT_DIR", "").strip().rstrip("/")
+    if cert_dir:
+        return f"{cert_dir}/fullchain.pem", f"{cert_dir}/privkey.pem"
+    return _DEFAULT_TLS_CERT, _DEFAULT_TLS_KEY
 _HOST = "0.0.0.0"
 _PORT = 443
 _TCP_KEEPIDLE = 10
@@ -735,7 +747,8 @@ def main() -> None:
     ):
         logging.getLogger(_quiet_logger).setLevel(logging.WARNING)
 
-    for cert_path in (_CERT_FILE, _KEY_FILE):
+    cert_file, key_file = _tls_cert_paths()
+    for cert_path in (cert_file, key_file):
         if not os.path.exists(cert_path):
             logger.error("TLS file not found: %s", cert_path)
             sys.exit(1)
@@ -791,8 +804,8 @@ def main() -> None:
         drain_app,
         host=_HOST,
         port=_PORT,
-        ssl_certfile=_CERT_FILE,
-        ssl_keyfile=_KEY_FILE,
+        ssl_certfile=cert_file,
+        ssl_keyfile=key_file,
         log_level="info",
         access_log=False,
         timeout_keep_alive=1800,

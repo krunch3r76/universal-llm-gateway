@@ -142,6 +142,20 @@ mcp_url = (cfg.get('mcp_server_url') or '').strip()
 if mcp_url:
     print('export MCP_SERVER_URL=' + shlex.quote(mcp_url))
     print('export MCP_PUBLIC_URL=' + shlex.quote(mcp_url))
+    resource_root = mcp_url.rstrip('/').rsplit('/', 1)[0]
+    print('export MCP_RESOURCE_SERVER_URL=' + shlex.quote(resource_root))
+oauth = cfg.get('oauth') if isinstance(cfg.get('oauth'), dict) else {}
+issuer = (oauth.get('issuer') or '').strip() if isinstance(oauth.get('issuer'), str) else ''
+if issuer:
+    print('export MCP_OAUTH_ISSUER=' + shlex.quote(issuer.rstrip('/')))
+tls_cert_dir = (cfg.get('tls_cert_dir') or '').strip()
+if tls_cert_dir:
+    cert_dir = Path(tls_cert_dir).expanduser()
+    print('export MCP_LETSENCRYPT_DIR=' + shlex.quote(str(cert_dir.parents[1])))
+    print('export MCP_TLS_CERT_DIR=' + shlex.quote(f'/etc/letsencrypt/live/{cert_dir.name}'))
+letsencrypt_dir = (cfg.get('letsencrypt_dir') or '').strip()
+if letsencrypt_dir:
+    print('export MCP_LETSENCRYPT_DIR=' + shlex.quote(str(Path(letsencrypt_dir).expanduser())))
 fp = (cfg.get('firefox_profile_dir') or '').strip()
 if fp:
     print('export FIREFOX_PROFILE_DIR=' + shlex.quote(str(Path(fp).expanduser())))

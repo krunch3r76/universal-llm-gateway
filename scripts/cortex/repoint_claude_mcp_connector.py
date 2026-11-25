@@ -33,54 +33,69 @@ from playwright.async_api import Page, TimeoutError as PlaywrightTimeout  # noqa
 from restore_claude_mcp_connector import (  # noqa: E402
     DEFAULT_CONNECTOR_NAME,
     _CONNECTION_ISSUE,
-    _OAUTH_AUTHORIZE,
+    _oauth_tab,
     _open_connector_detail,
     _open_connectors_panel,
+    oauth_authorize_pattern,
 )
 
 DEFAULT_FROM = "https://mcp.k-1.me/mcp"
 DEFAULT_TO = "https://mcp.k-1.me/mcp/life"
 
 
-async def _fill_url(page: Page, to_url: str) -> None:
-    # Prefer labeled URL / MCP server fields; fall back to inputs containing mcp.k-1.me.
+async def _fill_url(page: Page, to_url: str, from_url: str) -> None:
+    # Plugins → Yours detail shows the URL as text; select-and-type if no input.
     candidates = [
-        page.get_by_label(re.compile(r"(mcp|server|url|remote)", re.I)),
         page.locator('input[type="url"]'),
-        page.locator('input[type="text"]'),
+        page.get_by_label(re.compile(r"connector url", re.I)),
+        page.get_by_role("textbox"),
     ]
     target = None
     for loc in candidates:
-        count = await loc.count()
-        for i in range(count):
+        for i in range(await loc.count()):
             el = loc.nth(i)
             if not await el.is_visible():
                 continue
-            val = await el.input_value()
-            if "mcp.k-1.me" in val or "mcp" in (await el.get_attribute("name") or "").lower():
-                target = el
-                break
-            placeholder = (await el.get_attribute("placeholder") or "").lower()
-            if "mcp" in placeholder or "url" in placeholder:
+            try:
+                val = await el.input_value()
+            except Exception:
+                continue
+            if from_url in val or "mcp." in val or "/mcp/" in val:
                 target = el
                 break
         if target is not None:
             break
-    if target is None:
-        raise RuntimeError("Could not find MCP URL input on connector detail")
-    await target.fill(to_url)
-    await page.wait_for_timeout(500)
+    if target is not None:
+        await target.fill(to_url)
+        await page.wait_for_timeout(500)
+        return
+
+    for needle in (from_url, from_url.replace("https://", ""), "/mcp/code", "/mcp/life"):
+        visible = page.get_by_text(needle, exact=False)
+        if await visible.count() and await visible.first.is_visible():
+            await visible.first.click(click_count=3)
+            await page.keyboard.press("Control+A")
+            await page.keyboard.type(to_url)
+            await page.wait_for_timeout(800)
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(500)
+            return
+    raise RuntimeError("Could not find MCP URL field on connector detail")
 
 
 async def _save_if_present(page: Page) -> None:
-    save = page.get_by_role("button", name=re.compile(r"^(save|update|done)$", re.I))
+    save = page.get_by_role(
+        "button", name=re.compile(r"^(save|update|done|continue)$", re.I)
+    )
     if await save.count() and await save.first.is_visible():
         await save.first.click()
         await page.wait_for_timeout(2000)
 
 
 async def _reconnect(page: Page, context, mcp_url: str, timeout_ms: int) -> str:
-    if not await page.get_by_text(mcp_url, exact=False).count():
+    host = mcp_url.replace("https://", "").replace("http://", "").split("/")[0]
+    body = await page.locator("body").inner_text()
+    if mcp_url not in body and host not in body:
         raise RuntimeError(f"After edit, connector detail does not show {mcp_url}")
 
     connect_btn = page.get_by_role(
@@ -92,20 +107,20 @@ async def _reconnect(page: Page, context, mcp_url: str, timeout_ms: int) -> str:
             return "url_updated_already_connected"
         raise RuntimeError("Connect/Reconnect button not found after URL edit")
 
+    oauth_pat = oauth_authorize_pattern(mcp_url)
     oauth_page = page
     try:
-        async with page.expect_navigation(url=_OAUTH_AUTHORIZE, timeout=timeout_ms):
+        async with page.expect_navigation(url=oauth_pat, timeout=timeout_ms):
             await connect_btn.first.click()
         oauth_page = page
     except PlaywrightTimeout:
         await connect_btn.first.click()
         await page.wait_for_timeout(2000)
-        for tab in context.pages:
-            if "mcp.k-1.me/oauth/authorize" in tab.url:
-                oauth_page = tab
-                break
+        found = _oauth_tab(context, mcp_url)
+        if found is not None:
+            oauth_page = found
         else:
-            await page.wait_for_url(_OAUTH_AUTHORIZE, timeout=timeout_ms)
+            await page.wait_for_url(oauth_pat, timeout=timeout_ms)
             oauth_page = page
 
     await oauth_page.bring_to_front()
@@ -155,7 +170,7 @@ async def repoint(
             await edit.first.click()
             await page.wait_for_timeout(1000)
 
-        await _fill_url(page, to_url)
+        await _fill_url(page, to_url, from_url)
         await _save_if_present(page)
         return await _reconnect(page, context, to_url, timeout_ms)
     finally:

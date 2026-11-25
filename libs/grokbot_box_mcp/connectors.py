@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 from grokbot_box_mcp.headers import (
     HTTPS_PROXY_BOX,
     MCP_REMOTE_PINNED_VERSION,
@@ -9,8 +13,21 @@ from grokbot_box_mcp.headers import (
     box_launcher_path,
 )
 
-CODE_MCP_URL = "https://mcp.k-1.me/mcp/code/"
-LIFE_MCP_URL = "https://mcp.k-1.me/mcp/life/"
+
+def _gateway_mcp_urls() -> tuple[str, str]:
+    """Read code + life URLs from ``~/.gateway/mcp.yaml`` (same source as Claude refresh)."""
+    cfg_path = Path.home() / ".gateway" / "mcp.yaml"
+    if not cfg_path.is_file():
+        issuer = "https://mcp.k-1.me"
+        return f"{issuer}/mcp/code/", f"{issuer}/mcp/life/"
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    issuer = str((cfg.get("oauth") or {}).get("issuer", "https://mcp.k-1.me")).rstrip("/")
+    code = str(cfg.get("mcp_server_url") or f"{issuer}/mcp/code").strip().rstrip("/")
+    life = f"{issuer}/mcp/life"
+    return f"{code}/", f"{life}/"
+
+
+CODE_MCP_URL, LIFE_MCP_URL = _gateway_mcp_urls()
 
 
 def connector_launcher_invocation(mcp_url: str, *, launcher: str | None = None) -> str:

@@ -60,7 +60,7 @@ def load_window_profile(
     home = home or Path.home()
     data = json.loads(_GROK_WINDOWS.read_text(encoding="utf-8"))
     windows: dict[str, object] = data.get("windows", {})
-    if key in {"gc1", "gc2"}:
+    if key in {"gc1", "gc2", "gw3"}:
         for display, entry in windows.items():
             if not isinstance(entry, dict):
                 continue

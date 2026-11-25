@@ -95,7 +95,9 @@ def main() -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     mcp = sub.add_parser("mcp", help="Install box launcher + header seed for a window")
-    mcp.add_argument("--slot", required=True, choices=["gc1", "gc2", "9", "10"])
+    mcp.add_argument(
+        "--slot", required=True, choices=["gc1", "gc2", "gw3", "9", "10", "14"]
+    )
     mcp.add_argument(
         "--skip-header", action="store_true", help="Launcher only (token missing)"
     )
@@ -108,7 +110,9 @@ def main() -> int:
     units = sub.add_parser(
         "units", help="Emit or write aligned systemd units (gc2 default)"
     )
-    units.add_argument("--slot", required=True, choices=["gc1", "gc2", "9", "10"])
+    units.add_argument(
+        "--slot", required=True, choices=["gc1", "gc2", "gw3", "9", "10", "14"]
+    )
     units.add_argument(
         "--write", action="store_true", help="Write units to ~/.config/systemd/user"
     )

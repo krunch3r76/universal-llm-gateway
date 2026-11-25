@@ -42,7 +42,10 @@ if str(_REPO / "libs") not in sys.path:
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp  # noqa: E402
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout  # noqa: E402
 
-from claude_settings_page import pick_claude_settings_page  # noqa: E402
+from claude_settings_page import (  # noqa: E402
+    pick_claude_settings_page,
+    wait_plugins_connectors_loaded,
+)
 from restore_claude_mcp_connector_mutate import (  # noqa: E402
     add_custom_connector,
     remove_named_connector,
@@ -50,8 +53,19 @@ from restore_claude_mcp_connector_mutate import (  # noqa: E402
 DEFAULT_MCP_URL = "https://mcp.k-1.me/mcp/life"
 DEFAULT_CONNECTOR_NAME = "toys"
 _LEGACY_NAMES = ("vortex",)
-_OAUTH_AUTHORIZE = re.compile(r"https://mcp\.k-1\.me/oauth/authorize")
 _CONNECTION_ISSUE = re.compile(r"connection (issue|expired)", re.I)
+
+
+def oauth_authorize_pattern(mcp_url: str) -> re.Pattern[str]:
+    return re.compile(rf"https://{re.escape(_host(mcp_url))}/oauth/authorize")
+
+
+def _oauth_tab(context, mcp_url: str):
+    needle = f"{_host(mcp_url)}/oauth/authorize"
+    for tab in context.pages:
+        if needle in tab.url:
+            return tab
+    return None
 
 
 async def _connection_issue_in_settings(page: Page) -> bool:
@@ -97,9 +111,28 @@ async def _ensure_settings_open(page: Page) -> None:
         await page.wait_for_timeout(2000)
 
 
+async def _ensure_yours_connectors(page: Page) -> None:
+    """Select Customize → Connectors → Yours (custom MCP rows)."""
+    body = await page.locator("body").inner_text()
+    if any(x in body for x in ("toys", "ulg-code", "mcp.askapharmd", "mcp.k-1")):
+        return
+    yours = page.get_by_text("Yours", exact=True)
+    if await yours.count() and await yours.first.is_visible():
+        await yours.first.click(force=True)
+        await page.wait_for_timeout(1500)
+
+
 async def _connectors_panel_ready(page: Page) -> bool:
+    body = await page.locator("body").inner_text()
+    if "settings/plugins/yours" in page.url and any(
+        x in body
+        for x in ("toys", "ulg-code", "Custom connector", "Remote MCP server")
+    ):
+        return True
     if await page.locator("tr").filter(
-        has_text=re.compile(r"vortex|toys|mcp\.k-1", re.I)
+        has_text=re.compile(
+            r"vortex|toys|ulg-code|custom connector|mcp\.(k-1|askapharmd)", re.I
+        )
     ).count():
         return True
     add = page.get_by_role("button", name=re.compile(r"^add\b", re.I))
@@ -119,41 +152,44 @@ async def _open_connectors_panel(page: Page) -> Page:
 
     await _ensure_settings_open(page)
 
-    if (
-        "customize/connectors" not in page.url
-        and "customize-connectors" not in page.url
-    ):
-        await page.evaluate(
-            "() => { window.location.hash = 'settings/customize-connectors'; "
-            "window.dispatchEvent(new HashChangeEvent('hashchange')); }"
+    plugins_yours = "settings/plugins/yours"
+    if plugins_yours not in page.url:
+        await page.goto(
+            "https://claude.ai/new#settings/plugins/yours",
+            wait_until="domcontentloaded",
         )
-        await page.wait_for_timeout(2000)
+        await wait_plugins_connectors_loaded(page)
+
+    if await _connectors_panel_ready(page):
+        await _ensure_yours_connectors(page)
+        return page
 
     connectors_btn = page.locator('button:has-text("Connectors")')
     if await connectors_btn.count() and await connectors_btn.first.is_visible():
         await connectors_btn.first.click(force=True)
-        await page.wait_for_timeout(2000)
+        await wait_plugins_connectors_loaded(page)
 
     if await _connectors_panel_ready(page):
+        await _ensure_yours_connectors(page)
         return page
 
     # Retry: settings may have failed silently (hash alone ≠ Settings modal).
-    await _ensure_settings_open(page)
-    await page.evaluate(
-        "() => { window.location.hash = 'settings/customize-connectors'; "
-        "window.dispatchEvent(new HashChangeEvent('hashchange')); }"
+    await page.goto(
+        "https://claude.ai/new#settings/plugins/yours",
+        wait_until="domcontentloaded",
     )
-    await page.wait_for_timeout(2000)
+    await wait_plugins_connectors_loaded(page)
     connectors_btn = page.locator('button:has-text("Connectors")')
     if await connectors_btn.count() and await connectors_btn.first.is_visible():
         await connectors_btn.first.click(force=True)
-        await page.wait_for_timeout(2000)
+        await wait_plugins_connectors_loaded(page)
 
     if not await _connectors_panel_ready(page):
         raise RuntimeError(
             "Connectors panel not open — in Jupiter Chrome: open Settings → "
             "Customize → Connectors, then re-run."
         )
+    await _ensure_yours_connectors(page)
     return page
 
 
@@ -227,14 +263,26 @@ async def _open_connector_detail(page: Page, connector_name: str, mcp_url: str) 
 async def _approve_oauth(page: Page, context, timeout_ms: int) -> Page:
     await page.bring_to_front()
     approve = page.locator('button[type="submit"]').filter(
-        has_text=re.compile(r"approve", re.I)
+        has_text=re.compile(r"approve|allow|authorize|accept", re.I)
     )
     if not await approve.count():
-        approve = page.get_by_role("button", name=re.compile(r"approve", re.I))
+        approve = page.get_by_role(
+            "button",
+            name=re.compile(r"approve|allow|authorize|accept", re.I),
+        )
     if not await approve.count():
         raise RuntimeError("OAuth Approve button not found")
     await approve.first.click()
-    await page.wait_for_url(re.compile(r"https://claude\.ai/"), timeout=timeout_ms)
+    try:
+        await page.wait_for_url(re.compile(r"https://claude\.ai/"), timeout=timeout_ms)
+    except PlaywrightTimeout:
+        for tab in context.pages:
+            if tab.url.startswith("https://claude.ai/"):
+                page = tab
+                await tab.bring_to_front()
+                break
+        else:
+            raise
     await page.wait_for_timeout(4000)
     if await _connection_issue_in_settings(page):
         raise RuntimeError("claude.ai still shows connection issue after OAuth")
@@ -262,8 +310,11 @@ async def _click_connect_and_oauth(
     context,
     timeout_ms: int,
     *,
+    mcp_url: str,
     force_reconnect: bool = False,
 ) -> str:
+    oauth_pat = oauth_authorize_pattern(mcp_url)
+    host = _host(mcp_url)
     if force_reconnect:
         await _disconnect_if_connected(page)
         await page.wait_for_timeout(1000)
@@ -273,7 +324,7 @@ async def _click_connect_and_oauth(
     )
     if not await connect_btn.count():
         body = await page.locator("body").inner_text()
-        mcp_visible = "mcp.k-1.me" in body
+        mcp_visible = host in body
         issue = await _connection_issue_in_settings(page)
         if not force_reconnect and not issue and mcp_visible:
             return "already_connected"
@@ -281,18 +332,17 @@ async def _click_connect_and_oauth(
 
     oauth_page = page
     try:
-        async with page.expect_navigation(url=_OAUTH_AUTHORIZE, timeout=timeout_ms):
+        async with page.expect_navigation(url=oauth_pat, timeout=timeout_ms):
             await connect_btn.first.click(force=True)
         oauth_page = page
     except PlaywrightTimeout:
         await connect_btn.first.click(force=True)
         await page.wait_for_timeout(2000)
-        for tab in context.pages:
-            if "mcp.k-1.me/oauth/authorize" in tab.url:
-                oauth_page = tab
-                break
+        found = _oauth_tab(context, mcp_url)
+        if found is not None:
+            oauth_page = found
         else:
-            await page.wait_for_url(_OAUTH_AUTHORIZE, timeout=timeout_ms)
+            await page.wait_for_url(oauth_pat, timeout=timeout_ms)
             oauth_page = page
 
     await _approve_oauth(oauth_page, context, timeout_ms)
@@ -312,10 +362,10 @@ async def restore_connector(
     timeout_ms = int(timeout_s * 1000)
 
     async def _connect(
-        p: Page, ctx=context, t_ms: int = timeout_ms
+        p: Page, ctx=context, t_ms: int = timeout_ms, **_kwargs: object
     ) -> str:
         return await _click_connect_and_oauth(
-            p, ctx, t_ms, force_reconnect=force_reconnect
+            p, ctx, t_ms, mcp_url=mcp_url, force_reconnect=force_reconnect
         )
 
     try:
@@ -343,8 +393,9 @@ async def restore_connector(
                 raise RuntimeError(
                     f"{connector_name} missing after add-only ({result})"
                 )
-            if await _row_matching(page, "toys", "https://mcp.k-1.me/mcp/life") is None:
-                raise RuntimeError("toys connector missing after code add")
+            life_url = mcp_url.replace("/mcp/code", "/mcp/life")
+            if await _row_matching(page, "toys", life_url) is None:
+                raise RuntimeError(f"toys connector missing after code add ({life_url})")
             return result
 
         desired = await _row_matching(page, connector_name)

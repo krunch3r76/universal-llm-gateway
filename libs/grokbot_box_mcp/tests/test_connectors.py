@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from grokbot_box_mcp.connectors import (
+    CODE_MCP_URL,
     connector_launcher_invocation,
     default_connector_command,
 )
@@ -14,7 +15,7 @@ from grokbot_box_mcp.headers import box_launcher_path
 def test_default_connector_uses_sand_data_launcher() -> None:
     cmd = default_connector_command("code")
     assert cmd.startswith(box_launcher_path())
-    assert "mcp.k-1.me/mcp/code/" in cmd
+    assert CODE_MCP_URL in cmd
 
 
 @pytest.mark.offline

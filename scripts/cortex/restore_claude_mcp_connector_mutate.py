@@ -10,7 +10,22 @@ import re
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
-_OAUTH_AUTHORIZE = re.compile(r"https://mcp\.k-1\.me/oauth/authorize")
+from claude_settings_page import wait_plugins_connectors_loaded
+
+def _oauth_host(mcp_url: str) -> str:
+    return mcp_url.replace("https://", "").replace("http://", "").split("/")[0]
+
+
+def _oauth_authorize_pattern(mcp_url: str) -> re.Pattern[str]:
+    return re.compile(rf"https://{re.escape(_oauth_host(mcp_url))}/oauth/authorize")
+
+
+def _oauth_tab(context, mcp_url: str):
+    needle = f"{_oauth_host(mcp_url)}/oauth/authorize"
+    for tab in context.pages:
+        if needle in tab.url:
+            return tab
+    return None
 
 
 async def remove_named_connector(
@@ -79,19 +94,36 @@ async def add_custom_connector(
         and await url_input.first.is_visible()
     )
     if not form_open:
-        add = page.get_by_role("button", name=re.compile(r"^add\b", re.I))
-        if not await add.count():
-            raise RuntimeError("Add button not found on Connectors list")
-        await add.first.click(force=True)
-        await page.wait_for_timeout(800)
-        custom = page.get_by_role(
-            "menuitem", name=re.compile(r"add custom connector", re.I)
+        await page.goto(
+            "https://claude.ai/new#settings/plugins/yours",
+            wait_until="domcontentloaded",
         )
-        if not await custom.count():
-            custom = page.get_by_text(re.compile(r"add custom connector", re.I))
-        if not await custom.count():
-            raise RuntimeError("Add custom connector not found")
-        await custom.first.click(force=True)
+        await wait_plugins_connectors_loaded(page)
+        name_input, url_input = await _form_inputs()
+        form_open = (
+            await name_input.count()
+            and await url_input.count()
+            and await url_input.first.is_visible()
+        )
+
+    if not form_open:
+        add = page.get_by_role("button", name=re.compile(r"^add\b", re.I))
+        if await add.count():
+            await add.first.click(force=True)
+            await page.wait_for_timeout(800)
+            custom = page.get_by_role(
+                "menuitem", name=re.compile(r"add custom connector", re.I)
+            )
+            if not await custom.count():
+                custom = page.get_by_text(re.compile(r"add custom connector", re.I))
+            if not await custom.count():
+                raise RuntimeError("Add custom connector not found")
+            await custom.first.click(force=True)
+        else:
+            custom = page.get_by_text(re.compile(r"^custom connector$", re.I))
+            if not await custom.count():
+                raise RuntimeError("Add button not found on Connectors list")
+            await custom.first.click(force=True)
         await page.wait_for_timeout(1200)
         name_input, url_input = await _form_inputs()
     if not await name_input.count() or not await url_input.count():
@@ -106,24 +138,26 @@ async def add_custom_connector(
         raise RuntimeError("Add/Continue submit button not found")
     submit = submit.last
 
+    oauth_pat = _oauth_authorize_pattern(mcp_url)
     try:
-        async with page.expect_navigation(url=_OAUTH_AUTHORIZE, timeout=timeout_ms):
+        async with page.expect_navigation(url=oauth_pat, timeout=timeout_ms):
             await submit.click(force=True)
         oauth_page = page
     except PlaywrightTimeout:
         await submit.click(force=True)
         await page.wait_for_timeout(2000)
         oauth_page = page
-        for tab in context.pages:
-            if "mcp.k-1.me/oauth/authorize" in tab.url:
-                oauth_page = tab
-                break
+        found = _oauth_tab(context, mcp_url)
+        if found is not None:
+            oauth_page = found
         else:
             if await page.get_by_role(
                 "button", name=re.compile(r"^(connect|reconnect)$", re.I)
             ).count():
-                return await click_connect_and_oauth(page, context, timeout_ms)
-            await page.wait_for_url(_OAUTH_AUTHORIZE, timeout=timeout_ms)
+                return await click_connect_and_oauth(
+                    page, context, timeout_ms, mcp_url=mcp_url
+                )
+            await page.wait_for_url(oauth_pat, timeout=timeout_ms)
             oauth_page = page
 
     await approve_oauth(oauth_page, context, timeout_ms)
