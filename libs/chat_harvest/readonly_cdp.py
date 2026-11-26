@@ -182,9 +182,10 @@ class ReadonlyCDP:
         if payload.get("exceptionDetails"):
             raise CollectorScriptError("Runtime.evaluate exceptionDetails")
         inner = payload.get("result", {})
-        if script is COLLECT_SCRIPT and not isinstance(inner.get("value"), dict):
-            raise CollectorScriptError("collect script did not return an object")
-        return inner.get("value")
+        value = inner.get("value")
+        if not isinstance(value, dict):
+            raise CollectorScriptError("script did not return an object")
+        return value
 
     def open_tab(self, url: str) -> tuple[Any, str]:
         conn, _ = self._browser_connection()
@@ -228,6 +229,8 @@ class ReadonlyCDP:
             message = _recv_for_id(conn, msg_id, timeout_s=self.timeout_s)
             if "error" in message:
                 raise OSError(str(message["error"]))
+            if message.get("result", {}).get("success") is False:
+                raise OSError("Target.closeTarget success=false")
         finally:
             conn.close()
             self._opened_target_id = None

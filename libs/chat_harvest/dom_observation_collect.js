@@ -32,6 +32,7 @@ function (cfg) {
     const cut = chars > textCap;
     return { page_text: clip(s, textCap), chars: chars, cut: cut };
   }
+  function controlTextInfo(raw) { const s = String(raw || ''); return { page_text: clip(s, ctrlTextCap), chars: s.length, cut: s.length > ctrlTextCap }; }
   function closestMatch(el, selectors) {
     for (const sel of selectors) {
       try {
@@ -71,13 +72,15 @@ function (cfg) {
     return last;
   }
   function classify(el) {
-    if (closestMatch(el, messageSel)) return { region: 'inside_message', excluded_by: null };
-    if (closestMatch(el, composerSel)) return { region: 'inside_composer', excluded_by: null };
+    let excludedBy = null;
     for (const part of excludedParts) {
       try {
-        if (el.closest(part)) return { region: 'excluded_other', excluded_by: part };
+        if (el.closest(part)) { excludedBy = part; break; }
       } catch (e) {}
     }
+    if (closestMatch(el, messageSel)) return { region: 'inside_message', excluded_by: excludedBy };
+    if (closestMatch(el, composerSel)) return { region: 'inside_composer', excluded_by: excludedBy };
+    if (excludedBy) return { region: 'excluded_other', excluded_by: excludedBy };
     return { region: 'outside', excluded_by: null };
   }
   function describeControls(container) {
@@ -90,7 +93,7 @@ function (cfg) {
       out.push({
         tag: (el.tagName || '').toLowerCase(),
         role: el.getAttribute('role'),
-        text: textInfo(clip((el.innerText || ''), ctrlTextCap)),
+        text: controlTextInfo(el.innerText),
         aria_label: label ? clip(label, ariaValCap) : null,
         disabled: disabled,
       });
@@ -172,35 +175,40 @@ function (cfg) {
   const lastUser = lastInDocumentOrder(userEls);
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
   const seenMatch = new Set();
+  const matchedBy = new Map();
   const allMatches = [];
   let scanned = 0;
   let node;
   while ((node = walker.nextNode()) && scanned < scanCap) {
     scanned += 1;
-    const raw = node.nodeValue || '';
-    const lower = raw.toLowerCase();
+    const lower = (node.nodeValue || '').toLowerCase();
     let hit = false;
     for (const t of terms) {
-      if (t && lower.indexOf(t) >= 0) {
-        hit = true;
-        break;
-      }
+      if (lower.indexOf(t) >= 0) { hit = true; break; }
     }
     const parent = node.parentElement;
-    if (!parent) continue;
-    if (!hit) {
-      const al = (parent.getAttribute('aria-label') || '').toLowerCase();
-      const ti = (parent.getAttribute('title') || '').toLowerCase();
-      for (const t of terms) {
-        if (t && (al.indexOf(t) >= 0 || ti.indexOf(t) >= 0)) {
-          hit = true;
-          break;
-        }
-      }
-    }
-    if (!hit || seenMatch.has(parent)) continue;
+    if (!hit || !parent || seenMatch.has(parent)) continue;
     seenMatch.add(parent);
+    matchedBy.set(parent, 'text');
     allMatches.push(parent);
+  }
+  const attrCap = caps.attr_elements_scanned || 20000;
+  const attrEls = root.querySelectorAll('[aria-label], [title]');
+  const attrScanned = Math.min(attrEls.length, attrCap);
+  for (let i = 0; i < attrScanned; i += 1) {
+    const el = attrEls[i];
+    if (seenMatch.has(el)) continue;
+    const al = (el.getAttribute('aria-label') || '').toLowerCase();
+    const ti = (el.getAttribute('title') || '').toLowerCase();
+    let by = null;
+    for (const t of terms) {
+      if (al.indexOf(t) >= 0) { by = 'aria-label'; break; }
+      if (ti.indexOf(t) >= 0) { by = 'title'; break; }
+    }
+    if (!by) continue;
+    seenMatch.add(el);
+    matchedBy.set(el, by);
+    allMatches.push(el);
   }
   const counts = { outside: 0, inside_message: 0, inside_composer: 0, excluded_other: 0, total: 0, returned: 0 };
   for (let i = 0; i < allMatches.length; i += 1) {
@@ -234,7 +242,8 @@ function (cfg) {
     if (!containerForElement.has(highest)) {
       const idx = containers.length;
       containerForElement.set(highest, idx);
-      containers.push(describe(highest, idx, 'outside', null, null));
+      const hc = classify(highest);
+      containers.push(describe(highest, idx, hc.region, hc.excluded_by, null));
     }
     return containerForElement.get(highest);
   }
@@ -253,9 +262,9 @@ function (cfg) {
   const nodes = [];
   for (let i = 0; i < selected.length; i += 1) {
     const item = selected[i];
-    nodes.push(
-      describe(item.el, i, item.cls.region, item.cls.excluded_by, item.container_index)
-    );
+    const d = describe(item.el, i, item.cls.region, item.cls.excluded_by, item.container_index);
+    d.matched_by = matchedBy.get(item.el) || null;
+    nodes.push(d);
   }
   const controlsOutside = [];
   const ctrlEls = root.querySelectorAll("button, a[href], [role='button']");
@@ -266,12 +275,12 @@ function (cfg) {
     controlsOutside.push({
       tag: (el.tagName || '').toLowerCase(),
       role: el.getAttribute('role'),
-      text: textInfo(clip((el.innerText || ''), 80)),
+      text: controlTextInfo(el.innerText),
       aria_label: el.getAttribute('aria-label'),
       disabled: !!el.disabled,
     });
   }
-  const scanCapHit = scanned >= scanCap;
+  const scanCapHit = scanned >= scanCap || attrEls.length > attrCap;
   return {
     nodes: nodes, containers: containers, counts: counts, scan_capped: scanCapHit, text_nodes_scanned: scanned,
     page: {
@@ -280,7 +289,7 @@ function (cfg) {
       window_scroll_y: window.scrollY || 0, body_scroll_height: (document.body && document.body.scrollHeight) || 0,
       inner_height: window.innerHeight || 0, title: textInfo(document.title || ''), url: textInfo(location.href || ''),
       turn_nodes: messageEls.length, user_turn_nodes: userEls.length, text_nodes_scanned: scanned, scan_capped: scanCapHit,
-      time_origin_ms: Math.round(performance.timeOrigin),
+      attr_elements_scanned: attrScanned, time_origin_ms: Math.round(performance.timeOrigin),
     },
     controls_outside_messages: controlsOutside,
   };

@@ -7,6 +7,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from universal_logging import get_logger
+
 from chat_harvest.dom_observation_poll import poll_until_stable, poll_until_turns
 from chat_harvest.dom_observation_request import (
     MESSAGE_SELECTORS,
@@ -22,6 +24,38 @@ from chat_harvest.dom_observation_shape import (
     stamp_tab_close_and_methods,
 )
 from chat_harvest.readonly_cdp import CollectorScriptError, ReadonlyCDP
+
+
+def _failure_from_exception(
+    exc: Exception,
+    *,
+    chat_url: str,
+    conversation_id: str,
+    match_terms: list[str],
+    max_nodes: int,
+    scope: str,
+    tab_info: dict[str, Any],
+    readiness: dict[str, Any],
+) -> dict[str, Any]:
+    code = "collector_error" if isinstance(exc, CollectorScriptError) else "unreachable"
+    get_logger(__name__).warning(
+        "dom observation %s: %s: %.200s", code, type(exc).__name__, str(exc)
+    )
+    out = failure_observation_response(
+        outcome="unreachable",
+        code=code,
+        looked=False,
+        chat_url=chat_url,
+        conversation_id=conversation_id,
+        match_terms=match_terms,
+        max_nodes=max_nodes,
+        scope=scope,
+        tab=tab_info,
+        cdp_methods={},
+        readiness=readiness,
+    )
+    out["observation"]["failure_detail"] = type(exc).__name__
+    return out
 
 
 def _observe_after_ready(
@@ -68,6 +102,7 @@ def _observe_after_ready(
         cdp,
         conn,
         cfg,
+        chat_url=chat_url,
         readiness=readiness,
         tab_info=tab_info,
         match_terms=match_terms,
@@ -162,6 +197,20 @@ def _execute_dom_observation(
         cdp, chat_url, open_on_demand=open_on_demand, tab_info=tab_info
     )
     if early is not None:
+        if early.get("_attach_early") == "no_tab":
+            return conn, failure_observation_response(
+                outcome="no_tab",
+                code=None,
+                looked=False,
+                chat_url=chat_url,
+                conversation_id=conversation_id,
+                match_terms=match_terms,
+                max_nodes=max_nodes,
+                scope=scope,
+                tab=tab_info,
+                cdp_methods={},
+                readiness=readiness,
+            )
         early["conversation_id"] = conversation_id
         early["url"] = chat_url
         return conn, early
@@ -220,32 +269,26 @@ def run_dom_observation(
             clock=clock,
             budget_left=budget_left,
         )
-    except CollectorScriptError:
-        result = failure_observation_response(
-            outcome="unreachable",
-            code="collector_error",
-            looked=False,
+    except CollectorScriptError as exc:
+        result = _failure_from_exception(
+            exc,
             chat_url=chat_url,
             conversation_id=conversation_id,
             match_terms=match_terms,
             max_nodes=max_nodes,
             scope=scope,
-            tab=tab_info,
-            cdp_methods={},
+            tab_info=tab_info,
             readiness=readiness,
         )
-    except Exception:
-        result = failure_observation_response(
-            outcome="unreachable",
-            code="unreachable",
-            looked=False,
+    except Exception as exc:
+        result = _failure_from_exception(
+            exc,
             chat_url=chat_url,
             conversation_id=conversation_id,
             match_terms=match_terms,
             max_nodes=max_nodes,
             scope=scope,
-            tab=tab_info,
-            cdp_methods={},
+            tab_info=tab_info,
             readiness=readiness,
         )
     finally:

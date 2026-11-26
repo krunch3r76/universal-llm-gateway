@@ -6,6 +6,16 @@ from typing import Any
 
 from browser_governance.contract import sanitize_ui_banner_text
 
+_CLIP_120 = 120
+
+
+def _clip_str(value: Any, n: int) -> Any:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return value
+    return value[:n] if len(value) > n else value
+
 
 def shape_text_block(raw: dict[str, Any] | None) -> dict[str, Any]:
     text = raw or {}
@@ -31,6 +41,7 @@ def shape_control(raw: dict[str, Any]) -> dict[str, Any]:
     ctrl["text"] = shape_text_block(raw.get("text"))
     if raw.get("aria_label") is not None:
         ctrl["aria_label"] = shape_aria_value(raw.get("aria_label"))
+    ctrl["role"] = _clip_str(raw.get("role"), _CLIP_120)
     return ctrl
 
 
@@ -39,6 +50,8 @@ def shape_node(raw: dict[str, Any]) -> dict[str, Any]:
     node["text"] = shape_text_block(raw.get("text"))
     node["controls"] = [shape_control(c) for c in (raw.get("controls") or [])]
     node["aria"] = {k: shape_aria_value(v) for k, v in (raw.get("aria") or {}).items()}
+    node["role"] = _clip_str(raw.get("role"), _CLIP_120)
+    node["data_testid"] = _clip_str(raw.get("data_testid"), _CLIP_120)
     return node
 
 

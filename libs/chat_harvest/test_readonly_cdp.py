@@ -16,6 +16,7 @@ from chat_harvest.readonly_cdp import (
     READY_SCRIPT,
     ReadonlyCDP,
     ReadOnlyViolation,
+    RegisteredScript,
     set_open_connection,
 )
 
@@ -130,13 +131,30 @@ def test_socket_send_only_in_guarded_function() -> None:
                     send_sites.append(f"{path.name}:{node.lineno}")
     assert len(send_sites) == 1
     assert send_sites[0].startswith("readonly_cdp.py")
+    ro_path = repo / "libs/chat_harvest/readonly_cdp.py"
+    tree = ast.parse(ro_path.read_text(encoding="utf-8"))
+    lineno = int(send_sites[0].split(":")[1])
+
+    def _func_at_line(node: ast.AST, line: int) -> str | None:
+        if isinstance(node, ast.FunctionDef):
+            end = node.end_lineno or node.lineno
+            if node.lineno <= line <= end:
+                return node.name
+        for child in ast.iter_child_nodes(node):
+            found = _func_at_line(child, line)
+            if found:
+                return found
+        return None
+
+    assert _func_at_line(tree, lineno) == "_guarded_send"
 
 
 def test_evaluate_accepts_only_registered_scripts() -> None:
     sock = FakeSocket()
     cdp = ReadonlyCDP("http://127.0.0.1:9222")
     bogus = type("RegisteredScript", (), {"name": "x", "text": READY_SCRIPT.text})()
-    for script in ("plain", READY_SCRIPT.text, bogus):
+    dup = RegisteredScript(name=READY_SCRIPT.name, text=READY_SCRIPT.text)
+    for script in ("plain", READY_SCRIPT.text, bogus, dup):
         with pytest.raises(ReadOnlyViolation):
             if isinstance(script, str):
                 cdp.evaluate(sock, type("S", (), {"text": script, "name": "s"})(), {})
@@ -295,16 +313,25 @@ def test_open_on_demand_false_without_match_opens_no_socket() -> None:
     )
     assert out["outcome"] == "no_tab"
     assert cdp.frames == []
+    obs = out["observation"]
+    assert obs["looked"] is False
+    assert obs["tab"]["matching_tabs"] == 0
+    assert obs["tab"]["origin"] is None
+    assert obs["cdp_methods"] == {}
 
 
 def test_close_refuses_target_it_did_not_open() -> None:
     cdp = ReadonlyCDP("http://127.0.0.1:9222")
+    cdp._http_get = lambda url: (_ for _ in ()).throw(AssertionError("no http"))  # noqa: ARG005
+    set_open_connection(lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no socket")))
     with pytest.raises(ReadOnlyViolation):
         cdp.close_tab("foreign-target")
 
 
 def test_http_get_refuses_paths_outside_allowlist() -> None:
     cdp = ReadonlyCDP("http://127.0.0.1:9222")
+    cdp._http_get = lambda url: (_ for _ in ()).throw(AssertionError("no http"))  # noqa: ARG005
+    set_open_connection(lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no socket")))
     for path in ("/json/new", "/json/activate/x", "/json/close/x"):
         with pytest.raises(ReadOnlyViolation):
             cdp.http_get_json(path)

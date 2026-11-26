@@ -13,12 +13,13 @@ from chat_harvest.dom_observation_request import (
     DEFAULT_MAX_NODES,
     ChatObserveRequest,
     InvalidPattern,
+    script_config,
     validate_match_terms,
 )
+from chat_harvest.dom_observation_sanitize import shape_control, shape_node
 from chat_harvest.dom_observation_shape import (
     build_observation_block,
     cap_observation_size,
-    shape_node,
 )
 from chat_harvest.readonly_cdp import (
     COLLECT_SCRIPT,
@@ -229,13 +230,20 @@ def test_readiness_stops_at_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     from chat_harvest.test_readonly_cdp import FakeSocket
 
+    collect_prefix = "(" + COLLECT_SCRIPT.text
+
     class SeqSock(FakeSocket):
         def recv(self) -> str:
-            value = (
-                {"nodes": [], "counts": {"total": 0, "returned": 0}, "page": {}, "containers": []}
-                if len(self.frames) >= 6
-                else {"turn_nodes": 0, "element_count": 1, "login_wall": False}
-            )
+            expr = self.frames[-1]["params"]["expression"]
+            if expr.startswith(collect_prefix):
+                value = {
+                    "nodes": [],
+                    "counts": {"total": 7, "returned": 0},
+                    "page": {},
+                    "containers": [],
+                }
+            else:
+                value = {"turn_nodes": 0, "element_count": 1, "login_wall": False}
             msg_id = self.frames[-1]["id"]
             return json.dumps({"id": msg_id, "result": {"result": {"value": value}}})
 
@@ -254,8 +262,14 @@ def test_readiness_stops_at_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert out["outcome"] == "observed"
     assert out["observation"]["readiness"]["turns_seen"] is False
-    evaluate_frames = [f for f in cdp.frames if f["method"] == "Runtime.evaluate"]
-    assert len(evaluate_frames) >= 1
+    collect_frames = [
+        f
+        for f in cdp.frames
+        if f["method"] == "Runtime.evaluate"
+        and f["params"]["expression"].startswith(collect_prefix)
+    ]
+    assert len(collect_frames) == 1
+    assert out["observation"]["counts"]["total"] == 7
 
 
 def test_wall_clock_budget_sets_code_timeout_and_closes_minted_tab(
@@ -634,33 +648,37 @@ def test_shaping_retains_b_fields() -> None:
     assert obs["containers"][0]["text"]["page_text"] == "wrap"
     assert obs["page"]["scan_capped"] is True
     assert obs["page"]["url"]["page_text"].startswith("https://")
-    assert obs["tab"]["time_origin_ms"] == 12345
+    assert "time_origin_ms" not in obs["page"]
 
 
 def test_cap_drop_order_preserves_container_indexes() -> None:
+    pad = "x" * 3000
     nodes = [
         {
-            "text": {"page_text": "n" + ("x" * 400), "chars": 401, "cut": True},
+            "text": {"page_text": f"n{i}{pad}", "chars": len(f"n{i}{pad}"), "cut": True},
             "controls": [],
-            "container_index": 0,
-        },
+            "aria": {},
+            "container_index": i,
+        }
+        for i in range(30)
+    ]
+    containers = [
+        {"text": {"page_text": f"c{i}", "chars": 3, "cut": False}, "controls": [], "aria": {}}
+        for i in range(30)
+    ]
+    outside = [
         {
-            "text": {"page_text": "n2" + ("y" * 400), "chars": 402, "cut": True},
-            "controls": [],
-            "container_index": 1,
-        },
+            "text": {"page_text": f"o{i}{pad}", "chars": len(f"o{i}{pad}"), "cut": False},
+            "aria_label": None,
+        }
+        for i in range(10)
     ]
     obs = {
         "looked": True,
         "nodes": nodes,
-        "containers": [
-            {"text": {"page_text": "c0", "chars": 2, "cut": False}, "controls": []},
-            {"text": {"page_text": "c1", "chars": 2, "cut": False}, "controls": []},
-        ],
-        "controls_outside_messages": [
-            {"text": {"page_text": "z" * 200, "chars": 200, "cut": False}, "aria_label": None}
-        ],
-        "counts": {"total": 2, "returned": 2},
+        "containers": containers,
+        "controls_outside_messages": outside,
+        "counts": {"total": 30, "returned": 30},
         "query": {},
         "readiness": {},
         "tab": {},
@@ -668,9 +686,16 @@ def test_cap_drop_order_preserves_container_indexes() -> None:
         "page": {},
     }
     capped = cap_observation_size(obs)
-    refs = {n["container_index"] for n in capped["nodes"] if n.get("container_index") is not None}
+    kept = capped["nodes"]
+    dropped = 30 - len(kept)
+    assert kept == nodes[: len(kept)]
+    assert capped.get("dropped") == dropped
+    assert capped["truncated"] is True
+    refs = {n["container_index"] for n in kept if n.get("container_index") is not None}
     for idx in refs:
         assert idx < len(capped.get("containers") or [])
+    assert len(capped.get("controls_outside_messages") or []) == len(outside)
+    assert len(json.dumps(capped, ensure_ascii=True).encode()) <= 65536
 
 
 def test_existing_tab_mid_collect_recv_error_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -711,6 +736,429 @@ def test_existing_tab_mid_collect_recv_error_unreachable(monkeypatch: pytest.Mon
     assert out["outcome"] == "unreachable"
     assert out["observation"]["looked"] is False
     assert not any(f["method"].startswith("Target.") for f in cdp.frames)
+
+
+def test_mint_success_stamps_cdp_method_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    minted_id = "mint-ok"
+    chat_url = "https://claude.ai/chat/mint-ok"
+    state = {"minted": False}
+    cdp = ReadonlyCDP("http://127.0.0.1:9222")
+
+    def _http_get(url: str) -> Any:
+        if url.endswith("/json/version"):
+            return {"webSocketDebuggerUrl": "ws://browser"}
+        if url.endswith("/json/list"):
+            if state["minted"]:
+                return [
+                    {
+                        "type": "page",
+                        "id": minted_id,
+                        "targetId": minted_id,
+                        "url": chat_url,
+                        "webSocketDebuggerUrl": "ws://page",
+                    }
+                ]
+            return []
+        raise AssertionError(url)
+
+    cdp._http_get = _http_get  # noqa: SLF001
+    from chat_harvest.test_readonly_cdp import FakeSocket
+
+    collect_prefix = "(" + COLLECT_SCRIPT.text
+    collect_val = {
+        "nodes": [],
+        "counts": {"total": 0, "returned": 0},
+        "page": {"time_origin_ms": 1795680000000},
+        "containers": [],
+    }
+
+    def _open(ws: str, **_kwargs: Any) -> FakeSocket:
+        if "browser" in ws:
+            sock = FakeSocket()
+
+            def _recv() -> str:
+                mid = sock.frames[-1]["id"]
+                method = sock.frames[-1]["method"]
+                if method == "Target.createTarget":
+                    state["minted"] = True
+                    return json.dumps({"id": mid, "result": {"targetId": minted_id}})
+                if method == "Target.closeTarget":
+                    return json.dumps({"id": mid, "result": {"success": True}})
+                return json.dumps({"id": mid, "result": {}})
+
+            sock.recv = _recv  # type: ignore[method-assign]
+            return sock
+
+        class PageSock(FakeSocket):
+            def recv(self) -> str:
+                expr = self.frames[-1]["params"]["expression"]
+                mid = self.frames[-1]["id"]
+                if expr.startswith(collect_prefix):
+                    val = collect_val
+                else:
+                    val = {"turn_nodes": 1, "element_count": 5, "login_wall": False}
+                return json.dumps({"id": mid, "result": {"result": {"value": val}}})
+
+        return PageSock()
+
+    set_open_connection(_open)
+    monkeypatch.setattr("chat_harvest.dom_observation_poll.time.sleep", lambda _s: None)
+    out = run_dom_observation(
+        chat_url=chat_url,
+        conversation_id="mint-ok",
+        cdp_url="http://127.0.0.1:9222",
+        match_terms=["a"],
+        max_nodes=20,
+        open_on_demand=True,
+        scope="conversation:mint-ok",
+        transport=cdp,
+    )
+    assert out["outcome"] == "observed"
+    assert out["observation"]["tab"]["time_origin_ms"] == 1795680000000
+    assert "time_origin_ms" not in out["observation"]["page"]
+    n_eval = sum(1 for f in cdp.frames if f["method"] == "Runtime.evaluate")
+    assert out["observation"]["cdp_methods"] == {
+        "Runtime.evaluate": n_eval,
+        "Target.createTarget": 1,
+        "Target.closeTarget": 1,
+    }
+
+
+def test_time_origin_ms_on_tab_not_page_existing(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = {
+        "type": "page",
+        "id": "p1",
+        "url": "https://claude.ai/chat/x",
+        "webSocketDebuggerUrl": "ws://page",
+    }
+    cdp = ReadonlyCDP("http://127.0.0.1:9222")
+    cdp._http_get = lambda url: (  # noqa: SLF001
+        [target] if url.endswith("/json/list") else {"webSocketDebuggerUrl": "ws://b"}
+    )
+    from chat_harvest.test_readonly_cdp import FakeSocket
+
+    collect_prefix = "(" + COLLECT_SCRIPT.text
+
+    class PageSock(FakeSocket):
+        def recv(self) -> str:
+            expr = self.frames[-1]["params"]["expression"]
+            mid = self.frames[-1]["id"]
+            if expr.startswith(collect_prefix):
+                val = {
+                    "nodes": [],
+                    "counts": {"total": 0, "returned": 0},
+                    "page": {"time_origin_ms": 1795680000000},
+                    "containers": [],
+                }
+            else:
+                val = {"turn_nodes": 1, "element_count": 1, "login_wall": False}
+            return json.dumps({"id": mid, "result": {"result": {"value": val}}})
+
+    set_open_connection(lambda *_a, **_k: PageSock())
+    monkeypatch.setattr("chat_harvest.dom_observation_poll.time.sleep", lambda _s: None)
+    out = run_dom_observation(
+        chat_url="https://claude.ai/chat/x",
+        conversation_id="x",
+        cdp_url="http://127.0.0.1:9222",
+        match_terms=["a"],
+        max_nodes=20,
+        open_on_demand=False,
+        scope="conversation:x",
+        transport=cdp,
+    )
+    assert out["observation"]["tab"]["time_origin_ms"] == 1795680000000
+    assert "time_origin_ms" not in out["observation"]["page"]
+
+
+def test_role_and_data_testid_capped_at_120() -> None:
+    long = "r" * 500
+    node = shape_node(
+        {"text": {"page_text": "t", "chars": 1, "cut": False}, "controls": [], "role": long, "data_testid": long}
+    )
+    ctrl = shape_control(
+        {"text": {"page_text": "t", "chars": 1, "cut": False}, "role": long, "aria_label": None}
+    )
+    none_node = shape_node(
+        {"text": {"page_text": "t", "chars": 1, "cut": False}, "controls": [], "role": None, "data_testid": None}
+    )
+    assert len(node["role"]) == 120
+    assert len(node["data_testid"]) == 120
+    assert len(ctrl["role"]) == 120
+    assert none_node["role"] is None
+    assert none_node["data_testid"] is None
+
+
+def test_cap_outside_only_sets_truncated_and_dropped_outside() -> None:
+    pad = "z" * 4000
+    obs = {
+        "looked": True,
+        "nodes": [],
+        "containers": [],
+        "controls_outside_messages": [
+            {"text": {"page_text": f"{i}{pad}", "chars": len(f"{i}{pad}"), "cut": True}, "aria_label": None}
+            for i in range(20)
+        ],
+        "counts": {"total": 0, "returned": 0},
+        "query": {},
+        "readiness": {},
+        "tab": {},
+        "cdp_methods": {},
+        "page": {},
+    }
+    capped = cap_observation_size(obs)
+    assert capped["truncated"] is True
+    assert capped.get("dropped_outside", 0) > 0
+    assert len(json.dumps(capped, ensure_ascii=True).encode()) <= 65536
+
+
+def test_ready_non_object_is_collector_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = {
+        "type": "page",
+        "id": "p1",
+        "url": "https://claude.ai/chat/x",
+        "webSocketDebuggerUrl": "ws://page",
+    }
+    cdp = ReadonlyCDP("http://127.0.0.1:9222")
+    cdp._http_get = lambda url: (  # noqa: SLF001
+        [target] if url.endswith("/json/list") else {"webSocketDebuggerUrl": "ws://b"}
+    )
+    from chat_harvest.test_readonly_cdp import FakeSocket
+
+    set_open_connection(lambda *_a, **_k: FakeSocket(evaluate_value="x"))
+    monkeypatch.setattr("chat_harvest.dom_observation_poll.time.sleep", lambda _s: None)
+    out = run_dom_observation(
+        chat_url="https://claude.ai/chat/x",
+        conversation_id="x",
+        cdp_url="http://127.0.0.1:9222",
+        match_terms=["a"],
+        max_nodes=20,
+        open_on_demand=False,
+        scope="conversation:x",
+        transport=cdp,
+    )
+    assert out["outcome"] == "unreachable"
+    assert out["code"] == "collector_error"
+    assert out["observation"]["looked"] is False
+    assert sum(1 for f in cdp.frames if f["method"] == "Runtime.evaluate") == 1
+
+
+def test_page_url_matches_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = {
+        "type": "page",
+        "id": "p1",
+        "url": "https://claude.ai/chat/x",
+        "webSocketDebuggerUrl": "ws://page",
+    }
+    cdp = ReadonlyCDP("http://127.0.0.1:9222")
+    cdp._http_get = lambda url: (  # noqa: SLF001
+        [target] if url.endswith("/json/list") else {"webSocketDebuggerUrl": "ws://b"}
+    )
+    from chat_harvest.test_readonly_cdp import FakeSocket
+
+    collect_prefix = "(" + COLLECT_SCRIPT.text
+    req = "https://claude.ai/chat/x"
+    cases = [
+        (req, True),
+        ("https://claude.ai/chat/other", False),
+        ({}, None),
+    ]
+
+    for page_url, want in cases:
+        cdp.frames.clear()
+
+        class PageSock(FakeSocket):
+            def recv(self) -> str:
+                expr = self.frames[-1]["params"]["expression"]
+                mid = self.frames[-1]["id"]
+                if expr.startswith(collect_prefix):
+                    page = (
+                        {"url": {"page_text": page_url, "chars": len(page_url), "cut": False}}
+                        if isinstance(page_url, str)
+                        else {}
+                    )
+                    val = {"nodes": [], "counts": {"total": 0, "returned": 0}, "page": page, "containers": []}
+                else:
+                    val = {"turn_nodes": 1, "element_count": 1, "login_wall": False}
+                return json.dumps({"id": mid, "result": {"result": {"value": val}}})
+
+        set_open_connection(lambda *_a, **_k: PageSock())
+        monkeypatch.setattr("chat_harvest.dom_observation_poll.time.sleep", lambda _s: None)
+        out = run_dom_observation(
+            chat_url=req,
+            conversation_id="x",
+            cdp_url="http://127.0.0.1:9222",
+            match_terms=["a"],
+            max_nodes=20,
+            open_on_demand=False,
+            scope="conversation:x",
+            transport=cdp,
+        )
+        assert out["observation"]["page"]["url_matches_request"] is want
+
+
+def test_readiness_waited_ms_includes_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = {
+        "type": "page",
+        "id": "p1",
+        "url": "https://claude.ai/chat/x",
+        "webSocketDebuggerUrl": "ws://page",
+    }
+    cdp = ReadonlyCDP("http://127.0.0.1:9222")
+    cdp._http_get = lambda url: (  # noqa: SLF001
+        [target] if url.endswith("/json/list") else {"webSocketDebuggerUrl": "ws://b"}
+    )
+    from chat_harvest.test_readonly_cdp import FakeSocket
+
+    sleeps: list[float] = []
+
+    def _sleep(secs: float) -> None:
+        sleeps.append(secs)
+
+    collect_prefix = "(" + COLLECT_SCRIPT.text
+
+    class PageSock(FakeSocket):
+        def recv(self) -> str:
+            expr = self.frames[-1]["params"]["expression"]
+            mid = self.frames[-1]["id"]
+            if expr.startswith(collect_prefix):
+                val = {"nodes": [], "counts": {"total": 0, "returned": 0}, "page": {}, "containers": []}
+            else:
+                val = {"turn_nodes": 1, "element_count": 1, "login_wall": False}
+            return json.dumps({"id": mid, "result": {"result": {"value": val}}})
+
+    set_open_connection(lambda *_a, **_k: PageSock())
+    monkeypatch.setattr("chat_harvest.dom_observation_poll.time.sleep", _sleep)
+    out = run_dom_observation(
+        chat_url="https://claude.ai/chat/x",
+        conversation_id="x",
+        cdp_url="http://127.0.0.1:9222",
+        match_terms=["a"],
+        max_nodes=20,
+        open_on_demand=False,
+        scope="conversation:x",
+        transport=cdp,
+        monotonic=lambda: 0.0,
+    )
+    want = int(sum(sleeps) * 1000)
+    assert out["observation"]["readiness"]["waited_ms"] == want
+    assert want > 0
+
+
+def test_close_success_false_stamps_minted_tab_closed_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    minted_id = "mint-close-fail"
+    chat_url = "https://claude.ai/chat/close-fail"
+    state = {"minted": False}
+    cdp = ReadonlyCDP("http://127.0.0.1:9222")
+
+    def _http_get(url: str) -> Any:
+        if url.endswith("/json/version"):
+            return {"webSocketDebuggerUrl": "ws://browser"}
+        if url.endswith("/json/list"):
+            if state["minted"]:
+                return [
+                    {
+                        "type": "page",
+                        "id": minted_id,
+                        "url": chat_url,
+                        "webSocketDebuggerUrl": "ws://page",
+                    }
+                ]
+            return []
+        raise AssertionError(url)
+
+    cdp._http_get = _http_get  # noqa: SLF001
+    from chat_harvest.test_readonly_cdp import FakeSocket
+
+    collect_prefix = "(" + COLLECT_SCRIPT.text
+
+    def _open(ws: str, **_kwargs: Any) -> FakeSocket:
+        if "browser" in ws:
+            sock = FakeSocket()
+
+            def _recv() -> str:
+                mid = sock.frames[-1]["id"]
+                method = sock.frames[-1]["method"]
+                if method == "Target.createTarget":
+                    state["minted"] = True
+                    return json.dumps({"id": mid, "result": {"targetId": minted_id}})
+                if method == "Target.closeTarget":
+                    return json.dumps({"id": mid, "result": {"success": False}})
+                return json.dumps({"id": mid, "result": {}})
+
+            sock.recv = _recv  # type: ignore[method-assign]
+            return sock
+
+        class PageSock(FakeSocket):
+            def recv(self) -> str:
+                expr = self.frames[-1]["params"]["expression"]
+                mid = self.frames[-1]["id"]
+                if expr.startswith(collect_prefix):
+                    val = {"nodes": [], "counts": {}, "page": {}, "containers": []}
+                else:
+                    val = {"turn_nodes": 1, "element_count": 1, "login_wall": False}
+                return json.dumps({"id": mid, "result": {"result": {"value": val}}})
+
+        return PageSock()
+
+    set_open_connection(_open)
+    monkeypatch.setattr("chat_harvest.dom_observation_poll.time.sleep", lambda _s: None)
+    out = run_dom_observation(
+        chat_url=chat_url,
+        conversation_id="close-fail",
+        cdp_url="http://127.0.0.1:9222",
+        match_terms=["a"],
+        max_nodes=20,
+        open_on_demand=True,
+        scope="conversation:close-fail",
+        transport=cdp,
+    )
+    assert out["observation"]["tab"]["minted_tab_closed"] is False
+
+
+def test_failure_detail_on_transport_and_collect_errors() -> None:
+    cdp = ReadonlyCDP("http://127.0.0.1:9222")
+    cdp._http_get = lambda url: (_ for _ in ()).throw(OSError("list down"))  # noqa: ARG005
+    out = run_dom_observation(
+        chat_url="https://claude.ai/chat/x",
+        conversation_id="x",
+        cdp_url="http://127.0.0.1:9222",
+        match_terms=["a"],
+        max_nodes=20,
+        open_on_demand=True,
+        scope="conversation:x",
+        transport=cdp,
+    )
+    assert out["observation"]["failure_detail"] == "OSError"
+    assert out["code"] == "unreachable"
+
+    target = {
+        "type": "page",
+        "id": "p1",
+        "url": "https://claude.ai/chat/x",
+        "webSocketDebuggerUrl": "ws://page",
+    }
+    cdp2 = ReadonlyCDP("http://127.0.0.1:9222")
+    cdp2._http_get = lambda url: (  # noqa: SLF001
+        [target] if url.endswith("/json/list") else {"webSocketDebuggerUrl": "ws://b"}
+    )
+    from chat_harvest.test_readonly_cdp import FakeSocket
+
+    set_open_connection(lambda *_a, **_k: FakeSocket(exception_details=True))
+    out2 = run_dom_observation(
+        chat_url="https://claude.ai/chat/x",
+        conversation_id="x",
+        cdp_url="http://127.0.0.1:9222",
+        match_terms=["a"],
+        max_nodes=20,
+        open_on_demand=False,
+        scope="conversation:x",
+        transport=cdp2,
+    )
+    assert out2["observation"]["failure_detail"] == "CollectorScriptError"
+
+
+def test_script_config_attr_elements_cap() -> None:
+    assert script_config(["x"], 20)["caps"]["attr_elements_scanned"] == 20000
 
 
 def test_collector_scripts_parse_as_expressions() -> None:

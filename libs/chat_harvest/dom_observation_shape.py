@@ -33,6 +33,8 @@ def _referenced_container_indexes(nodes: list[dict[str, Any]]) -> set[int]:
 def cap_observation_size(observation: dict[str, Any]) -> dict[str, Any]:
     obs = json.loads(json.dumps(observation, ensure_ascii=True))
     dropped = 0
+    dropped_containers = 0
+    dropped_outside = 0
     nodes = list(obs.get("nodes") or [])
     while nodes and _observation_byte_size(obs) > OBSERVATION_MAX_BYTES:
         nodes.pop()
@@ -48,18 +50,27 @@ def cap_observation_size(observation: dict[str, Any]) -> dict[str, Any]:
         if tail in refs:
             break
         containers.pop()
+        dropped_containers += 1
         obs["containers"] = containers
     outside = list(obs.get("controls_outside_messages") or [])
     while outside and _observation_byte_size(obs) > OBSERVATION_MAX_BYTES:
         outside.pop()
+        dropped_outside += 1
         obs["controls_outside_messages"] = outside
     obs["nodes"] = nodes
+    obs["truncated"] = bool(
+        dropped
+        or dropped_containers
+        or dropped_outside
+        or _observation_byte_size(obs) > OBSERVATION_MAX_BYTES
+    )
     if dropped:
-        obs["truncated"] = True
         obs["dropped"] = dropped
         obs.setdefault("counts", {})["returned"] = len(nodes)
-    else:
-        obs.setdefault("truncated", False)
+    if dropped_containers:
+        obs["dropped_containers"] = dropped_containers
+    if dropped_outside:
+        obs["dropped_outside"] = dropped_outside
     return obs
 
 
@@ -78,9 +89,9 @@ def build_observation_block(
     counts = dict(collect.get("counts") or {})
     counts.setdefault("returned", len(raw_nodes))
     counts.setdefault("total", counts.get("total") or len(raw_nodes))
-    page = shape_page_block(collect.get("page") or {})
-    if page.get("time_origin_ms") is not None:
-        tab = {**tab, "time_origin_ms": page.pop("time_origin_ms")}
+    page = dict(collect.get("page") or {})
+    page.pop("time_origin_ms", None)
+    page = shape_page_block(page)
     containers = [shape_node(c) for c in (collect.get("containers") or [])]
     outside = [shape_control(c) for c in (collect.get("controls_outside_messages") or [])]
     obs = {
@@ -194,13 +205,7 @@ def attach_page(
     target = matching[0] if matching else cdp.find_matching_target(chat_url)
     if target is None:
         if not open_on_demand:
-            return None, None, observation_response(
-                outcome="no_tab",
-                looked=False,
-                chat_url=chat_url,
-                conversation_id="",
-                observation=None,
-            )
+            return None, None, {"_attach_early": "no_tab"}
         try:
             conn, minted = cdp.open_tab(chat_url)
         except Exception:
@@ -223,6 +228,7 @@ def collect_observation(
     conn: Any,
     cfg: dict[str, Any],
     *,
+    chat_url: str,
     readiness: dict[str, Any],
     tab_info: dict[str, Any],
     match_terms: list[str],
@@ -230,6 +236,17 @@ def collect_observation(
     scope: str,
 ) -> dict[str, Any]:
     collect_raw = cdp.evaluate(conn, COLLECT_SCRIPT, cfg)
+    page_raw = dict(collect_raw.get("page") or {})
+    if isinstance(page_raw.get("time_origin_ms"), (int, float)):
+        tab_info["time_origin_ms"] = int(page_raw["time_origin_ms"])
+    url_block = page_raw.get("url")
+    page_url = url_block.get("page_text") if isinstance(url_block, dict) else None
+    if page_url and str(page_url).strip():
+        page_raw["url_matches_request"] = url_matches(str(page_url), chat_url)
+    else:
+        page_raw["url_matches_request"] = None
+    page_raw.pop("time_origin_ms", None)
+    collect_raw = {**collect_raw, "page": page_raw}
     return build_observation_block(
         looked=True,
         raw_collect=collect_raw,

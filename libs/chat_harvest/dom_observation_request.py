@@ -50,6 +50,7 @@ def script_config(terms: list[str], max_nodes: int) -> dict[str, Any]:
             "path_entries": 8,
             "path_part": 80,
             "text_nodes_scanned": 50000,
+            "attr_elements_scanned": 20000,
         },
     }
 

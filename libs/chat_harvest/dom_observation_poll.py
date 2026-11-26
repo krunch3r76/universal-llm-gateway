@@ -40,6 +40,7 @@ def poll_until_turns(
                 readiness["turns_seen"] = True
                 return None
         time.sleep(READY_POLL_S)
+        readiness["waited_ms"] += int(READY_POLL_S * 1000)
     return None
 
 
@@ -72,3 +73,4 @@ def poll_until_stable(
                 stable_hits = 1
             last_count = count
         time.sleep(STABLE_POLL_S)
+        readiness["waited_ms"] += int(STABLE_POLL_S * 1000)
