@@ -32,6 +32,10 @@ _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
 _BUDGET_SCOPE = "liaison_seat"
 _BUDGET_RATIO_THRESHOLD = 0.80
 _IDE_BUDGET_RATIO_THRESHOLD = 0.55
+# Uncalibrated trial constants — 0.70 band has no evidence it precedes compaction.
+_PRESSURE_BAND_PREPARE = 0.40
+_PRESSURE_BAND_HOP = 0.55
+_PRESSURE_BAND_EMERGENCY = 0.70
 _IDE_TOOL_CALLS_THRESHOLD = 35
 _IDE_TOOL_CALLS_BACKSTOP = 105
 _DEFAULT_IDE_TOOL_RESULT_TOKENS_THRESHOLD = 52_500
@@ -156,9 +160,14 @@ __all__ = [
     "POLICY_DEFAULTS",
     "_bus",
     "agent_bus_bearer_headers",
+    "budget_block_for_endpoint_measure",
     "build_budget_block",
     "effective_policy",
     "health_probe",
+    "latch_used_percent_at_first_summarized",
+    "prepare_band_advisory",
+    "pressure_band_for_ratio",
+    "reset_used_percent_at_first_summarized_latch",
 ]
 
 
@@ -433,6 +442,77 @@ def seat_budget(
     )
 
 
+def pressure_band_for_ratio(ratio: float) -> str:
+    """Trial pressure labels for endpoint-subscription reads (uncalibrated)."""
+    if ratio >= _PRESSURE_BAND_EMERGENCY:
+        return "emergency"
+    if ratio >= _PRESSURE_BAND_HOP:
+        return "hop"
+    if ratio >= _PRESSURE_BAND_PREPARE:
+        return "prepare"
+    return "none"
+
+
+def prepare_band_advisory(
+    *, used_tokens: int, window_limit_tokens: int
+) -> dict[str, Any]:
+    """Prepare-band advisory only — does not claim prevention."""
+    headroom = max(0, int(window_limit_tokens) - int(used_tokens))
+    read_cap = max(0, headroom // 4)
+    return {
+        "headroom_tokens": headroom,
+        "read_cap_tokens": read_cap,
+        "note": (
+            f"Advisory: {headroom} headroom tokens; trial read cap {read_cap} tokens. "
+            "Does not prevent tool delivery or compaction."
+        ),
+    }
+
+
+def budget_block_for_endpoint_measure(
+    measure: dict[str, Any],
+    *,
+    policy: dict[str, Any],
+    as_of: str,
+) -> dict[str, Any]:
+    """Normalize an explicit-UUID IDE measure into a budget block."""
+    from bus_watch.ide_budget import IDE_BUDGET_SOURCE
+
+    used = int(measure.get("used_tokens") or 0)
+    window = measure.get("window_limit_tokens")
+    if window is None:
+        window = int(policy.get("ide_window_tokens") or 256_000)
+    else:
+        window = int(window)
+    return build_budget_block(
+        used_tokens=used,
+        window_limit_tokens=window,
+        model=str(measure.get("glass_model") or policy.get("ide_model") or "ide-tab"),
+        source=IDE_BUDGET_SOURCE,
+        scope=_BUDGET_SCOPE,
+        epoch=str(measure.get("transcript_id") or ""),
+        as_of=as_of,
+        transcript_id=measure.get("transcript_id"),
+        holder_basis="endpoint_subscription",
+        tool_calls=int(measure.get("tool_calls") or 0),
+        transcript_bytes=int(measure.get("bytes") or 0),
+        tokens_per_tool_call=int(
+            measure.get("tokens_per_tool_call")
+            or policy.get("ide_tokens_per_tool_call")
+            or 1500
+        ),
+        glass_context_percent=measure.get("glass_context_percent"),
+        glass_status=measure.get("glass_status"),
+        glass_model=measure.get("glass_model"),
+        glass_summarized_tokens=int(measure.get("glass_summarized_tokens") or 0),
+        glass_headers_count=int(measure.get("glass_headers_count") or 0),
+        glass_prompt_breakdown=measure.get("glass_prompt_breakdown") or {},
+        tool_result_tokens=measure.get("tool_result_tokens"),
+        matched_categories=list(measure.get("matched_categories") or []),
+        budget_probe=measure.get("budget_probe"),
+    )
+
+
 def build_budget_block(
     *,
     used_tokens: int,
@@ -488,6 +568,24 @@ def build_budget_block(
         and (over_ratio or over_tools or over_summarized)
         else None
     )
+    holder_basis = basis.get("holder_basis")
+    if (
+        holder_basis == "endpoint_subscription"
+        and window_limit_tokens
+        and int(window_limit_tokens) > 0
+    ):
+        band_ratio = used_tokens / int(window_limit_tokens)
+        basis = {
+            **basis,
+            "pressure_band": pressure_band_for_ratio(band_ratio),
+        }
+        if glass_summarized > 0:
+            basis["used_percent_at_first_summarized"] = round(100.0 * band_ratio, 2)
+        if basis.get("pressure_band") == "prepare":
+            basis["prepare_advisory"] = prepare_band_advisory(
+                used_tokens=used_tokens,
+                window_limit_tokens=int(window_limit_tokens),
+            )
     return {
         "used_tokens": used_tokens,
         "window_limit_tokens": window_limit_tokens,
@@ -500,6 +598,37 @@ def build_budget_block(
         **basis,
         "hop_weight_basis": hop_weight_basis,
     }
+
+
+_USED_PERCENT_AT_FIRST_SUMMARIZED_LATCH: dict[str, float] = {}
+
+
+def _first_summarized_latch_key(
+    *, subscription_id: object, transcript_id: object
+) -> str:
+    return f"{subscription_id!s}|{transcript_id!s}"
+
+
+def latch_used_percent_at_first_summarized(
+    *,
+    subscription_id: object,
+    transcript_id: object,
+    glass_summarized_tokens: int,
+    computed_percent: float | None,
+) -> float | None:
+    """Keep the first used% observed after summarization begins for one subscription."""
+    if glass_summarized_tokens <= 0 or computed_percent is None:
+        return computed_percent
+    key = _first_summarized_latch_key(
+        subscription_id=subscription_id, transcript_id=transcript_id
+    )
+    if key not in _USED_PERCENT_AT_FIRST_SUMMARIZED_LATCH:
+        _USED_PERCENT_AT_FIRST_SUMMARIZED_LATCH[key] = float(computed_percent)
+    return _USED_PERCENT_AT_FIRST_SUMMARIZED_LATCH[key]
+
+
+def reset_used_percent_at_first_summarized_latch() -> None:
+    _USED_PERCENT_AT_FIRST_SUMMARIZED_LATCH.clear()
 
 
 _SEAT_SCOPED_SOURCES = frozenset({"giw.sdk_stream", "ide.transcript"})

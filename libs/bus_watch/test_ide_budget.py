@@ -349,6 +349,23 @@ def test_measure_ide_tab_none_when_jsonl_absent_and_probe_fails(tmp_path: Path) 
         )
 
 
+def test_explicit_uuid_without_glass_labels_transcript_estimate(
+    tmp_path: Path,
+) -> None:
+    _write_transcript(tmp_path, _TID, first_user="resume 24600", tool_calls=10, mtime=1.0)
+    with patch("bus_watch.ide_budget.probe_glass_composer_budget", return_value=None):
+        ide = measure_ide_tab(
+            "24600",
+            {},
+            {"gui_host": ":8", "ide_window_tokens": 256_000},
+            transcript_id=_TID,
+            transcripts_dir=tmp_path,
+        )
+    assert ide is not None
+    assert ide["budget_probe"] == "transcript_estimate"
+    assert ide["holder_basis"] == "endpoint_subscription"
+
+
 def test_digest_estimate_never_raises_stop_class() -> None:
     budget = build_budget_block(
         used_tokens=3_500_000,
@@ -483,3 +500,22 @@ def test_tip_cp_needle_requires_resume_root_and_digit_boundary(tmp_path: Path) -
     assert _TIP_CP_RE.search("tip_cp=7x") is None or _TIP_CP_RE.search("tip_cp=7x").group(1) == "7"
     assert _TIP_CP_RE.search("Liaison IDE hop tip_cp=7. LOAD").group(1) == "7"
     assert int(_TIP_CP_RE.search("Liaison IDE hop tip_cp=75. LOAD").group(1)) == 75
+
+
+def test_measure_ide_tab_explicit_uuid_uses_endpoint_subscription_basis(
+    tmp_path: Path,
+) -> None:
+    _write_transcript(
+        tmp_path, _TID, first_user="resume 24600", tool_calls=3, mtime=5.0
+    )
+    ide = measure_ide_tab(
+        "24600",
+        {},
+        {"ide_window_tokens": 256_000, "ide_tokens_per_tool_call": 1500},
+        transcript_id=_TID,
+        transcripts_dir=tmp_path,
+        watch_dir=tmp_path / "watchers",
+    )
+    assert ide is not None
+    assert ide["holder_basis"] == "endpoint_subscription"
+    assert ide["transcript_id"] == _TID

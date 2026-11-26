@@ -341,6 +341,7 @@ def measure_ide_tab(
     lock: dict[str, Any],
     policy: dict[str, Any],
     *,
+    transcript_id: str | None = None,
     transcripts_dir: Path = AGENT_TRANSCRIPTS,
     watch_dir: Path = WATCH_DIR,
     now: float | None = None,
@@ -360,21 +361,33 @@ def measure_ide_tab(
     fallback and must not drive CONTEXT_BUDGET when multiple resume tabs exist
     (a:38328).
     """
-    locked = ide_holder_transcript(lock)
-    excluded = active_budget_excludes(
-        root_id,
-        transcripts_dir=transcripts_dir,
-        watch_dir=watch_dir,
-        now=now,
-    )
-    matches = resume_match_count(
-        root_id, transcripts_dir, exclude=excluded
-    )
-    transcript_id = locked or newest_resume_transcript(
-        root_id, transcripts_dir, exclude=excluded
-    )
-    if not transcript_id:
+    explicit_tid = str(transcript_id).strip() if transcript_id is not None else ""
+    if explicit_tid:
+        if not _UUID_RE.match(explicit_tid):
+            return None
+        locked: str | None = None
+        excluded: set[str] | frozenset[str] = frozenset()
+        matches = 0
+        resolved_tid = explicit_tid
+        holder_basis = "endpoint_subscription"
+    else:
+        locked = ide_holder_transcript(lock)
+        excluded = active_budget_excludes(
+            root_id,
+            transcripts_dir=transcripts_dir,
+            watch_dir=watch_dir,
+            now=now,
+        )
+        matches = resume_match_count(
+            root_id, transcripts_dir, exclude=excluded
+        )
+        resolved_tid = locked or newest_resume_transcript(
+            root_id, transcripts_dir, exclude=excluded
+        )
+        holder_basis = "seat_lock" if locked else "resume_mtime"
+    if not resolved_tid:
         return None
+    transcript_id = resolved_tid
     path = transcripts_dir / transcript_id / f"{transcript_id}.jsonl"
     gui_host = str(policy.get("gui_host") or ":8")
     per_call = int(policy.get("ide_tokens_per_tool_call") or 1500)
@@ -384,7 +397,7 @@ def measure_ide_tab(
         if glass:
             out: dict[str, Any] = {
                 "transcript_id": transcript_id,
-                "holder_basis": "seat_lock" if locked else "resume_mtime",
+                "holder_basis": holder_basis,
                 "resume_match_count": matches,
                 "excluded_resume_ids": sorted(excluded),
                 "tokens_per_tool_call": per_call,
@@ -405,7 +418,7 @@ def measure_ide_tab(
     used_tokens = estimate_tokens(measure, tokens_per_tool_call=per_call)
     out = {
         "transcript_id": transcript_id,
-        "holder_basis": "seat_lock" if locked else "resume_mtime",
+        "holder_basis": holder_basis,
         "resume_match_count": matches,
         "excluded_resume_ids": sorted(excluded),
         "used_tokens": used_tokens,
@@ -421,6 +434,8 @@ def measure_ide_tab(
             used_tokens_fallback=used_tokens,
             window_limit_fallback=window_limit,
         )
+    else:
+        out["budget_probe"] = "transcript_estimate"
     return out
 
 

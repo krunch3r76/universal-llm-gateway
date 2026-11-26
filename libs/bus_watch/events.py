@@ -658,6 +658,16 @@ def IdeTabBudgetSampled(  # noqa: N802
     stop_class: str | None,
     hop_weight_basis: str | None,
     matched_categories: list[str],
+    subscription_id: int | None = None,
+    holder_basis: str | None = None,
+    budget_probe: str | None = None,
+    glass_status: str | None = None,
+    as_of: str | None = None,
+    pressure_band: str | None = None,
+    actuation_refused: str | None = None,
+    actuation_eligible: bool | None = None,
+    used_percent_at_first_summarized: float | None = None,
+    prepare_advisory: dict[str, Any] | None = None,
 ) -> Event:
     """Observation: one per-tab CONTEXT_BUDGET probe during ide_context_hop_monitor."""
     return Event(
@@ -673,6 +683,16 @@ def IdeTabBudgetSampled(  # noqa: N802
             "stop_class": stop_class,
             "hop_weight_basis": hop_weight_basis,
             "matched_categories": matched_categories,
+            "subscription_id": subscription_id,
+            "holder_basis": holder_basis,
+            "budget_probe": budget_probe,
+            "glass_status": glass_status,
+            "as_of": as_of,
+            "pressure_band": pressure_band,
+            "actuation_refused": actuation_refused,
+            "actuation_eligible": actuation_eligible,
+            "used_percent_at_first_summarized": used_percent_at_first_summarized,
+            "prepare_advisory": prepare_advisory,
         },
         scope="global",
     )

@@ -9,7 +9,12 @@ from unittest.mock import patch
 import pytest
 
 from bus_watch import digest_budget as digest_budget_mod
-from bus_watch.digest_budget import build_budget_block, seat_budget
+from bus_watch.digest_budget import (
+    build_budget_block,
+    latch_used_percent_at_first_summarized,
+    reset_used_percent_at_first_summarized_latch,
+    seat_budget,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -173,3 +178,129 @@ def test_seat_budget_present_used_tokens_keeps_measured_count() -> None:
     assert budget["used_tokens"] == 1200
     assert budget["budget_probe"] is None
     assert pct == round(100.0 * 1200 / 256_000, 1)
+
+
+_TID_A = "f19ca60c-27d7-43b0-bf7e-4e7d29a9eb03"
+_TID_B = "06e4b108-1ca1-4593-a172-37b0a40f39e4"
+
+
+def test_used_percent_at_first_summarized_latches_on_repeated_sample() -> None:
+    reset_used_percent_at_first_summarized_latch()
+    sub_id = 99
+    high_used = build_budget_block(
+        used_tokens=145_000,
+        window_limit_tokens=256_000,
+        model="ide-tab",
+        source="ide.transcript",
+        scope="liaison_seat",
+        epoch=_TID_A,
+        as_of="2026-11-26T00:00:00Z",
+        holder_basis="endpoint_subscription",
+        transcript_id=_TID_A,
+        tool_calls=2,
+        glass_summarized_tokens=100,
+    )
+    first = latch_used_percent_at_first_summarized(
+        subscription_id=sub_id,
+        transcript_id=_TID_A,
+        glass_summarized_tokens=100,
+        computed_percent=high_used["used_percent_at_first_summarized"],
+    )
+    low_used = build_budget_block(
+        used_tokens=80_000,
+        window_limit_tokens=256_000,
+        model="ide-tab",
+        source="ide.transcript",
+        scope="liaison_seat",
+        epoch=_TID_A,
+        as_of="2026-11-26T00:01:00Z",
+        holder_basis="endpoint_subscription",
+        transcript_id=_TID_A,
+        tool_calls=2,
+        glass_summarized_tokens=500,
+    )
+    assert low_used["used_percent_at_first_summarized"] == pytest.approx(
+        100.0 * 80_000 / 256_000, rel=0.01
+    )
+    second = latch_used_percent_at_first_summarized(
+        subscription_id=sub_id,
+        transcript_id=_TID_A,
+        glass_summarized_tokens=500,
+        computed_percent=low_used["used_percent_at_first_summarized"],
+    )
+    assert first == pytest.approx(56.64, rel=0.01)
+    assert second == first
+
+
+def test_endpoint_subscription_holder_basis_emits_pressure_band() -> None:
+    budget = build_budget_block(
+        used_tokens=145_000,
+        window_limit_tokens=256_000,
+        model="ide-tab",
+        source="ide.transcript",
+        scope="liaison_seat",
+        epoch=_TID_A,
+        as_of="2026-11-26T00:00:00Z",
+        holder_basis="endpoint_subscription",
+        transcript_id=_TID_A,
+        tool_calls=2,
+        glass_summarized_tokens=1,
+    )
+    assert budget["pressure_band"] == "hop"
+    assert budget["used_percent_at_first_summarized"] == pytest.approx(56.64, rel=0.01)
+    assert budget["stop_class"] is None
+
+
+def test_endpoint_subscription_does_not_widen_stop_class() -> None:
+    budget = build_budget_block(
+        used_tokens=200_000,
+        window_limit_tokens=256_000,
+        model="ide-tab",
+        source="ide.transcript",
+        scope="liaison_seat",
+        epoch=_TID_A,
+        as_of="2026-11-26T00:00:00Z",
+        holder_basis="endpoint_subscription",
+        transcript_id=_TID_A,
+        tool_calls=200,
+        glass_summarized_tokens=500,
+    )
+    assert budget["stop_class"] is None
+    assert budget["pressure_band"] == "emergency"
+
+
+def test_prepare_band_advisory_headroom_and_read_cap() -> None:
+    budget = build_budget_block(
+        used_tokens=110_000,
+        window_limit_tokens=256_000,
+        model="ide-tab",
+        source="ide.transcript",
+        scope="liaison_seat",
+        epoch=_TID_A,
+        as_of="2026-11-26T00:00:00Z",
+        holder_basis="endpoint_subscription",
+        transcript_id=_TID_A,
+        tool_calls=1,
+    )
+    assert budget["pressure_band"] == "prepare"
+    adv = budget["prepare_advisory"]
+    assert adv["headroom_tokens"] == 146_000
+    assert adv["read_cap_tokens"] == 36_500
+    assert "Does not prevent" in adv["note"]
+
+
+def test_seat_lock_budget_block_unchanged_regression() -> None:
+    baseline = build_budget_block(
+        used_tokens=145_000,
+        window_limit_tokens=256_000,
+        model="ide-tab",
+        source="ide.transcript",
+        scope="liaison_seat",
+        epoch=_TID_A,
+        as_of="2026-10-18T00:00:00Z",
+        holder_basis="seat_lock",
+        tool_calls=10,
+    )
+    assert baseline["stop_class"] == "CONTEXT_BUDGET"
+    assert "pressure_band" not in baseline
+    assert baseline["hop_weight_basis"] == "tool_calls"
