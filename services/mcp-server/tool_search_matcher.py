@@ -59,6 +59,17 @@ _KEYWORD_BOOSTS: dict[str, set[str]] = {
         "tape",
         "window",
     },
+    "interlocutor": {
+        "cursor",
+        "glass",
+        "tab",
+        "display",
+        "uuid",
+        "agent_id",
+        "state",
+        "idle",
+        "running",
+    },
     "email": {
         "mailbox",
         "imap",
@@ -156,6 +167,16 @@ _MANIFEST_OVERRIDES: dict[str, dict[str, Any]] = {
             '"surface": "cursor", "thread": "<house resolved this turn>", '
             '"transcript_id": "<tab UUID>", "from_agent": "cursor", '
             '"pre_consolidate": false}\')'
+        ),
+    },
+    "interlocutor": {
+        "example": (
+            'dispatch(tool="interlocutor", arguments=\'{"op": "read", '
+            '"target": "display:<n>/<tab-uuid>/cursor", "coverage": "latest"}\')'
+        ),
+        "dispatch_template": (
+            'dispatch(tool="interlocutor", arguments=\'{"op": "read", '
+            '"target": "display:<n>/<tab-uuid>/cursor", "coverage": "latest"}\')'
         ),
     },
     "email": {

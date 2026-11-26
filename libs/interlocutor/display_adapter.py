@@ -130,15 +130,26 @@ def _display_steer_success(
 
 
 async def read_display_latest(target: DisplayEightTarget) -> dict[str, Any]:
+    if target.app == "cursor":
+        from interlocutor.cursor_tab_view import read_cursor_display_latest
+
+        return await read_cursor_display_latest(target)
     snap = await read_endpoint_turn(_endpoint(target), select=True)
     if not snap.get("ok"):
         code = str(snap.get("code") or snap.get("reason") or "read_failed")
+        reason = str(snap.get("reason") or snap.get("detail") or code)
+        if code == "unknown_target" and target.app == "grok":
+            from interlocutor.cursor_tab_view import grok_on_cursor_display_reason
+
+            hint = grok_on_cursor_display_reason(target)
+            if hint:
+                reason = hint
         return _with_display(
             target,
             {
                 "ok": False,
                 "code": code,
-                "reason": str(snap.get("reason") or snap.get("detail") or code),
+                "reason": reason,
             },
         )
     recent = list(snap.get("recent_messages") or [])
