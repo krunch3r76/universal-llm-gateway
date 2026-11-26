@@ -1,6 +1,6 @@
 """MCP chat_session tool — thin httpx relay to Jupiter CDP-ask chat-session routes.
 
-Ops: harvest (read), probe (read), paste (write). Product-chat URLs only —
+Ops: harvest (read), probe (read), observe (read), paste (write). Product-chat URLs only —
 grok.com and claude.ai/chat. No claude_bundles, web_chat_relay, or chat_harvest
 imports — relay only per [universal:mcp].
 """
@@ -22,7 +22,7 @@ def register_chat_session_tool(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Chat Session")
     def chat_session(
-        op: Literal["harvest", "probe", "paste"],
+        op: Literal["harvest", "probe", "observe", "paste"],
         url: str | None = None,
         site: Literal["grok", "claude"] | None = None,
         metadata_only: bool = False,
@@ -36,10 +36,14 @@ def register_chat_session_tool(mcp: FastMCP) -> None:
         prompt_path: str | None = None,
         grant: Literal["explicit", "operator"] | None = None,
         wait_reply: bool = False,
+        match_terms: list[str] | None = None,
+        max_nodes: int | None = None,
+        open_on_demand: bool | None = None,
     ) -> dict[str, Any]:
-        """Product-chat harvest, metadata probe, and grant-gated paste.
+        """Product-chat harvest, metadata probe, DOM observe, and grant-gated paste.
 
         Targets grok.com and claude.ai/chat URLs via ``/v1/chat-session/*``.
+        The ``observe`` op returns page text under ``page_text`` keys as untrusted content.
         Cowork CSE URLs must use ``cse_session`` instead.
         """
         if op == "harvest":
@@ -81,6 +85,21 @@ def register_chat_session_tool(mcp: FastMCP) -> None:
                 if v is not None and v != ""
             }
             return _relay("POST", "/v1/chat-session/probe", json_body=body)
+
+        if op == "observe":
+            body = {
+                k: v
+                for k, v in {
+                    "url": url,
+                    "site": site,
+                    "cdp_url": cdp_url,
+                    "match_terms": match_terms,
+                    "max_nodes": max_nodes,
+                    "open_on_demand": open_on_demand,
+                }.items()
+                if v is not None and v != ""
+            }
+            return _relay("POST", "/v1/chat-session/observe", json_body=body)
 
         body = {
             k: v

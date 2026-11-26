@@ -6,6 +6,42 @@ info:
     Satellite HTTP contract for the execution-authority read. The handler is
     GET /v1/project-ask/executions/{execution_id}/state in libs/cdp_ask/app.py.
 paths:
+  /v1/chat-session/observe:
+    post:
+      summary: Read-only DOM observation for product chats
+      operationId: chatSessionObserve
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - url
+                - match_terms
+              properties:
+                url:
+                  type: string
+                site:
+                  type: string
+                  enum: [grok, claude]
+                cdp_url:
+                  type: string
+                match_terms:
+                  type: array
+                  items:
+                    type: string
+                max_nodes:
+                  type: integer
+                  minimum: 1
+                  maximum: 50
+                open_on_demand:
+                  type: boolean
+      responses:
+        "200":
+          description: Observation result with untrusted page_text fields
+        "409":
+          description: Gateway refusal (invalid_pattern, invalid_cdp_url, use_cse_session)
   /v1/project-ask/executions/{execution_id}/state:
     get:
       summary: Read execution authority

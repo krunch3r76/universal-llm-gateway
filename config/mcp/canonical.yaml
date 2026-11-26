@@ -5662,6 +5662,51 @@ tools:
   endpoint_visibility:
   - life
   - code
+- canonical_name: chat_session_observe
+  domain: chat_session
+  operation: observe
+  dispatcher_call_shape:
+    tool: chat_session
+    dispatch_key: op
+    dispatch_value: observe
+  flat_call_shape:
+    tool: chat_session_observe
+    substrate_qualified: user-vortex__chat_session_observe
+  fol_descriptor: "Read-only product-chat DOM observation — literal match_terms, no Playwright. See cortex://notes/tmp/packets/cdp-probe-dom-observation-confer.md.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - observe
+      url:
+        type: string
+      site:
+        type: string
+      cdp_url:
+        type: string
+      match_terms:
+        type: array
+        items:
+          type: string
+      max_nodes:
+        type: integer
+      open_on_demand:
+        type: boolean
+    required:
+    - op
+    - url
+    - match_terms
+  mandate_safety: read_only
+  seat_visibility:
+  - mcp
+  skill_uri: agent_skill:web-automation-discipline
+  cache_priority: on_demand
+  introduced: '2026-11-26'
+  endpoint_visibility:
+  - life
+  - code
 - canonical_name: chat_session_paste
   domain: chat_session
   operation: paste

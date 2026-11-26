@@ -82,4 +82,40 @@ def mcp_chat_session_pasted(
     )
 
 
-__all__ = ["emit", "mcp_chat_session_harvested", "mcp_chat_session_pasted"]
+@event_factory
+def mcp_chat_session_observed(
+    *,
+    site: str,
+    conversation_id: str,
+    outcome: str,
+    looked: bool,
+    nodes_returned: int = 0,
+    code: str | None = None,
+    opened_on_demand: bool = False,
+) -> Event:
+    """Emit once per observe call that passed URL classification and argument checks."""
+    payload: dict[str, object] = {
+        "site": site,
+        "conversation_id": conversation_id,
+        "outcome": outcome,
+        "looked": looked,
+        "nodes_returned": nodes_returned,
+    }
+    if code is not None:
+        payload["code"] = code
+    if opened_on_demand:
+        payload["opened_on_demand"] = True
+    return Event(
+        signal="mcp.chat.session.observed",
+        role="observation",
+        scope="node",
+        payload=payload,
+    )
+
+
+__all__ = [
+    "emit",
+    "mcp_chat_session_harvested",
+    "mcp_chat_session_observed",
+    "mcp_chat_session_pasted",
+]

@@ -12,6 +12,7 @@ import logging
 import os
 import time
 
+from chat_harvest.dom_observation import ChatObserveRequest
 from claude_bundles.cdp_registry.dormant import reap_dead_holder_tab_rows
 from deploy_identity.code_version import resolve_code_version
 from deploy_identity.tree_state import peek_tree_state, refresh_tree_state
@@ -32,6 +33,7 @@ from cdp_ask.attended_operator import (
 from cdp_ask.chat_session_harvest import execute_harvest as execute_chat_session_harvest
 from cdp_ask.chat_session_harvest import execute_probe as execute_chat_session_probe
 from cdp_ask.chat_session_models import ChatHarvestRequest, ChatPasteRequest
+from cdp_ask.chat_session_observe import execute_observe
 from cdp_ask.chat_session_paste import execute_paste as execute_chat_session_paste
 from cdp_ask.cse_session_harvest import execute_harvest
 from cdp_ask.cse_session_models import (
@@ -687,6 +689,19 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             )
         return JSONResponse(
             status_code=200, content=result.model_dump(exclude_none=True)
+        )
+
+    @app.post("/v1/chat-session/observe")
+    async def chat_session_observe(req: ChatObserveRequest) -> JSONResponse:
+        """Read-only DOM observation outside message nodes."""
+        await asyncio.to_thread(verify_harvest_root)
+        result, refuse = await execute_observe(req)
+        if refuse is not None:
+            return JSONResponse(status_code=409, content=refuse)
+        assert result is not None
+        return JSONResponse(
+            status_code=200,
+            content={k: v for k, v in result.items() if v is not None},
         )
 
     @app.post("/v1/chat-session/paste")
