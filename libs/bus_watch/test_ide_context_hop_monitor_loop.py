@@ -358,11 +358,13 @@ def _houseless_sub_row(
     *,
     sub_id: int,
     scope: str = "24600",
+    agent: str = "cursor-grand-impresario",
     agent_id: str,
     bound_by: str = "cursor-grand-impresario",
 ) -> dict[str, Any]:
     return {
         "id": sub_id,
+        "agent": agent,
         "surface": "cursor",
         "thread_scope": scope,
         "display": "8",
@@ -400,21 +402,96 @@ def test_endpoint_subscription_samples_every_candidate_uuid(
     monkeypatch.setattr(
         "bus_watch.ide_context_hop_monitor._all_cursor_subscription_rows",
         lambda _store: [
-            _houseless_sub_row(sub_id=1, agent_id=_UUID_A),
-            _houseless_sub_row(sub_id=2, agent_id=_UUID_B),
-            _houseless_sub_row(sub_id=3, agent_id=_UUID_C),
+            _houseless_sub_row(sub_id=1, agent="brg-gi", agent_id=_UUID_A),
+            _houseless_sub_row(sub_id=2, agent="cursor-hop", agent_id=_UUID_B),
+            _houseless_sub_row(sub_id=3, agent="cursor-extra", agent_id=_UUID_C),
         ],
     )
     store = MagicMock()
     store.subscriptions.return_value = [
-        _houseless_sub_row(sub_id=1, agent_id=_UUID_A),
-        _houseless_sub_row(sub_id=2, agent_id=_UUID_B),
-        _houseless_sub_row(sub_id=3, agent_id=_UUID_C),
+        _houseless_sub_row(sub_id=1, agent="brg-gi", agent_id=_UUID_A),
+        _houseless_sub_row(sub_id=2, agent="cursor-hop", agent_id=_UUID_B),
+        _houseless_sub_row(sub_id=3, agent="cursor-extra", agent_id=_UUID_C),
     ]
-    check_cursor_ide_context_hops(store, mark={}, now=1000.0)
+    from bus_watch import endpoint_subscription_holder as holder
+
+    with patch(
+        "bus_watch.ide_context_hop_monitor.fetch_registry_claims",
+        return_value=holder.RegistryClaims(()),
+    ):
+        check_cursor_ide_context_hops(store, mark={}, now=1000.0)
     tids = sorted(row["transcript_id"] for row in emitted)
     assert tids == sorted([_UUID_A, _UUID_B, _UUID_C])
     assert all(row["holder_basis"] == "endpoint_subscription" for row in emitted)
+
+
+@patch("bus_watch.ide_context_hop_monitor.fetch_registry_claims")
+@patch("bus_watch.ide_context_hop_monitor.measure_ide_tab")
+@patch("bus_watch.ide_context_hop_monitor.read_lock")
+def test_holder_h3_probe_not_first_row_in_monitor(
+    mock_lock: MagicMock,
+    mock_measure: MagicMock,
+    mock_registry: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bus_watch import endpoint_subscription_holder as holder
+    from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
+
+    mock_lock.return_value = {}
+    mock_registry.return_value = holder.RegistryClaims(
+        (
+            {
+                "kind": "claim",
+                "status": "claimed",
+                "thread_id": "24600",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "address": {"tab_url": f"cursor://tab/{_UUID_B}"},
+            },
+        )
+    )
+
+    def _measure(_root, _lock, _policy, **kw):
+        tid = str(kw.get("transcript_id") or "")
+        if tid == _UUID_A:
+            return {
+                "transcript_id": tid,
+                "budget_probe": "transcript_estimate",
+                "used_tokens": 1,
+                "window_limit_tokens": 256_000,
+                "tool_calls": 1,
+                "bytes": 1,
+            }
+        return {
+            "transcript_id": tid,
+            "budget_probe": "glass.cdp",
+            "used_tokens": 1,
+            "window_limit_tokens": 256_000,
+            "tool_calls": 1,
+            "bytes": 1,
+            "glass_status": "completed",
+        }
+
+    mock_measure.side_effect = _measure
+    rows = [
+        _houseless_sub_row(sub_id=10, agent="cursor-a", agent_id=_UUID_A),
+        _houseless_sub_row(sub_id=20, agent="brg-gi", agent_id=_UUID_B),
+    ]
+    monkeypatch.setattr(
+        "bus_watch.ide_context_hop_monitor._all_cursor_subscription_rows",
+        lambda _store: rows,
+    )
+    emitted: list[dict] = []
+    monkeypatch.setattr(
+        "bus_watch.events.emit_ide_tab_budget_sampled",
+        lambda **kw: emitted.append(dict(kw)),
+    )
+    store = MagicMock()
+    store.subscriptions.return_value = rows
+    monkeypatch.setattr("bus_watch.ide_context_hop_monitor._registry_cache", None)
+    check_cursor_ide_context_hops(store, mark={}, now=1000.0)
+    by_tid = {row["transcript_id"]: row for row in emitted}
+    assert by_tid[_UUID_A]["actuation_eligible"] is False
+    assert by_tid[_UUID_B]["actuation_eligible"] is True
 
 
 @patch("bus_watch.ide_context_hop_monitor.measure_ide_tab")

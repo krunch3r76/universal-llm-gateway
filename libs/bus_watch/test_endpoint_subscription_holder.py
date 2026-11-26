@@ -191,7 +191,7 @@ def test_child_row_does_not_stale_parent() -> None:
 def test_prepare_note_once_per_holder(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     watch = tmp_path / "watch"
     watch.mkdir()
-    monkeypatch.setattr(holder, "WATCH_DIR", watch)
+    monkeypatch.setattr("bus_watch.endpoint_subscription_actuation.WATCH_DIR", watch)
     store = MagicMock()
     row = _sub_row(sub_id=1, agent_id=_UUID_A)
     assert holder.maybe_post_prepare_note(
@@ -241,7 +241,7 @@ def test_request_idempotent_across_restart(
 ) -> None:
     watch = tmp_path / "watch"
     watch.mkdir()
-    monkeypatch.setattr(holder, "WATCH_DIR", watch)
+    monkeypatch.setattr("bus_watch.endpoint_subscription_actuation.WATCH_DIR", watch)
     store = MagicMock()
     row = _sub_row(sub_id=1, agent_id=_UUID_A)
     first = holder.maybe_post_hop_request(
@@ -298,18 +298,21 @@ def test_transfer_incomplete_matrix(
     claims: list[dict[str, Any]] = []
     if t2:
         claims = [_claim("24600", f"cursor://tab/{_UUID_B}")]
-    turns = [
-        {"subject": "ACK| hop landed", "from_agent_id": _UUID_B},
-    ] if t3 else []
+    ack_turn = {"subject": "ACK| hop landed", "from_agent_id": _UUID_B, "turn_number": 10}
+    ack_before = {"subject": "ACK| early", "from_agent_id": _UUID_B, "turn_number": 2}
+    turns = [ack_turn] if t3 else []
+    if t3 is False:
+        turns = [ack_before, {"subject": holder.build_request_subject(), "turn_number": 5}]
     ledger_rows: list[dict[str, Any]] = []
     if not t4:
-        ledger_rows = [{"state": "pending", "agent_id": _UUID_A}]
+        ledger_rows = [{"state": "deferred", "agent_id": _UUID_A}]
     ctx = holder.TransferContext(
         scope="24600",
         mailbox_agent="brg-grand-impresario",
         old_uuid=_UUID_A,
         new_uuid=_UUID_B,
         request_row_id=5 if t1 else 30,
+        request_turn_number=5,
         rows=rows if t1 else [_sub_row(sub_id=5, agent_id=_UUID_A)],
         claims=claims,
         turns=turns,
@@ -322,6 +325,7 @@ def test_transfer_incomplete_matrix(
             old_uuid=ctx.old_uuid,
             new_uuid=ctx.new_uuid,
             request_row_id=30,
+            request_turn_number=5,
             rows=[_sub_row(sub_id=5, agent_id=_UUID_A)],
             claims=claims,
             turns=turns,
@@ -330,19 +334,137 @@ def test_transfer_incomplete_matrix(
     assert holder.is_transfer_complete(ctx) is expected
 
 
+def test_h1_max_id_per_mailbox_drops_lower_row() -> None:
+    rows = [
+        _sub_row(sub_id=5, agent="brg-grand-impresario", agent_id=_UUID_A),
+        _sub_row(sub_id=25, agent="brg-grand-impresario", agent_id=_UUID_B),
+    ]
+    h1 = holder.h1_rows_for_scope(rows, "24600")
+    assert len(h1) == 1
+    assert holder.is_uuid_agent_id(h1[0]["agent_id"]) == _UUID_B
+    claims = (_claim("24600", f"cursor://tab/{_UUID_A}"),)
+    res = holder.resolve_holder_h12("24600", h1, _registry(*claims))
+    assert res.actuation_refused == "stale"
+
+
+def test_holder_h3_uses_holder_probe_not_first_row() -> None:
+    rows = [
+        _sub_row(sub_id=10, agent="cursor-other", agent_id=_UUID_A),
+        _sub_row(sub_id=20, agent="brg-grand-impresario", agent_id=_UUID_B),
+    ]
+    reg = _registry(_claim("24600", f"cursor://tab/{_UUID_B}"))
+    h12 = holder.resolve_holder_h12("24600", rows, reg)
+    assert h12.holder_uuid == _UUID_B
+    bad_if_first = holder.apply_holder_h3(h12, "transcript_estimate")
+    good = holder.apply_holder_h3(h12, "glass.cdp")
+    assert bad_if_first.actuation_refused == "probe_not_glass_cdp"
+    assert good.actuation_eligible is True
+
+
+def test_rename_failure_does_not_emit_event() -> None:
+    emitted: list[dict[str, Any]] = []
+
+    def _emit(**kw: Any) -> None:
+        emitted.append(kw)
+
+    out = holder.execute_transfer_retirement(
+        scope="24600",
+        old_uuid=_UUID_A,
+        new_uuid=_UUID_B,
+        old_title="tab",
+        emit_transfer=_emit,
+        rename_tab=lambda *_a, **_k: {"ok": False, "reason": "glass_down"},
+    )
+    assert out.get("emitted") is False
+    assert emitted == []
+
+
+def test_maybe_retire_predecessor_after_hop(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    watch = tmp_path / "watch"
+    watch.mkdir()
+    monkeypatch.setattr("bus_watch.endpoint_subscription_actuation.WATCH_DIR", watch)
+    key = holder.hop_actuation_key("24600", _UUID_A, "hop")
+    record = {
+        "keys": [key],
+        "hop_requests": {
+            key: {
+                "holder_uuid": _UUID_A,
+                "subscription_id": 5,
+                "turn_number": 5,
+                "mailbox_agent": "brg-grand-impresario",
+            }
+        },
+    }
+    (watch / "liaison-hop-actuation-24600.json").write_text(
+        json.dumps(record), encoding="utf-8"
+    )
+    rows = [
+        _sub_row(sub_id=5, agent_id=_UUID_A),
+        _sub_row(sub_id=30, agent_id=_UUID_B),
+    ]
+    store = MagicMock()
+    store.turns.return_value = {
+        "turns": [
+            {
+                "turn_number": 5,
+                "subject": holder.build_request_subject(),
+                "body": key + "\nscope=24600",
+                "to_agent": "brg-grand-impresario",
+            },
+            {
+                "turn_number": 10,
+                "subject": "ACK| landed",
+                "from_agent_id": _UUID_B,
+            },
+        ]
+    }
+    store._bus.return_value = {"rows": []}
+    reg = holder.RegistryClaims(
+        (_claim("24600", f"cursor://tab/{_UUID_B}"),)
+    )
+    rename_calls: list[tuple[str, str]] = []
+
+    def _rename(uid: str, title: str) -> dict[str, Any]:
+        rename_calls.append((uid, title))
+        return {"ok": True}
+
+    emitted: list[dict[str, Any]] = []
+
+    def _emit(**kw: Any) -> None:
+        emitted.append(kw)
+
+    with patch(
+        "cursor_bridge.cursor_agents_archive.rename_agent_row_in_sidebar",
+        _rename,
+    ):
+        with patch(
+            "bus_watch.events.emit_ide_hop_transfer_accepted",
+            _emit,
+        ):
+            out = holder.maybe_retire_predecessor(
+                store, root_id="24600", registry=reg, all_rows=rows
+            )
+    assert out is not None and out.get("emitted") is True
+    assert rename_calls and rename_calls[0][0] == _UUID_A
+    assert len(emitted) == 1
+
+
 def test_suffix_retired_emits_ide_hop_transfer_accepted(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     watch = tmp_path / "watch"
     watch.mkdir()
-    monkeypatch.setattr(holder, "WATCH_DIR", watch)
+    monkeypatch.setattr("bus_watch.endpoint_subscription_actuation.WATCH_DIR", watch)
     emitted: list[dict[str, Any]] = []
 
     def _emit(**kw: Any) -> None:
         emitted.append(kw)
 
-    holder.execute_transfer_retirement(
+    out = holder.execute_transfer_retirement(
         scope="24600",
         old_uuid=_UUID_A,
         new_uuid=_UUID_B,
@@ -351,6 +473,7 @@ def test_suffix_retired_emits_ide_hop_transfer_accepted(
         rename_tab=lambda _a, _t: {"ok": True},
         watch_dir=watch,
     )
+    assert out.get("emitted") is True
     assert len(emitted) == 1
     assert emitted[0]["scope"] == "24600"
     assert emitted[0]["departing_uuid"] == _UUID_A

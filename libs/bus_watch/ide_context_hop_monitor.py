@@ -18,24 +18,25 @@ from bus_watch.digest_budget import (
     latch_used_percent_at_first_summarized,
     seat_budget,
 )
-from bus_watch.endpoint_subscription_holder import (
-    RegistryClaims,
-    TransferContext,
+from bus_watch.endpoint_subscription_actuation import (
     brg_actuation_allowed,
-    claim_tab_uuids,
-    enumerate_display8_uuid_rows,
-    execute_transfer_retirement,
-    fetch_registry_claims,
-    h1_rows_for_scope,
     hop_actuation_policy_enabled,
-    is_transfer_complete,
-    live_claims_for_scope,
     maybe_post_hop_request,
     maybe_post_prepare_note,
-    per_row_actuation_refused,
     pressure_band_allows_request,
-    resolve_holder,
 )
+from bus_watch.endpoint_subscription_join import (
+    RegistryClaims,
+    apply_holder_h3,
+    claim_tab_uuids,
+    enumerate_display8_uuid_rows,
+    fetch_registry_claims,
+    h1_rows_for_scope,
+    live_claims_for_scope,
+    per_row_actuation_refused,
+    resolve_holder_h12,
+)
+from bus_watch.endpoint_subscription_transfer import maybe_retire_predecessor
 from bus_watch.endpoint_wake_transport import StoreClient
 from bus_watch.fable_lock import WATCH_DIR, bus_watch_repo_root, read_lock
 from bus_watch.ide_budget import (
@@ -131,6 +132,8 @@ def resolve_scope_actuation_refusal(
                     },
                 )
             )
+    from bus_watch.endpoint_subscription_join import resolve_holder
+
     res = resolve_holder(scope, rows_same_scope or candidates, registry)
     return res.actuation_refused, res.actuation_eligible
 
@@ -224,78 +227,6 @@ def _maybe_actuate_holder(
     )
 
 
-def _maybe_retire_predecessor(
-    store: StoreClient,
-    *,
-    root_id: str,
-    registry: RegistryClaims,
-    all_rows: list[dict[str, Any]],
-    holder_row: dict[str, Any],
-) -> None:
-    scope_rows = h1_rows_for_scope(all_rows, root_id)
-    claims = live_claims_for_scope(registry, root_id)
-    try:
-        turns_payload = store.turns(root_id, last=40)
-        turns = list(turns_payload.get("turns") or [])
-    except Exception:
-        turns = []
-    try:
-        ledger = store._bus(
-            "GET",
-            "/endpoint-wake/ledger",
-            params={"thread": root_id, "state": "pending", "limit": 50},
-        )
-        ledger_rows = list((ledger or {}).get("rows") or [])
-    except Exception:
-        ledger_rows = []
-
-    request_id = int(holder_row.get("id") or 0)
-    mailbox = str(holder_row.get("agent") or "")
-    holder_uuid = str(holder_row.get("agent_id") or "").lower()
-
-    successor_uuid: str | None = None
-    for row in sorted(scope_rows, key=lambda r: int(r.get("id") or 0), reverse=True):
-        uid = str(row.get("agent_id") or "").lower()
-        if uid and uid != holder_uuid:
-            successor_uuid = uid
-            break
-    if not successor_uuid:
-        return
-
-    ctx = TransferContext(
-        scope=root_id,
-        mailbox_agent=mailbox,
-        old_uuid=holder_uuid,
-        new_uuid=successor_uuid,
-        request_row_id=request_id,
-        rows=all_rows,
-        claims=claims,
-        turns=turns,
-        ledger_rows=ledger_rows,
-    )
-    if not is_transfer_complete(ctx):
-        return
-    old_title = str(holder_row.get("title") or holder_uuid)
-    try:
-        from cursor_bridge.cursor_agents_archive import rename_agent_row_in_sidebar
-    except ImportError:
-        rename_agent_row_in_sidebar = None  # type: ignore[assignment,misc]
-
-    def _emit(**kw: Any) -> None:
-        from bus_watch.events import emit_ide_hop_transfer_accepted
-
-        emit_ide_hop_transfer_accepted(**kw)
-
-    execute_transfer_retirement(
-        scope=root_id,
-        old_uuid=holder_uuid,
-        new_uuid=successor_uuid,
-        old_title=old_title,
-        emit_transfer=_emit,
-        rename_tab=rename_agent_row_in_sidebar,
-    )
-
-
 def _sample_houseless_scope(
     root_id: str,
     subscribed_rows: list[dict[str, Any]],
@@ -316,10 +247,12 @@ def _sample_houseless_scope(
     digest_ts = _utcnow()
 
     holder_budget: dict[str, Any] | None = None
-    holder_resolution = None
+    holder_h12 = resolve_holder_h12(root_id, scope_rows, registry)
+    probes_by_uuid: dict[str, str | None] = {}
 
     for cand in scope_rows:
         agent_id = str(cand.get("agent_id") or "")
+        agent_key = agent_id.lower()
         measure = measure_ide_tab(
             root_id,
             {},
@@ -336,19 +269,19 @@ def _sample_houseless_scope(
             probe = budget.get("budget_probe")
             if probe is None:
                 probe = "incomplete"
-        if holder_resolution is None:
-            holder_resolution = resolve_holder(
-                root_id, scope_rows, registry, budget_probe=probe
-            )
-        res = holder_resolution
+        probes_by_uuid[agent_key] = probe
+        if holder_h12.holder_uuid == agent_key:
+            holder_final = apply_holder_h3(holder_h12, probe)
+        else:
+            holder_final = holder_h12
         refused = per_row_actuation_refused(
             cand,
-            res,
+            holder_final,
             claim_uuids=claim_uuids,
             h1_rows=scope_rows,
         )
         eligible = _sample_actuation_eligible(
-            res.actuation_eligible and res.holder_uuid == agent_id.lower(),
+            holder_final.actuation_eligible and holder_h12.holder_uuid == agent_key,
             refused,
         )
         if measure is None:
@@ -408,28 +341,32 @@ def _sample_houseless_scope(
             prepare_advisory=budget.get("prepare_advisory"),
         )
         if (
-            res.holder_uuid
-            and res.holder_uuid == agent_id.lower()
-            and res.holder_row is not None
-            and res.actuation_eligible
+            holder_h12.holder_uuid == agent_key
+            and holder_h12.holder_row is not None
+            and apply_holder_h3(holder_h12, probe).actuation_eligible
         ):
             holder_budget = budget
 
-    if holder_resolution and holder_resolution.holder_row and holder_budget:
+    holder_final = None
+    if holder_h12.holder_uuid:
+        holder_final = apply_holder_h3(
+            holder_h12, probes_by_uuid.get(holder_h12.holder_uuid)
+        )
+
+    if holder_final and holder_final.holder_row and holder_budget:
         try:
             _maybe_actuate_holder(
                 store,
                 root_id=root_id,
-                holder_row=holder_resolution.holder_row,
+                holder_row=holder_final.holder_row,
                 budget=holder_budget,
                 policy=policy,
             )
-            _maybe_retire_predecessor(
+            maybe_retire_predecessor(
                 store,
                 root_id=root_id,
                 registry=registry,
                 all_rows=subscribed_rows,
-                holder_row=holder_resolution.holder_row,
             )
         except Exception:
             logger.exception(
