@@ -18,33 +18,8 @@ pytestmark = pytest.mark.offline
 
 
 @pytest.fixture
-def isolated_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    root = tmp_path / "cdp-registry"
-    root.mkdir()
-    regs = root / "registrations"
-    regs.mkdir()
-    for name, value in {
-        "REGISTRY_DIR": root,
-        "REGISTRY_LOG": root / "registry.jsonl",
-        "ACTIVE_JSON": root / "active.json",
-        "SESSIONS_JSON": root / "sessions.json",
-        "SESSION_TRANSITIONS_JSONL": root / "session_transitions.jsonl",
-        "PORTS_LOCK": root / "ports.lock",
-        "REGISTRATIONS_DIR": regs,
-    }.items():
-        monkeypatch.setattr(reg._store, name, value)
-    monkeypatch.setattr(reg, "_HELD_LOCKS", {})
-    monkeypatch.setattr(reg, "PORT_RANGE", range(9223, 9228))
-    profiles = tmp_path / "profiles"
-    profiles.mkdir()
-    monkeypatch.setattr(
-        reg.cdp_lane,
-        "profile_for",
-        lambda suffix: profiles / f"claude-ai-chrome-profile-{suffix}",
-    )
-    monkeypatch.setattr(reg.cdp_lane, "PRIMARY_PROFILE", profiles / "primary")
-    (profiles / "primary").mkdir()
-    return root
+def isolated_registry(g1_registry_isolation) -> Path:
+    return g1_registry_isolation.registry_root
 
 
 def _noop_launch(port: int, profile: Path) -> int:

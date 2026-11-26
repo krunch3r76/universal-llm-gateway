@@ -147,3 +147,5 @@ def _offline_bypass_project_select(
         return req
 
     monkeypatch.setattr("cdp_ask.runner.apply_project_select", _noop)
+
+from claude_bundles.conftest import g1_registry_isolation  # noqa: F401
