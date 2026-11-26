@@ -54,6 +54,23 @@ def _row_for_mailbox(
     return max(matches, key=lambda r: int(r.get("id") or 0))
 
 
+def _ledger_row_tab_uuid(row: dict[str, Any]) -> str | None:
+    """Tab UUID from ledger row (route shape uses ``agent``; legacy uses ``agent_id``)."""
+    for key in ("agent_id", "agent"):
+        uid = is_uuid_agent_id(row.get(key))
+        if uid:
+            return uid
+    return None
+
+
+def _ledger_delivery_sort_key(row: dict[str, Any]) -> tuple[int, str, int]:
+    for field in ("delivered_at", "finished_at", "created_at"):
+        stamp = str(row.get(field) or "").strip()
+        if stamp:
+            return (0, stamp, int(row.get("id") or 0))
+    return (1, "", int(row.get("id") or 0))
+
+
 def _ack_from_successor(turn: dict[str, Any], successor_uuid: str) -> bool:
     subject = str(turn.get("subject") or "")
     if not subject.upper().startswith("ACK|"):
@@ -94,11 +111,15 @@ def is_transfer_complete(ctx: TransferContext) -> bool:
 
     t4 = True
     open_states = frozenset({"pending", "deferred"})
+    old_l = ctx.old_uuid.lower()
+    new_l = ctx.new_uuid.lower()
     for row in ctx.ledger_rows:
         state = str(row.get("state") or "")
-        if state in open_states and str(row.get("agent_id") or "").lower() == ctx.old_uuid.lower():
-            t4 = False
-            break
+        if state in open_states:
+            row_uuid = _ledger_row_tab_uuid(row)
+            if row_uuid == old_l:
+                t4 = False
+                break
 
     delivered = [
         row
@@ -106,12 +127,9 @@ def is_transfer_complete(ctx: TransferContext) -> bool:
         if str(row.get("state") or "") == "delivered"
     ]
     if delivered and t4:
-        ordered = sorted(
-            delivered,
-            key=lambda r: str(r.get("delivered_at") or r.get("created_at") or ""),
-        )
-        first_agent = str(ordered[0].get("agent_id") or "").lower()
-        if first_agent and first_agent != ctx.new_uuid.lower():
+        ordered = sorted(delivered, key=_ledger_delivery_sort_key)
+        first_uuid = _ledger_row_tab_uuid(ordered[0])
+        if first_uuid and first_uuid != new_l:
             t4 = False
 
     return t1 and t2 and t3 and t4
@@ -231,7 +249,8 @@ def maybe_retire_predecessor(
         )
         ledger_rows = list((ledger or {}).get("rows") or [])
     except Exception:
-        ledger_rows = []
+        logger.exception("endpoint_subscription_transfer: ledger GET failed")
+        return {"ok": False, "reason": "ledger_unavailable"}
 
     ctx = TransferContext(
         scope=root_id,

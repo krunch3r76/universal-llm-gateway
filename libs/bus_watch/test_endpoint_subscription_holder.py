@@ -379,6 +379,137 @@ def test_rename_failure_does_not_emit_event() -> None:
     assert emitted == []
 
 
+def _complete_transfer_ctx(
+    *,
+    ledger_rows: list[dict[str, Any]] | None = None,
+) -> holder.TransferContext:
+    rows = [
+        _sub_row(sub_id=5, agent_id=_UUID_A),
+        _sub_row(sub_id=30, agent_id=_UUID_B),
+    ]
+    return holder.TransferContext(
+        scope="24600",
+        mailbox_agent="brg-grand-impresario",
+        old_uuid=_UUID_A,
+        new_uuid=_UUID_B,
+        request_row_id=5,
+        request_turn_number=5,
+        rows=rows,
+        claims=[_claim("24600", f"cursor://tab/{_UUID_B}")],
+        turns=[
+            {"subject": holder.build_request_subject(), "turn_number": 5},
+            {
+                "turn_number": 10,
+                "subject": "ACK| landed",
+                "from_agent_id": _UUID_B,
+            },
+        ],
+        ledger_rows=ledger_rows or [],
+    )
+
+
+def test_t4_deferred_route_agent_blocks_transfer() -> None:
+    ctx = _complete_transfer_ctx(
+        ledger_rows=[{"state": "deferred", "agent": _UUID_A, "id": 1}],
+    )
+    assert holder.is_transfer_complete(ctx) is False
+
+
+def test_t4_pending_route_agent_blocks_transfer() -> None:
+    ctx = _complete_transfer_ctx(
+        ledger_rows=[{"state": "pending", "agent": _UUID_A.upper()}],
+    )
+    assert holder.is_transfer_complete(ctx) is False
+
+
+def test_t4_empty_ledger_after_successful_get_allows_transfer() -> None:
+    ctx = _complete_transfer_ctx(ledger_rows=[])
+    assert holder.is_transfer_complete(ctx) is True
+
+
+def test_t4_delivered_route_agent_v_passes() -> None:
+    ctx = _complete_transfer_ctx(
+        ledger_rows=[
+            {
+                "state": "delivered",
+                "agent": _UUID_B,
+                "finished_at": "2099-01-02T00:00:00Z",
+                "id": 2,
+            },
+        ],
+    )
+    assert holder.is_transfer_complete(ctx) is True
+
+
+def test_t4_delivered_first_to_old_uuid_fails() -> None:
+    ctx = _complete_transfer_ctx(
+        ledger_rows=[
+            {
+                "state": "delivered",
+                "agent": _UUID_A,
+                "finished_at": "2099-01-01T00:00:00Z",
+                "id": 1,
+            },
+            {
+                "state": "delivered",
+                "agent": _UUID_B,
+                "finished_at": "2099-01-02T00:00:00Z",
+                "id": 2,
+            },
+        ],
+    )
+    assert holder.is_transfer_complete(ctx) is False
+
+
+def test_maybe_retire_predecessor_ledger_exception_no_retire(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    watch = tmp_path / "watch"
+    watch.mkdir()
+    monkeypatch.setattr("bus_watch.endpoint_subscription_actuation.WATCH_DIR", watch)
+    key = holder.hop_actuation_key("24600", _UUID_A, "hop")
+    record = {
+        "keys": [key],
+        "hop_requests": {
+            key: {
+                "holder_uuid": _UUID_A,
+                "subscription_id": 5,
+                "mailbox_agent": "brg-grand-impresario",
+            }
+        },
+    }
+    (watch / "liaison-hop-actuation-24600.json").write_text(
+        json.dumps(record), encoding="utf-8"
+    )
+    rows = [
+        _sub_row(sub_id=5, agent_id=_UUID_A),
+        _sub_row(sub_id=30, agent_id=_UUID_B),
+    ]
+    store = MagicMock()
+    store.turns.return_value = {
+        "turns": [
+            {
+                "turn_number": 5,
+                "subject": holder.build_request_subject(),
+                "body": key,
+                "to_agent": "brg-grand-impresario",
+            },
+            {
+                "turn_number": 10,
+                "subject": "ACK| landed",
+                "from_agent_id": _UUID_B,
+            },
+        ]
+    }
+    store._bus.side_effect = RuntimeError("ledger down")
+    reg = holder.RegistryClaims((_claim("24600", f"cursor://tab/{_UUID_B}"),))
+    out = holder.maybe_retire_predecessor(
+        store, root_id="24600", registry=reg, all_rows=rows
+    )
+    assert out == {"ok": False, "reason": "ledger_unavailable"}
+
+
 def test_maybe_retire_predecessor_after_hop(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
