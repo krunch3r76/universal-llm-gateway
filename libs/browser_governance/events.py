@@ -36,6 +36,9 @@ def browser_resource_census(
     cdp_ports_live: int,
     cdp_page_targets: int,
     profile_count: int,
+    unowned_profile_count: int | None = None,
+    duplicate_owner_count: int | None = None,
+    duplicate_owner_profiles: list[str] | None = None,
     details: dict[str, Any] | None = None,
 ) -> Event:
     """Node-level browser resource census snapshot."""
@@ -52,6 +55,12 @@ def browser_resource_census(
         "cdp_page_targets": cdp_page_targets,
         "profile_count": profile_count,
     }
+    if unowned_profile_count is not None:
+        payload["unowned_profile_count"] = unowned_profile_count
+    if duplicate_owner_count is not None:
+        payload["duplicate_owner_count"] = duplicate_owner_count
+    if duplicate_owner_profiles is not None:
+        payload["duplicate_owner_profiles"] = duplicate_owner_profiles
     if details is not None:
         payload["details"] = details
     return Event(

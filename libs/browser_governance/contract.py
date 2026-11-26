@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 DEFAULT_WARN_MEM_AVAILABLE_MIB = 6144
 DEFAULT_WARN_SWAP_FREE_MIB = 2048
@@ -322,3 +322,65 @@ SUPERVISION_BANNER_SCAN_JS: str = f"""(() => {{
   }}
   return {{ scanned: true, present: false, kind: null, summary: null }};
 }})()"""
+
+CustodyClass = Literal[
+    "standing_operator_house",
+    "pooled_cowork_clone",
+    "ephemeral_isolated_session",
+    "attached_ephemeral_tab",
+    "unowned",
+]
+
+
+class BrowserLeaseRecord(TypedDict, total=False):
+    profile_path: str
+    custody_class: CustodyClass
+    owner_id: str | None
+    url_key: str | None
+    lease_renewed_at: str | None
+
+
+BOX_ISOLATED_SESSIONS_ROOT = "/home/box/chrome-sessions"
+
+STANDING_HOUSES: Mapping[str, str] = {
+    "chatgpt-io": "io:io-agent-chatgpt.service:9342",
+    "claude-ai-io": "io:io-agent-claude.service:9343",
+    "grok-io/chrome-auth-profile": "io:io-agent-grok.service:9339",
+    "grok-io-gc2": "io:io-agent-grok-gc2.service:9340",
+    "cursor-io": "io:io-agent-cursor.service:9338",
+    "claude-ai-chrome-profile": "jupiter:cdp-lane@fleet:9222",
+    "messages-web": "jupiter:cdp-lane@messages:9250",
+    "ess-walgreens": "jupiter:cdp-lane@ess:9260",
+    "chrome-messages": "jupiter:cdp-lane@calendar:9290",
+}
+
+
+def custody_class_for_profile(profile_path: str) -> CustodyClass:
+    expanded = os.path.expanduser(profile_path)
+    norm = os.path.normpath(expanded)
+    best: str | None = None
+    for suffix in STANDING_HOUSES:
+        if norm == suffix or norm.endswith(os.path.sep + suffix):
+            if best is None or len(suffix) > len(best):
+                best = suffix
+    if best is not None:
+        return "standing_operator_house"
+    if "-reg-" in os.path.basename(norm):
+        return "pooled_cowork_clone"
+    if os.path.dirname(norm) == BOX_ISOLATED_SESSIONS_ROOT:
+        return "ephemeral_isolated_session"
+    return "unowned"
+
+
+def standing_owner_id_for_profile(profile_path: str) -> str | None:
+    cls = custody_class_for_profile(profile_path)
+    if cls != "standing_operator_house":
+        return None
+    expanded = os.path.expanduser(profile_path)
+    norm = os.path.normpath(expanded)
+    best_key: str | None = None
+    for suffix in STANDING_HOUSES:
+        if norm == suffix or norm.endswith(os.path.sep + suffix):
+            if best_key is None or len(suffix) > len(best_key):
+                best_key = suffix
+    return STANDING_HOUSES.get(best_key) if best_key else None

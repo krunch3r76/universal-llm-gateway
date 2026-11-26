@@ -19,6 +19,8 @@ from typing import Any
 from browser_governance.contract import (
     admission_preflight_mode,
     census_enabled,
+    custody_class_for_profile,
+    standing_owner_id_for_profile,
     warn_disk_free_gib,
     warn_mem_available_mib,
     warn_swap_free_mib,
@@ -146,6 +148,13 @@ def _xvfb_display(cmdline: str) -> str | None:
     return None
 
 
+
+
+def _is_chrome_root_process(cmdline: str) -> bool:
+    if not _is_browser_cmdline(cmdline):
+        return False
+    return not any(tok.startswith("--type=") for tok in cmdline.split())
+
 def _enumerate_processes(
     proc_root: Path,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, float]]:
@@ -183,9 +192,11 @@ def _enumerate_processes(
         profiles[profile].append(
             {
                 "pid": int(pid),
+                "cmdline": cmdline,
                 "pss_mib": pss_mib,
                 "rss_mib": rss_mib,
                 "threads": threads,
+                "is_root": _is_chrome_root_process(cmdline),
             }
         )
 
@@ -307,10 +318,20 @@ def collect_local_browser_census(
                 rss_seen = True
         total_pss += prof_pss
         total_rss += prof_rss
+        root_count = sum(1 for proc in procs if proc.get("is_root"))
+        if profile == "__unprofiled__":
+            klass = None
+            owner = None
+        else:
+            klass = custody_class_for_profile(profile)
+            owner = standing_owner_id_for_profile(profile)
         profile_summaries[profile] = {
             "process_count": len(procs),
             "pss_mib": prof_pss if prof_pss else None,
             "rss_mib": prof_rss if prof_rss else None,
+            "custody_class": klass,
+            "owner_id": owner,
+            "root_process_count": root_count,
         }
 
     cdp_ports_live = 0
@@ -336,6 +357,16 @@ def collect_local_browser_census(
     if include_jupiter:
         details["jupiter"] = _probe_jupiter_cdp()
 
+    unowned_profile_count = sum(
+        1 for p, row in profile_summaries.items()
+        if p != "__unprofiled__" and row.get("custody_class") == "unowned"
+    )
+    duplicate_owner_profiles = [
+        p for p, row in profile_summaries.items()
+        if p != "__unprofiled__" and row.get("root_process_count", 0) > 1
+    ]
+    duplicate_owner_count = len(duplicate_owner_profiles)
+
     profile_count = sum(
         1 for key in profiles if key != "__unprofiled__" and profiles[key]
     )
@@ -354,6 +385,9 @@ def collect_local_browser_census(
         "cdp_targets_total": cdp_targets_total,
         "cdp_page_targets": cdp_page_targets,
         "profile_count": profile_count,
+        "unowned_profile_count": unowned_profile_count,
+        "duplicate_owner_count": duplicate_owner_count,
+        "duplicate_owner_profiles": duplicate_owner_profiles,
         "details": details,
     }
 
@@ -363,10 +397,23 @@ def run_census_and_emit(
     host: str = "io",
     include_jupiter: bool = False,
     source: str = "cdp_ask",
+    proc_root: Path | None = None,
+    disk_path: str | None = None,
+    cdp_ports: Sequence[int] | None = None,
 ) -> dict[str, Any] | None:
     if not census_enabled():
         return None
-    census = collect_local_browser_census(host=host, include_jupiter=include_jupiter)
+    collect_kwargs: dict[str, Any] = {
+        "host": host,
+        "include_jupiter": include_jupiter,
+    }
+    if proc_root is not None:
+        collect_kwargs["proc_root"] = proc_root
+    if disk_path is not None:
+        collect_kwargs["disk_path"] = disk_path
+    if cdp_ports is not None:
+        collect_kwargs["cdp_ports"] = cdp_ports
+    census = collect_local_browser_census(**collect_kwargs)
     event = browser_resource_census(
         host=str(census["host"]),
         mem_available_mib=census.get("mem_available_mib"),
@@ -379,6 +426,9 @@ def run_census_and_emit(
         cdp_ports_live=int(census.get("cdp_ports_live") or 0),
         cdp_page_targets=int(census.get("cdp_page_targets") or 0),
         profile_count=int(census.get("profile_count") or 0),
+        unowned_profile_count=int(census.get("unowned_profile_count") or 0),
+        duplicate_owner_count=int(census.get("duplicate_owner_count") or 0),
+        duplicate_owner_profiles=census.get("duplicate_owner_profiles"),
         details=census.get("details"),
     )
     emit_browser_event(event, source=source)
