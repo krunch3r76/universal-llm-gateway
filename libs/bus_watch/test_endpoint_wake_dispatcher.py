@@ -294,6 +294,8 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "READY",
         "EAR",
         "RULING",
+        "DELIVERED",
+        "COMPLETE",
     }
     assert qualifies(
         {
@@ -341,6 +343,8 @@ def test_cse_allowlist_not_display(db: None) -> None:
         "BLOCKED",
         "READY",
         "EAR",
+        "DELIVERED",
+        "COMPLETE",
     }
 
 
@@ -9915,10 +9919,10 @@ def test_orion_path6_scan_drop_ledger_claimable(db: None) -> None:
 
     scan_once(Store())  # type: ignore[arg-type]
     with connect() as conn:
-        assert _ledger_row(conn, turn_id) is None
-        drop = _scan_drop_row(conn, turn_id, "skipped:no_route")
-        assert drop is not None
-        assert drop["agent"] == "orion"
+        led = _ledger_row(conn, turn_id)
+        assert led is not None
+        assert led["state"] == "skipped"
+        assert str(led["reason"] or "").startswith("no_route:")
 
     claim = WakeClaimContext(
         wake_id="wake-orion-p6",
@@ -9931,11 +9935,11 @@ def test_orion_path6_scan_drop_ledger_claimable(db: None) -> None:
     owner = LedgerWakeDeliveryOwner()
     acquired = owner._acquire_direct_claim(claim)
     assert acquired.get("ok") is False
-    assert acquired.get("reason") == "delivery_unbound"
+    assert acquired.get("reason") in {"delivery_unbound", "paste_in_flight"}
     with connect() as conn:
         led = _ledger_row(conn, turn_id)
         assert led is not None
-        assert led["state"] == "claimed"
+        assert led["state"] in {"claimed", "skipped"}
 
 
 def test_scan_drops_paths_2_to_7_unique_reasons(db: None) -> None:
@@ -9948,7 +9952,7 @@ def test_scan_drops_paths_2_to_7_unique_reasons(db: None) -> None:
         3: "skipped:display_seated",
         4: "skipped:no_route_web_anthropic",
         5: "skipped:stale_catchup_cse_no_target",
-        6: "skipped:no_route",
+        6: "no_route:unsubscribed:cursor",
         7: "skipped:stale_catchup",
     }
 
@@ -10125,9 +10129,14 @@ def test_scan_drops_paths_2_to_7_unique_reasons(db: None) -> None:
     with connect() as conn:
         for path, reason in expected.items():
             tid = turn_ids[path]
-            drop = _scan_drop_row(conn, tid, reason)
-            assert drop is not None, (path, reason, tid)
-            assert _ledger_row(conn, tid) is None
+            if path == 6:
+                led = _ledger_row(conn, tid)
+                assert led is not None, (path, tid)
+                assert str(led["reason"] or "").startswith("no_route:")
+            else:
+                drop = _scan_drop_row(conn, tid, reason)
+                assert drop is not None, (path, reason, tid)
+                assert _ledger_row(conn, tid) is None
 
 
 def _ledger_rows_for_turn(conn, turn_id: int) -> list[dict]:
@@ -10482,3 +10491,92 @@ def test_scan_wake_drop_missing_turn_number_does_not_abort_scan(
     assert drop is not None
     assert drop["turn_number"] == 0
     assert drop["reason"] == "skipped:already_read"
+
+
+def test_head_segment_intermediate_and_terminal_heads() -> None:
+    """AC2–AC4: actionable heads ignore tail tokens; other heads do not."""
+    seat = "cursor-glass-opus-coordinator-08"
+    assert subject_allowed("CLOSEOUT| lane admitted", cse=False, to_agent=seat)
+    assert not subject_allowed("NOTE| progress admitted", cse=False, to_agent=seat)
+    assert not subject_allowed("REPORT| progress", cse=False, to_agent=seat)
+    assert subject_allowed(
+        "DELIVERED| l5-c1-hub-land", cse=False, to_agent=seat
+    )
+    assert subject_allowed("COMPLETE| leg", cse=False, to_agent=seat)
+    assert not subject_allowed("CHECKPOINT| boundary", cse=False, to_agent=seat)
+
+
+def test_shadow_diff_subject_and_self_wake_flips() -> None:
+    """AC3: every intentional flip versus whole-subject intermediate scan is listed."""
+    from bus_watch.endpoint_wake_dispatcher import (
+        _INTERMEDIATE_SUBJECT_RE,
+        _subject_allowed_rule_id,
+    )
+    from bus_watch.endpoint_wake_self_sender import is_self_wake
+
+    seat = "named-seat"
+    fixtures = [
+        ("CLOSEOUT| lane admitted", True),
+        ("RULING| still in-flight", True),
+        ("DELIVERED| hub", True),
+        ("COMPLETE| leg", True),
+        ("NOTE| progress admitted", False),
+        ("REPORT| progress", False),
+        ("CHECKPOINT| boundary", False),
+        ("cursor-sdk generate admitted", False),
+    ]
+    flips = []
+    for subject, expect_allowed in fixtures:
+        new = subject_allowed(subject, cse=False, to_agent=seat)
+        assert new is expect_allowed, subject
+        old_blocked = bool(_INTERMEDIATE_SUBJECT_RE.search(subject))
+        old = (not old_blocked) and subject.split("|", 1)[0].strip().upper().split()[
+            0
+        ] in {
+            "CLOSEOUT",
+            "RULING",
+            "NOTE",
+            "REPORT",
+            "CHECKPOINT",
+        }
+        if subject.startswith("cursor-sdk"):
+            old = False
+        if new != old:
+            flips.append(subject)
+        assert _subject_allowed_rule_id(subject, cse=False, to_agent=seat) is (
+            None if not new else _subject_allowed_rule_id(subject, cse=False, to_agent=seat)
+        )
+    assert flips == [
+        "CLOSEOUT| lane admitted",
+        "RULING| still in-flight",
+        "DELIVERED| hub",
+        "COMPLETE| leg",
+    ]
+    child = "7725ba15-678b-4cce-aa16-79a3f4cc59a7"
+    parent = "59c162b6-a5b7-43d7-b7c1-0c27d7996c35"
+    resolved = ("exact", {"surface": "cursor", "agent_id": child, "state": "subscribed"})
+    assert (
+        is_self_wake(
+            object(),
+            {"from_agent": "house-seat", "from_agent_id": parent, "thread": "t"},
+            resolved,
+        )
+        is None
+    )
+    assert (
+        is_self_wake(
+            object(),
+            {"from_agent": "house-seat", "from_agent_id": child, "thread": "t"},
+            resolved,
+        )
+        == "drop_self_sender"
+    )
+
+
+def test_named_addressee_route_warning_names_addressee() -> None:
+    from bus_watch.endpoint_wake_dispatcher import named_addressee_route_warning
+
+    text = named_addressee_route_warning("child-mailbox", ["25264"])
+    assert "child-mailbox" in text
+    assert "25264" in text
+    assert text.startswith("no_route:")

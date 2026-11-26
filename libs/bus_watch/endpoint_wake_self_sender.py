@@ -107,13 +107,13 @@ def is_self_wake(
     poster = str(turn.get("from_agent_id") or "").strip().lower()
     if poster and poster == target:
         return SELF_SENDER_RULE
+    if poster:
+        return None
     thread = str(turn.get("thread") or "")
     scopes = {thread, str(sub.get("thread_scope") or thread)}
     from_agent = str(turn.get("from_agent") or "")
     if target in sender_tab_ids(store, from_agent, scopes):
         return SELF_SENDER_RULE
-    if poster:
-        return None  # M2 only when poster identity absent
     if normalize_bus_address(from_agent) not in _SHARED_SENDER_NAMES:
         return None
     window_s = ENDPOINT_WAKE_SELF_RECENCY_S
@@ -128,11 +128,19 @@ def is_self_wake(
     return None
 
 
-def suppressed_item(item: dict[str, Any], rule_id: str) -> dict[str, Any]:
+def suppressed_item(
+    item: dict[str, Any],
+    rule_id: str,
+    *,
+    delivery_failure_detail: str | None = None,
+) -> dict[str, Any]:
     """Ledger tombstone for a turn the scan decided not to wake."""
-    return {
+    out: dict[str, Any] = {
         **item,
         "decided_by_rule": rule_id,
         "state": "skipped",
         "reason": f"suppressed:{rule_id}",
     }
+    if delivery_failure_detail:
+        out["delivery_failure_detail"] = delivery_failure_detail
+    return out

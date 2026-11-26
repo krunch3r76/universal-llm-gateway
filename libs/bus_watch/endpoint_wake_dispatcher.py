@@ -148,6 +148,8 @@ CSE_WAKE_SUBJECT_HEADS = frozenset(
         "READY",
         "EAR",
         "RULING",
+        "DELIVERED",
+        "COMPLETE",
     }
 )
 # Digest paste closed set (superset of wake-eligibility heads for gate tokens like CLOSEOUT).
@@ -194,6 +196,8 @@ GROK_WAKE_SUBJECT_HEADS = frozenset(
         "BLOCKED",
         "READY",
         "ANSWER",
+        "DELIVERED",
+        "COMPLETE",
     }
 )
 ENDPOINT_WAKE_SUBJECT_HEADS = CSE_WAKE_SUBJECT_HEADS
@@ -202,6 +206,27 @@ _INTERMEDIATE_SUBJECT_RE = re.compile(
     r"(?i)(?:^|\b|\|)(?:pickup|cc\s+pickup|house-cp|checkpoint|in-flight|in_flight|"
     r"admitted|progress|park-harvest wake|hop-[a-z0-9]+)(?:\b|\||$)"
 )
+_ACTIONABLE_HEAD_INTERMEDIATE_SCAN = frozenset(
+    {
+        "CLOSEOUT",
+        "VERDICT",
+        "SCORE_RESURFACE",
+        "RULING",
+        "DELIVERED",
+        "COMPLETE",
+        "BLOCKED",
+        "ESCALATE",
+        "PARKED",
+        "HOLD_MERGE",
+        "OPERATOR_GATE",
+        "DONE",
+        "FAILED",
+        "LANDED",
+        "RESULT",
+        "GATE",
+    }
+)
+_ACTIONABLE_HEAD_MULTI_WORD = frozenset({"GATE MISS"})
 _CURSOR_GATE_WAKE_RE = re.compile(
     r"(?i)(?:CLOSEOUT|VERDICT|SCORE_RESURFACE|park-harvest escalation|conductor-hop escalation|"
     r"PARKED_TRANSPORT|(?:^|[\|\s])PARKED(?=[\s(|]|$)|BLOCKED|ESCALATE|HOLD_MERGE|OPERATOR_GATE|"
@@ -833,7 +858,7 @@ def subject_allowed(
     ):
         return False
     agent = _effective_to_agent(to_agent, text)
-    if _INTERMEDIATE_SUBJECT_RE.search(text):
+    if _intermediate_subject_blocked(text):
         if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
             return True
         return False
@@ -882,6 +907,79 @@ def _segment_subject_head(segment: str) -> str:
     if not first:
         return ""
     return first.split()[0].upper()
+
+
+def _subject_head_for_intermediate(subject: str | None) -> tuple[str, str]:
+    text = subject or ""
+    head_seg = text.split("|", 1)[0].strip()
+    head_up = head_seg.upper()
+    first = head_up.split()[0] if head_up else ""
+    return head_seg, first
+
+
+def _uses_head_only_intermediate_scan(subject: str | None) -> bool:
+    head_seg, first = _subject_head_for_intermediate(subject)
+    if not head_seg:
+        return False
+    head_up = head_seg.upper()
+    if head_up in _ACTIONABLE_HEAD_MULTI_WORD:
+        return True
+    return first in _ACTIONABLE_HEAD_INTERMEDIATE_SCAN
+
+
+def _intermediate_scan_segment(subject: str | None) -> str:
+    text = subject or ""
+    if _uses_head_only_intermediate_scan(text):
+        return text.split("|", 1)[0]
+    return text
+
+
+def _intermediate_subject_re_matches(subject: str | None) -> re.Match[str] | None:
+    segment = _intermediate_scan_segment(subject)
+    if not segment:
+        return None
+    return _INTERMEDIATE_SUBJECT_RE.search(segment)
+
+
+def _intermediate_subject_blocked(subject: str | None) -> bool:
+    return _intermediate_subject_re_matches(subject) is not None
+
+
+def _suppression_failure_detail(rule_id: str, subject: str | None) -> str | None:
+    try:
+        from agent_bus_store.db.endpoint_wake_ledger import _encode_delivery_failure_detail
+    except ImportError:
+        return None
+    text = subject or ""
+    _, head_tok = _subject_head_for_intermediate(text)
+    if rule_id == "drop_dispatch_intermediate":
+        m = _intermediate_subject_re_matches(text)
+        if m:
+            return _encode_delivery_failure_detail(
+                rule_id,
+                matched_token=m.group(0).strip().lower(),
+                head=head_tok or None,
+            )
+    if rule_id == "default_suppress":
+        return _encode_delivery_failure_detail(rule_id, head=head_tok or None)
+    return None
+
+
+def _no_route_tombstone_reason(raw_to: str) -> str:
+    return f"no_route:unsubscribed:{normalize_bus_address(raw_to)}"
+
+
+def named_addressee_route_warning(to_agent: str, subscribed_threads: list[str]) -> str:
+    """Send-path warning when a named addressee has no subscription on this thread.
+
+    Field is ``TurnSendCreated.warning``. Lists other threads the addressee is
+    subscribed on; does not reroute.
+    """
+    listed = ", ".join(subscribed_threads) if subscribed_threads else "none"
+    return (
+        f"no_route: {normalize_bus_address(to_agent)} is not subscribed on this "
+        f"thread (subscribed threads: {listed})"
+    )
 
 
 def _compound_actionable_tail(subject: str) -> bool:
@@ -980,7 +1078,7 @@ def _subject_allowed_rule_id(
     if _is_routine_conductor_hop_closeout(text):
         return None
     agent = _effective_to_agent(to_agent, text)
-    if _INTERMEDIATE_SUBJECT_RE.search(text):
+    if _intermediate_subject_blocked(text):
         if agent == "cursor" and _CURSOR_GATE_WAKE_RE.search(text):
             return "wake_gate_or_directive"
         return None
@@ -1074,13 +1172,11 @@ def qualify(
     if (
         effective_to == "cursor"
         and from_agent in _ROUTINE_DISPATCH_FROM
-        and _INTERMEDIATE_SUBJECT_RE.search(subject)
+        and _intermediate_subject_blocked(subject)
         and _CURSOR_GATE_WAKE_RE.search(subject)
     ):
         return RuleVerdict(True, "wake_cursor_gate_on_interm")
-    if from_agent in _ROUTINE_DISPATCH_FROM and _INTERMEDIATE_SUBJECT_RE.search(
-        subject
-    ):
+    if from_agent in _ROUTINE_DISPATCH_FROM and _intermediate_subject_blocked(subject):
         return RuleVerdict(False, "drop_dispatch_intermediate")
     if _is_cursor_sdk_generate_admit_echo(subject):
         return RuleVerdict(False, "drop_dispatch_intermediate")
@@ -1888,10 +1984,12 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                         rule_id=verdict.rule_id,
                         subject_head=head,
                     )
+                    detail = _suppression_failure_detail(verdict.rule_id, subject)
                     tombstones.append(
                         self_sender.suppressed_item(
                             _pending_item(turn, decided_by_rule=verdict.rule_id),
                             verdict.rule_id,
+                            delivery_failure_detail=detail,
                         )
                     )
                 continue
@@ -1980,14 +2078,41 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
                         rule_id=verdict.rule_id,
                         subject=subject,
                     )
-                drops.append(
-                    _scan_wake_drop(
-                        turn,
-                        agent=agent,
-                        rule_id=verdict.rule_id,
-                        reason="skipped:no_route",
+                named_to = raw_to.strip()
+                try:
+                    from agent_bus_store.db.endpoint_subscriptions import (
+                        current_subscription,
                     )
+
+                    db_row = current_subscription(agent, thread)
+                except Exception:
+                    db_row = None
+                route_missing = (
+                    db_row is None or str(db_row.get("state") or "") != "subscribed"
                 )
+                if (
+                    named_to
+                    and route_missing
+                    and normalize_bus_address(named_to) not in {"", "all", "team"}
+                ):
+                    tombstones.append(
+                        {
+                            **_pending_item(
+                                turn, decided_by_rule=verdict.rule_id, wake_agent=agent
+                            ),
+                            "state": "skipped",
+                            "reason": _no_route_tombstone_reason(named_to),
+                        }
+                    )
+                else:
+                    drops.append(
+                        _scan_wake_drop(
+                            turn,
+                            agent=agent,
+                            rule_id=verdict.rule_id,
+                            reason="skipped:no_route",
+                        )
+                    )
                 continue
             if _turn_is_stale_catchup(turn):
                 tid = int(turn["id"])

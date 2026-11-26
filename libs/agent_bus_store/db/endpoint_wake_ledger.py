@@ -141,6 +141,7 @@ def advance_scan(
         ledger_cols = _ledger_columns(conn)
         has_delivery_agent_id = "delivery_agent_id" in ledger_cols
         has_subscription_id = "subscription_id" in ledger_cols
+        has_failure_detail = "delivery_failure_detail" in ledger_cols
         for item in filtered:
             state = item.get("state", "pending")
             delivery_id = item.get("delivery_agent_id")
@@ -154,7 +155,12 @@ def advance_scan(
                 if (
                     existing is not None
                     and str(existing["state"] or "") == "skipped"
-                    and str(existing["reason"] or "") == "no_route:scan_holder"
+                    and (
+                        str(existing["reason"] or "") == "no_route:scan_holder"
+                        or str(existing["reason"] or "").startswith(
+                            "no_route:unsubscribed:"
+                        )
+                    )
                 ):
                     if has_subscription_id:
                         conn.execute(
@@ -248,6 +254,21 @@ def advance_scan(
                         stamp,
                         stamp if state == "skipped" else None,
                         item.get("decided_by_rule"),
+                    ),
+                )
+            if (
+                state == "skipped"
+                and has_failure_detail
+                and item.get("delivery_failure_detail")
+            ):
+                conn.execute(
+                    "UPDATE endpoint_wake_ledger SET delivery_failure_detail=? "
+                    "WHERE agent=? AND thread_id=? AND turn_id=?",
+                    (
+                        str(item["delivery_failure_detail"]),
+                        item["agent"],
+                        item["thread_id"],
+                        item["turn_id"],
                     ),
                 )
             if "enqueued_at" in ledger_cols and state == "pending":

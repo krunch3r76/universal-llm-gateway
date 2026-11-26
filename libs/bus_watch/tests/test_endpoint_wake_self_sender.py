@@ -608,3 +608,88 @@ def test_advance_scan_rejects_unknown_item_state(db: None) -> None:
                 }
             ],
         )
+
+
+PARENT = "59c162b6-a5b7-43d7-b7c1-0c27d7996c35"
+CHILD = "7725ba15-678b-4cce-aa16-79a3f4cc59a7"
+
+
+def test_poster_differs_from_child_tab_is_not_self_wake(db: None) -> None:
+    """AC1: house subscription carries the child tab; parent poster is not self."""
+    thread = _thread("ac1-poster-differs")
+    _subscribe("child-mailbox", thread, CHILD)
+    insert_turn(
+        thread=thread,
+        from_agent="house-seat",
+        to_agent="child-mailbox",
+        subject="RULING|x",
+        body="x",
+        from_agent_id=PARENT,
+    )
+    _rewind_cursor()
+    scan_once(_Store())  # type: ignore[arg-type]
+    rows = _ledger(thread)
+    assert rows
+    assert rows[0]["reason"] != "suppressed:drop_self_sender"
+    assert rows[0]["state"] == "pending"
+
+
+def test_poster_equals_child_tab_is_self_wake(db: None) -> None:
+    thread = _thread("ac1-poster-same")
+    _subscribe("child-mailbox", thread, CHILD)
+    insert_turn(
+        thread=thread,
+        from_agent="house-seat",
+        to_agent="child-mailbox",
+        subject="RULING|x",
+        body="x",
+        from_agent_id=CHILD,
+    )
+    _rewind_cursor()
+    scan_once(_Store())  # type: ignore[arg-type]
+    rows = _ledger(thread)
+    assert [(r["state"], r["reason"]) for r in rows] == [
+        ("skipped", "suppressed:drop_self_sender")
+    ]
+
+
+def test_named_addressee_without_subscription_tombstones_no_route(db: None) -> None:
+    """AC5: named to= with zero subscriptions is on the wake ledger."""
+    thread = _thread("ac5-no-route")
+    insert_turn(
+        thread=thread,
+        from_agent="grok-bot-gc1",
+        to_agent="child-mailbox-absent",
+        subject="RULING|778",
+        body="x",
+    )
+    _rewind_cursor()
+    scan_once(_Store())  # type: ignore[arg-type]
+    rows = _ledger(thread)
+    assert rows
+    assert "no_route" in str(rows[0]["reason"])
+
+
+def test_intermediate_suppress_writes_failure_detail(db: None) -> None:
+    """AC6: default_suppress tombstone carries delivery_failure_detail."""
+    thread = _thread("ac6-detail")
+    _subscribe("cursor-glass-opus-coordinator-08", thread, TAB)
+    insert_turn(
+        thread=thread,
+        from_agent="conductor-hop",
+        to_agent="cursor-glass-opus-coordinator-08",
+        subject="NOTE| progress admitted",
+        body="x",
+    )
+    _rewind_cursor()
+    scan_once(_Store())  # type: ignore[arg-type]
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state, reason, delivery_failure_detail FROM endpoint_wake_ledger "
+            "WHERE thread_id=?",
+            (thread,),
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "skipped"
+    assert row["delivery_failure_detail"]
+    assert "reason_code" in row["delivery_failure_detail"]
