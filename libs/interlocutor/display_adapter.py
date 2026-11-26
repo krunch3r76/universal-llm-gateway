@@ -9,6 +9,7 @@ from chat_harvest.models import ClassifyRefuse
 from cursor_bridge.electron_chat_relay import ElectronEndpoint, read_endpoint_turn
 from cursor_bridge.grok_spawn_idempotency import _NON_RETRYABLE
 
+from interlocutor.cursor_tab_view import grok_read_refusal, read_cursor_display_latest
 from interlocutor.targets import DisplayEightTarget, DisplayGrokWindowTarget
 
 
@@ -130,17 +131,11 @@ def _display_steer_success(
 
 
 async def read_display_latest(target: DisplayEightTarget) -> dict[str, Any]:
+    if target.app == "cursor":
+        return await read_cursor_display_latest(target)
     snap = await read_endpoint_turn(_endpoint(target), select=True)
     if not snap.get("ok"):
-        code = str(snap.get("code") or snap.get("reason") or "read_failed")
-        return _with_display(
-            target,
-            {
-                "ok": False,
-                "code": code,
-                "reason": str(snap.get("reason") or snap.get("detail") or code),
-            },
-        )
+        return _with_display(target, grok_read_refusal(target, snap))
     recent = list(snap.get("recent_messages") or [])
     empty_basis = str(snap.get("empty_basis") or "").strip()
     turns_raw = list(snap.get("message_turns") or [])

@@ -287,6 +287,20 @@ def test_dispatch_rejects_primary_fs_with_self_describing_error() -> None:
     assert "directly" in err.lower()
 
 
+def test_interlocutor_natural_query_ranks_first(server_state: dict) -> None:
+    from tool_search import search_manifest  # noqa: PLC0415
+
+    query = "read cursor glass tab state by display and tab id"
+    results = search_manifest(server_state["manifest"], query, limit=5)
+    assert results[0].name == "interlocutor"
+
+
+def test_interlocutor_entry_carries_cursor_target_example(server_state: dict) -> None:
+    entry = server_state["manifest"]["interlocutor"]
+    assert 'display:<n>/<tab-uuid>/cursor' in (entry.example or "")
+    assert '"op": "read"' in (entry.example or "")
+
+
 def test_dispatch_rejects_primary_rag_search_with_hint() -> None:
     from server import _PRIMARY_TOOLS  # noqa: PLC0415
     from tool_search_matcher import dispatch_rejection_for_primary_tool
