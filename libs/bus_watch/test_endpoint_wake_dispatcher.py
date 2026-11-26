@@ -10520,6 +10520,7 @@ def test_shadow_diff_subject_and_self_wake_flips() -> None:
         ("RULING| still in-flight", True),
         ("DELIVERED| hub", True),
         ("COMPLETE| leg", True),
+        ("OPERATOR_GATE| in-flight", True),
         ("NOTE| progress admitted", False),
         ("REPORT| progress", False),
         ("CHECKPOINT| boundary", False),
@@ -10543,14 +10544,14 @@ def test_shadow_diff_subject_and_self_wake_flips() -> None:
             old = False
         if new != old:
             flips.append(subject)
-        assert _subject_allowed_rule_id(subject, cse=False, to_agent=seat) is (
-            None if not new else _subject_allowed_rule_id(subject, cse=False, to_agent=seat)
-        )
+        rule_id = _subject_allowed_rule_id(subject, cse=False, to_agent=seat)
+        assert (rule_id is not None) is new
     assert flips == [
         "CLOSEOUT| lane admitted",
         "RULING| still in-flight",
         "DELIVERED| hub",
         "COMPLETE| leg",
+        "OPERATOR_GATE| in-flight",
     ]
     child = "7725ba15-678b-4cce-aa16-79a3f4cc59a7"
     parent = "59c162b6-a5b7-43d7-b7c1-0c27d7996c35"
@@ -10567,6 +10568,28 @@ def test_shadow_diff_subject_and_self_wake_flips() -> None:
         is_self_wake(
             object(),
             {"from_agent": "house-seat", "from_agent_id": child, "thread": "t"},
+            resolved,
+        )
+        == "drop_self_sender"
+    )
+
+    class _HouseSeatStore:
+        def subscriptions(self, raw: str) -> list[dict[str, str]]:
+            if raw != "house-seat":
+                return []
+            return [
+                {
+                    "state": "subscribed",
+                    "thread_scope": "t",
+                    "surface": "cursor",
+                    "agent_id": child,
+                }
+            ]
+
+    assert (
+        is_self_wake(
+            _HouseSeatStore(),
+            {"from_agent": "house-seat", "from_agent_id": None, "thread": "t"},
             resolved,
         )
         == "drop_self_sender"

@@ -618,6 +618,7 @@ def test_poster_differs_from_child_tab_is_not_self_wake(db: None) -> None:
     """AC1: house subscription carries the child tab; parent poster is not self."""
     thread = _thread("ac1-poster-differs")
     _subscribe("child-mailbox", thread, CHILD)
+    _subscribe("house-seat", thread, CHILD)
     insert_turn(
         thread=thread,
         from_agent="house-seat",
@@ -632,6 +633,27 @@ def test_poster_differs_from_child_tab_is_not_self_wake(db: None) -> None:
     assert rows
     assert rows[0]["reason"] != "suppressed:drop_self_sender"
     assert rows[0]["state"] == "pending"
+
+
+def test_non_uuid_poster_falls_through_house_seat_name_self_wake(db: None) -> None:
+    """Non-uuid poster with house-seat→CHILD takes the name path, not early not-self."""
+    thread = _thread("ac1-non-uuid-poster")
+    _subscribe("child-mailbox", thread, CHILD)
+    _subscribe("house-seat", thread, CHILD)
+    insert_turn(
+        thread=thread,
+        from_agent="house-seat",
+        to_agent="child-mailbox",
+        subject="RULING|x",
+        body="x",
+        from_agent_id="not-a-tab-uuid",
+    )
+    _rewind_cursor()
+    scan_once(_Store())  # type: ignore[arg-type]
+    rows = _ledger(thread)
+    assert [(r["state"], r["reason"]) for r in rows] == [
+        ("skipped", "suppressed:drop_self_sender")
+    ]
 
 
 def test_poster_equals_child_tab_is_self_wake(db: None) -> None:

@@ -107,7 +107,9 @@ def is_self_wake(
     poster = str(turn.get("from_agent_id") or "").strip().lower()
     if poster and poster == target:
         return SELF_SENDER_RULE
-    if poster:
+    # A foreign tab uuid is not this recipient. A non-uuid poster still
+    # resolves through the seat-name subscription path below.
+    if poster and TAB_UUID_RE.match(poster):
         return None
     thread = str(turn.get("thread") or "")
     scopes = {thread, str(sub.get("thread_scope") or thread)}
