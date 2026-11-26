@@ -176,6 +176,17 @@ def shape_cursor_inspect_success(
     return _with_display(target, base)
 
 
+def grok_read_refusal(target: DisplayEightTarget, snap: dict[str, Any]) -> dict[str, Any]:
+    """Shape relay read refusal; grok-default on a Cursor display gets the cursor hint."""
+    code = str(snap.get("code") or snap.get("reason") or "read_failed")
+    reason = str(snap.get("reason") or snap.get("detail") or code)
+    if code == "unknown_target" and target.app == "grok":
+        hint = grok_on_cursor_display_reason(target)
+        if hint:
+            reason = hint
+    return {"ok": False, "code": code, "reason": reason}
+
+
 async def read_cursor_display_latest(target: DisplayEightTarget) -> dict[str, Any]:
     raw = await inspect_glass_tab(display=target.display, agent_id=target.agent_id)
     if not raw.get("ok"):
@@ -197,6 +208,7 @@ def map_run_state_phase(run: dict[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
+    "grok_read_refusal",
     "map_run_state_phase",
     "read_cursor_display_latest",
     "grok_on_cursor_display_reason",

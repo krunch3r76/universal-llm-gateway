@@ -60,15 +60,7 @@ _KEYWORD_BOOSTS: dict[str, set[str]] = {
         "window",
     },
     "interlocutor": {
-        "cursor",
-        "glass",
-        "tab",
-        "display",
-        "uuid",
-        "agent_id",
-        "state",
-        "idle",
-        "running",
+        "cursor", "glass", "tab", "display", "uuid", "agent_id", "state", "idle", "running",
     },
     "email": {
         "mailbox",
@@ -142,6 +134,11 @@ _DISPATCH_PRIMARY_HINT = (
 )
 _DISPATCH_QUERY_TOKENS: frozenset[str] = frozenset({"dispatch", "overflow"})
 
+_INTERLOCUTOR_READ_DISPATCH = (
+    'dispatch(tool="interlocutor", arguments=\'{"op": "read", '
+    '"target": "display:<n>/<tab-uuid>/cursor", "coverage": "latest"}\')'
+)
+
 # Manifest overrides for overflow tools whose live schema/docstring under-specify
 # the dispatch wire shape (op + nested JSON ``arguments`` string).
 _MANIFEST_OVERRIDES: dict[str, dict[str, Any]] = {
@@ -170,14 +167,8 @@ _MANIFEST_OVERRIDES: dict[str, dict[str, Any]] = {
         ),
     },
     "interlocutor": {
-        "example": (
-            'dispatch(tool="interlocutor", arguments=\'{"op": "read", '
-            '"target": "display:<n>/<tab-uuid>/cursor", "coverage": "latest"}\')'
-        ),
-        "dispatch_template": (
-            'dispatch(tool="interlocutor", arguments=\'{"op": "read", '
-            '"target": "display:<n>/<tab-uuid>/cursor", "coverage": "latest"}\')'
-        ),
+        "example": _INTERLOCUTOR_READ_DISPATCH,
+        "dispatch_template": _INTERLOCUTOR_READ_DISPATCH,
     },
     "email": {
         "dispatch_template": (
