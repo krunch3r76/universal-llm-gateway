@@ -33,6 +33,7 @@ from .models import (
     Registration,
     RegistryError,
     SeatContended,
+    StorageUnavailable,
     _LaunchFn,
     _ListenFn,
     _row_to_registration,
@@ -47,6 +48,7 @@ from .models import (
 # Re-export _used_ports logic via ports module internals
 from .ports import _used_ports, _used_suffixes, select_free_registry_port
 from .registry_module import registry_package
+from .storage_guard import storage_refused
 
 
 def _peer_lane_ports() -> set[int]:
@@ -191,6 +193,11 @@ def reserve_allocating_row(
     the dormant relaunch path keeps its profile and CSE binding through
     ``carry``. *expect_status* compare-and-set runs before any claim or write.
     """
+    if storage_refused("reserve_allocating_row"):
+        raise StorageUnavailable(
+            "profile volume sentinel absent: reserve_allocating_row refused"
+        )
+
     from claude_bundles.what_is_running_view import (
         HOUSELESS_PURPOSES,
         OPERATOR_PURPOSES,
@@ -522,6 +529,9 @@ def register_lane(
     ``mission_kind`` ∈ {root, hop, side, parallel} tags Chrome-host lineage;
     ``parent_thread`` is the bus private-request lane (not SDK ``nest_under``).
     """
+    if storage_refused("register_lane"):
+        raise StorageUnavailable("profile volume sentinel absent: register_lane refused")
+
     if not holder or not str(holder).strip():
         raise RegistryError("holder is required")
     kind = _normalize_mission_kind(mission_kind)

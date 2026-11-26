@@ -167,6 +167,40 @@ def _ndjson_line(event: Event, *, source: str) -> bytes:
     return (json.dumps(payload) + "\n").encode()
 
 
+@event_factory
+def browser_storage_unavailable(
+    *,
+    sentinel: str,
+    host: str,
+    caller: str,
+) -> Event:
+    return Event(
+        signal="browser.storage.unavailable",
+        role="observation",
+        scope="node",
+        payload={"sentinel": sentinel, "host": host, "caller": caller},
+    )
+
+
+@event_factory
+def browser_seat_verification(
+    *,
+    diff_count: int,
+    houses_checked: int,
+    lost_owner_ids: list[str],
+) -> Event:
+    return Event(
+        signal="browser.seat.verification",
+        role="observation",
+        scope="node",
+        payload={
+            "diff_count": diff_count,
+            "houses_checked": houses_checked,
+            "lost_owner_ids": lost_owner_ids,
+        },
+    )
+
+
 def emit_browser_event(event: Event, *, source: str = "browser-governance") -> bool:
     """Best-effort Event Service ingest — never raises."""
     if _live_events_publish_disabled():
