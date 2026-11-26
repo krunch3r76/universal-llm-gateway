@@ -447,37 +447,71 @@ def test_actuation_refused_does_not_suppress_sample(
         lambda _store: [_houseless_sub_row(sub_id=1, agent_id=_UUID_A)],
     )
     store = MagicMock()
+    from bus_watch import endpoint_subscription_holder as holder
+
     store.subscriptions.return_value = [
         _houseless_sub_row(sub_id=1, agent_id=_UUID_A, bound_by="other-seat"),
     ]
-    check_cursor_ide_context_hops(store, mark={}, now=1000.0)
+    monkeypatch.setattr("bus_watch.ide_context_hop_monitor._registry_cache", None)
+    with patch(
+        "bus_watch.ide_context_hop_monitor.fetch_registry_claims",
+        return_value=holder.RegistryClaims(()),
+    ):
+        check_cursor_ide_context_hops(store, mark={}, now=1000.0)
     assert len(emitted) == 1
     assert emitted[0]["actuation_refused"] == "no_live_claim"
 
 
-def test_stale_refusal_includes_row_older_than_successor() -> None:
-    from bus_watch.ide_context_hop_monitor import row_stale_vs_successor
+def test_child_row_does_not_stale_parent_monitor() -> None:
+    from bus_watch import endpoint_subscription_holder as holder
 
     older = _houseless_sub_row(sub_id=10, agent_id=_UUID_A)
     newer = _houseless_sub_row(sub_id=20, agent_id=_UUID_B)
     rows = [older, newer]
-    assert row_stale_vs_successor(older, rows) is True
-    assert row_stale_vs_successor(newer, rows) is False
+    claim = holder.RegistryClaims(
+        (
+            {
+                "kind": "claim",
+                "status": "claimed",
+                "thread_id": "24600",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "address": {"tab_url": f"cursor://tab/{_UUID_A}"},
+            },
+        )
+    )
+    res = holder.resolve_holder("24600", rows, claim, budget_probe="glass.cdp")
+    assert res.actuation_refused is None
+    assert res.holder_uuid == _UUID_A
 
 
 def test_resolve_scope_actuation_ambiguous_two_stamped_claimed_rows() -> None:
-    from bus_watch.ide_context_hop_monitor import resolve_scope_actuation_refusal
+    from bus_watch import endpoint_subscription_holder as holder
 
-    older = _houseless_sub_row(sub_id=10, agent_id=_UUID_A)
-    newer = _houseless_sub_row(sub_id=20, agent_id=_UUID_A)
-    rows = [older, newer]
-    refusal, eligible = resolve_scope_actuation_refusal(
-        rows,
-        rows_same_scope=rows,
-        claim_tab_uuid_for_scope=lambda _scope: _UUID_A,
+    rows = [
+        _houseless_sub_row(sub_id=10, agent_id=_UUID_A),
+        _houseless_sub_row(sub_id=20, agent_id=_UUID_B),
+    ]
+    reg = holder.RegistryClaims(
+        (
+            {
+                "kind": "claim",
+                "status": "claimed",
+                "thread_id": "24600",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "address": {"tab_url": f"cursor://tab/{_UUID_A}"},
+            },
+            {
+                "kind": "claim",
+                "status": "claimed",
+                "thread_id": "24600",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "address": {"tab_url": f"cursor://agent/{_UUID_B}"},
+            },
+        )
     )
-    assert refusal == "ambiguous"
-    assert eligible is False
+    res = holder.resolve_holder("24600", rows, reg, budget_probe="glass.cdp")
+    assert res.actuation_refused == "ambiguous"
+    assert res.actuation_eligible is False
 
 
 @patch("bus_watch.ide_context_hop_monitor.measure_ide_tab")
@@ -487,10 +521,8 @@ def test_transcript_estimate_probe_not_actuation_eligible(
     mock_measure: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from bus_watch.ide_context_hop_monitor import (
-        _GI_TRIAL_STAMP,
-        check_cursor_ide_context_hops,
-    )
+    from bus_watch import endpoint_subscription_holder as holder
+    from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
 
     mock_lock.return_value = {}
     mock_measure.return_value = {
@@ -508,16 +540,27 @@ def test_transcript_estimate_probe_not_actuation_eligible(
         "bus_watch.events.emit_ide_tab_budget_sampled",
         lambda **kw: emitted.append(dict(kw)),
     )
-    row = _houseless_sub_row(sub_id=1, agent_id=_UUID_A, bound_by=_GI_TRIAL_STAMP)
+    row = _houseless_sub_row(sub_id=1, agent_id=_UUID_A)
     monkeypatch.setattr(
         "bus_watch.ide_context_hop_monitor._all_cursor_subscription_rows",
         lambda _store: [row],
     )
     store = MagicMock()
     store.subscriptions.return_value = [row]
+    claim = holder.RegistryClaims(
+        (
+            {
+                "kind": "claim",
+                "status": "claimed",
+                "thread_id": "24600",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "address": {"tab_url": f"cursor://tab/{_UUID_A}"},
+            },
+        )
+    )
     with patch(
-        "bus_watch.ide_context_hop_monitor.resolve_scope_actuation_refusal",
-        return_value=(None, True),
+        "bus_watch.ide_context_hop_monitor.fetch_registry_claims",
+        return_value=claim,
     ):
         check_cursor_ide_context_hops(store, mark={}, now=1000.0)
     assert len(emitted) == 1
@@ -532,10 +575,8 @@ def test_glass_cdp_probe_can_be_actuation_eligible(
     mock_measure: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from bus_watch.ide_context_hop_monitor import (
-        _GI_TRIAL_STAMP,
-        check_cursor_ide_context_hops,
-    )
+    from bus_watch import endpoint_subscription_holder as holder
+    from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
 
     mock_lock.return_value = {}
     mock_measure.return_value = {
@@ -554,16 +595,28 @@ def test_glass_cdp_probe_can_be_actuation_eligible(
         "bus_watch.events.emit_ide_tab_budget_sampled",
         lambda **kw: emitted.append(dict(kw)),
     )
-    row = _houseless_sub_row(sub_id=1, agent_id=_UUID_A, bound_by=_GI_TRIAL_STAMP)
+    row = _houseless_sub_row(sub_id=1, agent_id=_UUID_A)
     monkeypatch.setattr(
         "bus_watch.ide_context_hop_monitor._all_cursor_subscription_rows",
         lambda _store: [row],
     )
     store = MagicMock()
     store.subscriptions.return_value = [row]
+    claim = holder.RegistryClaims(
+        (
+            {
+                "kind": "claim",
+                "status": "claimed",
+                "thread_id": "24600",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "address": {"tab_url": f"cursor://tab/{_UUID_A}"},
+            },
+        )
+    )
+    monkeypatch.setattr("bus_watch.ide_context_hop_monitor._registry_cache", None)
     with patch(
-        "bus_watch.ide_context_hop_monitor.resolve_scope_actuation_refusal",
-        return_value=(None, True),
+        "bus_watch.ide_context_hop_monitor.fetch_registry_claims",
+        return_value=claim,
     ):
         check_cursor_ide_context_hops(store, mark={}, now=1000.0)
     assert len(emitted) == 1
@@ -580,11 +633,9 @@ def test_emit_latches_used_percent_at_first_summarized_across_samples(
     mock_measure: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from bus_watch import endpoint_subscription_holder as holder
     from bus_watch.digest_budget import reset_used_percent_at_first_summarized_latch
-    from bus_watch.ide_context_hop_monitor import (
-        _GI_TRIAL_STAMP,
-        check_cursor_ide_context_hops,
-    )
+    from bus_watch.ide_context_hop_monitor import check_cursor_ide_context_hops
 
     reset_used_percent_at_first_summarized_latch()
     mock_lock.return_value = {}
@@ -606,16 +657,27 @@ def test_emit_latches_used_percent_at_first_summarized_across_samples(
         "bus_watch.events.emit_ide_tab_budget_sampled",
         lambda **kw: emitted.append(dict(kw)),
     )
-    row = _houseless_sub_row(sub_id=1, agent_id=_UUID_A, bound_by=_GI_TRIAL_STAMP)
+    row = _houseless_sub_row(sub_id=1, agent_id=_UUID_A)
     monkeypatch.setattr(
         "bus_watch.ide_context_hop_monitor._all_cursor_subscription_rows",
         lambda _store: [row],
     )
     store = MagicMock()
     store.subscriptions.return_value = [row]
+    claim = holder.RegistryClaims(
+        (
+            {
+                "kind": "claim",
+                "status": "claimed",
+                "thread_id": "24600",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "address": {"tab_url": f"cursor://tab/{_UUID_A}"},
+            },
+        )
+    )
     with patch(
-        "bus_watch.ide_context_hop_monitor.resolve_scope_actuation_refusal",
-        return_value=(None, True),
+        "bus_watch.ide_context_hop_monitor.fetch_registry_claims",
+        return_value=claim,
     ):
         mark: dict[str, float] = {}
         check_cursor_ide_context_hops(store, mark=mark, now=1000.0)

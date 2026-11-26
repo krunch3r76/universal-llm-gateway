@@ -701,3 +701,28 @@ def IdeTabBudgetSampled(  # noqa: N802
 def emit_ide_tab_budget_sampled(**kwargs: Any) -> None:
     """Publish a per-tab IDE budget sample from the context-hop monitor."""
     _emit(IdeTabBudgetSampled(**kwargs))
+
+
+@event_factory
+def IdeHopTransferAccepted(  # noqa: N802
+    *,
+    scope: str,
+    departing_uuid: str,
+    successor_uuid: str,
+) -> Event:
+    """Observation: endpoint-subscription hop transfer completed (S3)."""
+    return Event(
+        signal="ide.hop.transfer.accepted",
+        role="observation",
+        payload={
+            "N": scope,
+            "U": departing_uuid,
+            "V": successor_uuid,
+        },
+        scope="global",
+    )
+
+
+def emit_ide_hop_transfer_accepted(**kwargs: Any) -> None:
+    """Publish accepted hop transfer with scope and tab UUID pair."""
+    _emit(IdeHopTransferAccepted(**kwargs))
