@@ -447,6 +447,33 @@ class JoinedReentryExhausted(RegistryError):  # noqa: N818 — spec-bound name, 
     """Raised when a nested join wait would reserve or wait a second time."""
 
 
+class StorageUnavailable(RegistryError):  # noqa: N818 — spec-bound V1 name
+    """Raised when profile-volume sentinel is configured but absent."""
+
+    def __init__(
+        self,
+        message: str = "browser storage unavailable",
+        *,
+        code: str = "storage.unavailable",
+        source: Literal["rpc", "stream", "engine", "gateway", "edge", "master"] = "rpc",
+        retryable: bool = True,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        envelope = error_envelope(
+            code=code,
+            message=message,
+            source=source,
+            retryable=retryable,
+            data=data,
+        )
+        self.code = str(envelope["code"])
+        self.message = str(envelope["message"])
+        self.source = envelope["source"]
+        self.retryable = bool(envelope["retryable"])
+        self.data = dict(envelope.get("data") or {})
+        super().__init__(message)
+
+
 class RegistryBusyError(RegistryError):
     """Raised when a second driver attempts to attach a registration already held by another driver."""
 

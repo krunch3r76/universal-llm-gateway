@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 DEFAULT_WARN_MEM_AVAILABLE_MIB = 6144
@@ -384,3 +385,19 @@ def standing_owner_id_for_profile(profile_path: str) -> str | None:
             if best_key is None or len(suffix) > len(best_key):
                 best_key = suffix
     return STANDING_HOUSES.get(best_key) if best_key else None
+
+
+def storage_sentinel_path() -> Path | None:
+    """Path named by ``ULG_BROWSER_STORAGE_SENTINEL``, or ``None`` when unset."""
+    raw = os.environ.get("ULG_BROWSER_STORAGE_SENTINEL", "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def storage_ready() -> bool:
+    """``True`` when no sentinel is configured or the sentinel file exists."""
+    p = storage_sentinel_path()
+    if p is None:
+        return True
+    return p.is_file()

@@ -23,6 +23,7 @@ from .models import (
     seat_open,
 )
 from .registry_module import registry_package
+from .storage_guard import storage_refused
 
 RECLAIM_TRASH_DIR = Path.home() / ".gateway" / ".reclaim-trash"
 
@@ -309,6 +310,9 @@ def hygiene_reclaim_extended(
     chrome_port_for_profile: Callable[[Path], int | None] | None = None,
 ) -> HygieneReclaimResult:
     """Reclaim released/orphaned rows and optionally sweep stale active or orphan profiles."""
+    if storage_refused("hygiene"):
+        return HygieneReclaimResult(reclaimed_ports=[], removed_profiles=[])
+
     listen = is_listening or cdp_lane.is_listening
     reclaimed: list[int] = []
     removed: list[str] = []
