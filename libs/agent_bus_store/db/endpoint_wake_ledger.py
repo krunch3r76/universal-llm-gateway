@@ -2470,6 +2470,8 @@ def list_wake_ledger_rows(
             "subscription_id, cse_registration_id, reason, decided_by_rule, "
             "created_at, claimed_at, finished_at"
         )
+        if "delivery_agent_id" in cols:
+            select_cols += ", delivery_agent_id"
         if extra:
             select_cols += ", " + ", ".join(extra)
         sql = (

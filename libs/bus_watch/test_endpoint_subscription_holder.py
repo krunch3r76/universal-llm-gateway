@@ -408,16 +408,29 @@ def _complete_transfer_ctx(
     )
 
 
-def test_t4_deferred_route_agent_blocks_transfer() -> None:
+def test_t4_pending_live_delivery_agent_id_blocks_transfer() -> None:
     ctx = _complete_transfer_ctx(
-        ledger_rows=[{"state": "deferred", "agent": _UUID_A, "id": 1}],
+        ledger_rows=[
+            {
+                "state": "pending",
+                "agent": "brg-grand-impresario",
+                "delivery_agent_id": _UUID_A,
+                "id": 1,
+            },
+        ],
     )
     assert holder.is_transfer_complete(ctx) is False
 
 
-def test_t4_pending_route_agent_blocks_transfer() -> None:
+def test_t4_deferred_live_delivery_agent_id_blocks_transfer() -> None:
     ctx = _complete_transfer_ctx(
-        ledger_rows=[{"state": "pending", "agent": _UUID_A.upper()}],
+        ledger_rows=[
+            {
+                "state": "deferred",
+                "agent": "brg-grand-impresario",
+                "delivery_agent_id": _UUID_A.upper(),
+            },
+        ],
     )
     assert holder.is_transfer_complete(ctx) is False
 
@@ -427,12 +440,13 @@ def test_t4_empty_ledger_after_successful_get_allows_transfer() -> None:
     assert holder.is_transfer_complete(ctx) is True
 
 
-def test_t4_delivered_route_agent_v_passes() -> None:
+def test_t4_delivered_live_delivery_agent_id_successor_passes() -> None:
     ctx = _complete_transfer_ctx(
         ledger_rows=[
             {
                 "state": "delivered",
-                "agent": _UUID_B,
+                "agent": "brg-grand-impresario",
+                "delivery_agent_id": _UUID_B,
                 "finished_at": "2099-01-02T00:00:00Z",
                 "id": 2,
             },
@@ -441,18 +455,35 @@ def test_t4_delivered_route_agent_v_passes() -> None:
     assert holder.is_transfer_complete(ctx) is True
 
 
-def test_t4_delivered_first_to_old_uuid_fails() -> None:
+def test_t4_delivered_mailbox_only_not_successor_delivery() -> None:
+    """Live rows without delivery_agent_id must not imply wake delivery to V."""
     ctx = _complete_transfer_ctx(
         ledger_rows=[
             {
                 "state": "delivered",
-                "agent": _UUID_A,
+                "agent": "brg-grand-impresario",
+                "finished_at": "2099-01-02T00:00:00Z",
+                "id": 1,
+            },
+        ],
+    )
+    assert holder.is_transfer_complete(ctx) is True
+
+
+def test_t4_delivered_first_departing_delivery_agent_id_fails() -> None:
+    ctx = _complete_transfer_ctx(
+        ledger_rows=[
+            {
+                "state": "delivered",
+                "agent": "brg-grand-impresario",
+                "delivery_agent_id": _UUID_A,
                 "finished_at": "2099-01-01T00:00:00Z",
                 "id": 1,
             },
             {
                 "state": "delivered",
-                "agent": _UUID_B,
+                "agent": "brg-grand-impresario",
+                "delivery_agent_id": _UUID_B,
                 "finished_at": "2099-01-02T00:00:00Z",
                 "id": 2,
             },

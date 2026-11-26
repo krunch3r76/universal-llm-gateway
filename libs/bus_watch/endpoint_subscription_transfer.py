@@ -55,12 +55,14 @@ def _row_for_mailbox(
 
 
 def _ledger_row_tab_uuid(row: dict[str, Any]) -> str | None:
-    """Tab UUID from ledger row (route shape uses ``agent``; legacy uses ``agent_id``)."""
-    for key in ("agent_id", "agent"):
-        uid = is_uuid_agent_id(row.get(key))
-        if uid:
-            return uid
-    return None
+    """Tab UUID: live ``delivery_agent_id``, then legacy ``agent_id``, then uuid ``agent``."""
+    uid = is_uuid_agent_id(row.get("delivery_agent_id"))
+    if uid:
+        return uid
+    uid = is_uuid_agent_id(row.get("agent_id"))
+    if uid:
+        return uid
+    return is_uuid_agent_id(row.get("agent"))
 
 
 def _ledger_delivery_sort_key(row: dict[str, Any]) -> tuple[int, str, int]:
