@@ -505,6 +505,17 @@ class SeatContended(RegistryError):  # noqa: N818 — spec-bound name, not an Er
         super().__init__(message)
 
 
+
+
+
+class AdmissionRejected(RegistryError):  # noqa: N818 — spec-bound name, not an Error suffix
+    code = "browser.admission.rejected"
+    retryable = True
+
+    def __init__(self, message: str, *, data: dict | None = None) -> None:
+        self.data = dict(data or {})
+        super().__init__(message)
+
 class RegistryExhaustedError(RegistryError):
     """Raised when the configured CDP registry port pool has no free port remaining for a new host."""
 

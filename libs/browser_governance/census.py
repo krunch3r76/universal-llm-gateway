@@ -18,7 +18,10 @@ from typing import Any
 
 from browser_governance.contract import (
     admission_preflight_mode,
+    census_cdp_ports,
     census_enabled,
+    census_host,
+    census_proc_root,
     custody_class_for_profile,
     standing_owner_id_for_profile,
     warn_disk_free_gib,
@@ -26,6 +29,7 @@ from browser_governance.contract import (
     warn_swap_free_mib,
 )
 from browser_governance.events import (
+    browser_admission_rejected,
     browser_admission_warn,
     browser_resource_census,
     emit_browser_event,
@@ -148,12 +152,11 @@ def _xvfb_display(cmdline: str) -> str | None:
     return None
 
 
-
-
 def _is_chrome_root_process(cmdline: str) -> bool:
     if not _is_browser_cmdline(cmdline):
         return False
     return not any(tok.startswith("--type=") for tok in cmdline.split())
+
 
 def _enumerate_processes(
     proc_root: Path,
@@ -225,7 +228,9 @@ def _probe_jupiter_cdp() -> dict[str, Any]:
     live = 0
     targets_total = 0
     page_targets = 0
-    per_port_timeout = min(0.2, _JUPITER_PROBE_TIMEOUT_S / max(len(_JUPITER_CDP_PORT_RANGE), 1))
+    per_port_timeout = min(
+        0.2, _JUPITER_PROBE_TIMEOUT_S / max(len(_JUPITER_CDP_PORT_RANGE), 1)
+    )
     for port in _JUPITER_CDP_PORT_RANGE:
         local_port = _JUPITER_TUNNEL_BASE + port
         is_live, total, pages = _probe_cdp_json_list(
@@ -358,11 +363,13 @@ def collect_local_browser_census(
         details["jupiter"] = _probe_jupiter_cdp()
 
     unowned_profile_count = sum(
-        1 for p, row in profile_summaries.items()
+        1
+        for p, row in profile_summaries.items()
         if p != "__unprofiled__" and row.get("custody_class") == "unowned"
     )
     duplicate_owner_profiles = [
-        p for p, row in profile_summaries.items()
+        p
+        for p, row in profile_summaries.items()
         if p != "__unprofiled__" and row.get("root_process_count", 0) > 1
     ]
     duplicate_owner_count = len(duplicate_owner_profiles)
@@ -445,7 +452,14 @@ def check_ephemeral_admission_preflight(
     if mode == "off":
         return {"allowed": True, "mode": "off", "warnings": []}
 
-    data = dict(snapshot) if snapshot is not None else collect_local_browser_census(host=host)
+    if snapshot is not None:
+        data = dict(snapshot)
+    else:
+        data = collect_local_browser_census(
+            host=census_host(),
+            proc_root=census_proc_root(),
+            cdp_ports=census_cdp_ports(),
+        )
     warnings: list[str] = []
     mem = data.get("mem_available_mib")
     swap = data.get("swap_free_mib")
@@ -463,7 +477,12 @@ def check_ephemeral_admission_preflight(
         warnings.append(
             f"mem_available_mib={mem} below warn threshold {warn_mem_available_mib()}"
         )
-    if _below(swap, warn_swap_free_mib()):
+    swap_total = data.get("swap_total_mib")
+    if (
+        isinstance(swap_total, (int, float))
+        and float(swap_total) > 0
+        and _below(swap, warn_swap_free_mib())
+    ):
         warnings.append(
             f"swap_free_mib={swap} below warn threshold {warn_swap_free_mib()}"
         )
@@ -487,9 +506,17 @@ def check_ephemeral_admission_preflight(
         for msg in warnings:
             logger.warning("browser admission preflight (%s): %s", caller, msg)
 
+    mode_str = "warn" if mode == "warn" else mode
+    allowed = True
+    if mode == "enforce" and warnings:
+        allowed = False
+        emit_browser_event(
+            browser_admission_rejected(host=host, caller=caller, warnings=warnings),
+            source="browser-governance",
+        )
     return {
-        "allowed": True,
-        "mode": "warn",
+        "allowed": allowed,
+        "mode": mode_str,
         "warnings": warnings,
         "mem_available_mib": mem,
         "swap_free_mib": swap,
@@ -517,4 +544,9 @@ def run_census_throttled(*, source: str = "cdp_ask") -> dict[str, Any] | None:
     if now - _last_census_monotonic < census_interval_s():
         return None
     _last_census_monotonic = now
-    return run_census_and_emit(source=source)
+    return run_census_and_emit(
+        host=census_host(),
+        source=source,
+        proc_root=census_proc_root(),
+        cdp_ports=census_cdp_ports(),
+    )

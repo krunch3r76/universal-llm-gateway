@@ -211,6 +211,34 @@ def _streaming_protection_reason(
     return None
 
 
+
+
+_last_shed_monotonic = 0.0
+
+
+def reset_pressure_shed_clock() -> None:
+    global _last_shed_monotonic
+    _last_shed_monotonic = 0.0
+
+
+def pressure_shed_once(
+    *,
+    min_interval_s: float = 60.0,
+    is_listening: _ListenFn | None = None,
+    is_busy: Callable[[str], bool] | None = None,
+) -> DrainResult | None:
+    global _last_shed_monotonic
+    from browser_governance.events import browser_pressure_shed, emit_browser_event
+
+    now = time.monotonic()
+    if now - _last_shed_monotonic < min_interval_s:
+        return None
+    _last_shed_monotonic = now
+    result = drain_live_hosts_to_dormant(is_listening=is_listening, is_busy=is_busy)
+    emit_browser_event(browser_pressure_shed(counts=result.as_dict()))
+    return result
+
+
 def drain_live_hosts_to_dormant(
     *,
     display: str | None = None,

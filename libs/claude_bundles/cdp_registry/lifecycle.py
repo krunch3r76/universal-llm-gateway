@@ -8,13 +8,14 @@ import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from universal_protocol.errors import ProtocolError
 
 from claude_bundles import cdp_lane
 from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
+from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
 from .attachment_journal import has_standdown_token
 from .driver_locks import (
@@ -358,15 +359,37 @@ def _finish_reserved_launch(
     *,
     launch: bool,
     launch_fn: _LaunchFn,
+    admission: Literal["warn_only", "enforceable"] = "warn_only",
+    shed_is_listening: _ListenFn | None = None,
+    is_busy: Callable[[str], bool] | None = None,
+    listen: _ListenFn | None = None,
 ) -> Registration:
     """Launch outside the ports lock, then flip the reserved row to active."""
     registration_id = str(row["registration_id"])
     chrome_pid: int | None = None
     display = str(row.get("display") or "").strip() or None
-    with contextlib.suppress(Exception):
+    pf: dict[str, Any] = {"allowed": True}
+    try:
         from browser_governance.census import check_ephemeral_admission_preflight
 
-        check_ephemeral_admission_preflight(caller="cdp_registry.ephemeral")
+        pf = check_ephemeral_admission_preflight(caller="cdp_registry.ephemeral")
+    except Exception as exc:  # noqa: BLE001 — a preflight that cannot run never blocks a mint
+        with contextlib.suppress(Exception):
+            _store.append_log(
+                "admission_preflight_error",
+                {"registration_id": registration_id, "error": type(exc).__name__},
+            )
+    if admission == "enforceable" and not pf.get("allowed", True):
+        from .dormant_drain import pressure_shed_once
+        from .models import AdmissionRejected
+
+        pressure_shed_once(
+            is_listening=shed_is_listening or listen or cdp_lane.is_listening,
+            is_busy=is_busy,
+        )
+        raise AdmissionRejected("browser admission preflight rejected", data=dict(pf))
+
+
     try:
         if launch:
             acct = str(row.get("account_id") or "default")
@@ -516,6 +539,8 @@ def register_lane(
     is_listening: _ListenFn | None = None,
     joined: list | None = None,
     account_id: str | None = None,
+    shed_is_listening: _ListenFn | None = None,
+    is_busy: Callable[[str], bool] | None = None,
 ) -> Registration:
     """Reserve port under lock, launch Chrome outside lock, then flip active (F1).
 
@@ -561,7 +586,23 @@ def register_lane(
             joined=joined,
             account_id=account_id,
         )
-    return _finish_reserved_launch(row, launch=launch, launch_fn=launch_fn)
+    from browser_governance.contract import admission_preflight_mode
+
+    purpose_norm = str(purpose or "").strip()
+    enforceable = (
+        admission_preflight_mode() == "enforce"
+        and purpose_norm not in OPERATOR_PURPOSES
+    )
+    admission = "enforceable" if enforceable else "warn_only"
+    return _finish_reserved_launch(
+        row,
+        launch=launch,
+        launch_fn=launch_fn,
+        admission=admission,
+        listen=listen,
+        shed_is_listening=shed_is_listening,
+        is_busy=is_busy,
+    )
 
 
 def reattach(registration_id: str, *, holder: str) -> Registration:

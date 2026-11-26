@@ -225,3 +225,24 @@ def emit_browser_event(event: Event, *, source: str = "browser-governance") -> b
             sock.sendall(line)
         return True
     return False
+
+
+
+@event_factory
+def browser_admission_rejected(*, host: str, caller: str, warnings: list[str]) -> Event:
+    return Event(
+        signal="browser.admission.rejected",
+        role="observation",
+        scope="node",
+        payload={"host": host, "caller": caller, "warnings": warnings},
+    )
+
+
+@event_factory
+def browser_pressure_shed(*, counts: dict) -> Event:
+    return Event(
+        signal="browser.pressure.shed",
+        role="observation",
+        scope="node",
+        payload=counts,
+    )

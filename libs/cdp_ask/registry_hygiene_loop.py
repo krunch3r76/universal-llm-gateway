@@ -49,10 +49,11 @@ def run_hygiene_once() -> dict[str, Any]:
     wake_alarms = sweep_wake_owed_ttl(
         notify_pager=_sync_notify_pager,
     )
+    census: dict[str, Any] | None = None
     try:
         from browser_governance.census import run_census_throttled
 
-        run_census_throttled(source="cdp_ask")
+        census = run_census_throttled(source="cdp_ask")
     except Exception:  # noqa: BLE001 — census must not break hygiene
         logger.exception("browser resource census tick failed")
     return {
@@ -62,6 +63,7 @@ def run_hygiene_once() -> dict[str, Any]:
         "drained": drain.as_dict(),
         "dormant_reclaimed": dormant_reclaimed,
         "kept_tabs_released": kept_tabs_released,
+        "census": census,
     }
 
 

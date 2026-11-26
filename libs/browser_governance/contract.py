@@ -100,14 +100,50 @@ def census_enabled() -> bool:
     return not _is_off_value(raw)
 
 
-def admission_preflight_mode() -> Literal["off", "warn"]:
+def admission_preflight_mode() -> Literal["off", "warn", "enforce"]:
     """Admission preflight mode; off when census disabled or env disables warn."""
     if not census_enabled():
         return "off"
     raw = _strip_env("ULG_BROWSER_ADMISSION_PREFLIGHT", "warn")
     if _is_off_value(raw):
         return "off"
+    if raw.strip().lower() == "enforce":
+        return "enforce"
     return "warn"
+
+
+def census_host() -> str:
+    raw = _strip_env("ULG_BROWSER_CENSUS_HOST", "").strip()
+    if raw:
+        return raw
+    import socket
+
+    return socket.gethostname().split(".")[0] or "io"
+
+
+def census_cdp_ports() -> tuple[int, ...]:
+    raw = _strip_env("ULG_BROWSER_CENSUS_CDP_PORTS", "").strip()
+    if not raw:
+        return tuple(range(9338, 9345))
+    out: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            out.extend(range(int(a), int(b) + 1))
+        else:
+            out.append(int(part))
+    return tuple(out)
+
+
+def census_proc_root() -> Path:
+    raw = _strip_env("ULG_BROWSER_CENSUS_PROC_ROOT", "").strip()
+    if raw:
+        return Path(raw)
+    return Path("/proc")
+
 
 
 def warn_mem_available_mib() -> float:
