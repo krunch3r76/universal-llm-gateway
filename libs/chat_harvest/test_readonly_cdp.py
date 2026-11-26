@@ -101,6 +101,8 @@ def test_socket_send_only_in_guarded_function() -> None:
     modules = [
         repo / "libs/chat_harvest/readonly_cdp.py",
         repo / "libs/chat_harvest/dom_observation.py",
+        repo / "libs/chat_harvest/dom_observation_shape.py",
+        repo / "libs/chat_harvest/dom_observation_request.py",
         repo / "libs/cdp_ask/chat_session_observe.py",
     ]
     send_sites: list[str] = []

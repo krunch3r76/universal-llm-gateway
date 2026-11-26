@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from chat_harvest.dom_observation import (
+from chat_harvest.dom_observation import run_dom_observation
+from chat_harvest.dom_observation_request import (
     ChatObserveRequest,
     InvalidCdpUrl,
     InvalidPattern,
-    run_dom_observation,
     validate_cdp_url,
     validate_match_terms,
     validate_max_nodes,

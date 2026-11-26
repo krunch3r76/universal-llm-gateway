@@ -12,7 +12,7 @@ import logging
 import os
 import time
 
-from chat_harvest.dom_observation import ChatObserveRequest
+from chat_harvest.dom_observation_request import ChatObserveRequest
 from claude_bundles.cdp_registry.dormant import reap_dead_holder_tab_rows
 from deploy_identity.code_version import resolve_code_version
 from deploy_identity.tree_state import peek_tree_state, refresh_tree_state

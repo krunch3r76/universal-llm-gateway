@@ -7,13 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from chat_harvest.dom_observation import (
-    InvalidPattern,
+from chat_harvest.dom_observation import run_dom_observation
+from chat_harvest.dom_observation_request import InvalidPattern, validate_match_terms
+from chat_harvest.dom_observation_shape import (
     build_observation_block,
     cap_observation_size,
-    run_dom_observation,
     shape_node,
-    validate_match_terms,
 )
 from chat_harvest.readonly_cdp import COLLECT_SCRIPT, ReadonlyCDP, set_open_connection
 
@@ -304,6 +303,8 @@ def test_modules_have_no_forbidden_imports() -> None:
     modules = [
         repo / "libs/chat_harvest/readonly_cdp.py",
         repo / "libs/chat_harvest/dom_observation.py",
+        repo / "libs/chat_harvest/dom_observation_shape.py",
+        repo / "libs/chat_harvest/dom_observation_request.py",
         repo / "libs/cdp_ask/chat_session_observe.py",
     ]
     for path in modules:
