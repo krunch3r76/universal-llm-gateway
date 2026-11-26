@@ -5,6 +5,7 @@ function (cfg) {
   const maxNodes = Math.min(Math.max((cfg && cfg.max_nodes) || 20, 1), 50);
   const maxInsideMessage = Math.min(5, maxNodes);
   const messageSel = (cfg && cfg.message_sel) || [];
+  const userMessageSel = (cfg && cfg.user_message_sel) || [];
   const composerSel = (cfg && cfg.composer_sel) || [];
   const excludedParts = (cfg && cfg.excluded_parts) || [];
   const caps = (cfg && cfg.caps) || {};
@@ -19,7 +20,7 @@ function (cfg) {
   const scanCap = caps.text_nodes_scanned || 50000;
   const root = document.querySelector('main') || document.body;
   if (!root) {
-    return { nodes: [], counts: { outside: 0, inside_message: 0, inside_composer: 0, excluded_other: 0, total: 0 }, scan_capped: false, page: {} };
+    return { nodes: [], containers: [], counts: { outside: 0, inside_message: 0, inside_composer: 0, excluded_other: 0, total: 0, returned: 0 }, scan_capped: false, text_nodes_scanned: 0, page: { turn_nodes: 0, user_turn_nodes: 0 } };
   }
   function clip(s, n) {
     s = String(s || '');
@@ -35,9 +36,39 @@ function (cfg) {
     for (const sel of selectors) {
       try {
         if (el.closest(sel)) return sel;
-      } catch (e) { /* invalid selector */ }
+      } catch (e) {}
     }
     return null;
+  }
+  function messageRoots(selectors) {
+    const out = [];
+    const seen = new Set();
+    for (const sel of selectors) {
+      let list;
+      try {
+        list = root.querySelectorAll(sel);
+      } catch (e) {
+        continue;
+      }
+      for (let i = 0; i < list.length; i++) {
+        const el = list[i];
+        if (!seen.has(el)) {
+          seen.add(el);
+          out.push(el);
+        }
+      }
+    }
+    return out;
+  }
+  function lastInDocumentOrder(els) {
+    if (!els.length) return null;
+    let last = els[0];
+    for (let i = 1; i < els.length; i++) {
+      const el = els[i];
+      const pos = last.compareDocumentPosition(el);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) last = el;
+    }
+    return last;
   }
   function classify(el) {
     if (closestMatch(el, messageSel)) return { region: 'inside_message', excluded_by: null };
@@ -45,7 +76,7 @@ function (cfg) {
     for (const part of excludedParts) {
       try {
         if (el.closest(part)) return { region: 'excluded_other', excluded_by: part };
-      } catch (e) { /* */ }
+      } catch (e) {}
     }
     return { region: 'outside', excluded_by: null };
   }
@@ -61,7 +92,7 @@ function (cfg) {
         role: el.getAttribute('role'),
         text: textInfo(clip((el.innerText || ''), ctrlTextCap)),
         aria_label: label ? clip(label, ariaValCap) : null,
-        disabled: disabled
+        disabled: disabled,
       });
     }
     return out;
@@ -92,9 +123,27 @@ function (cfg) {
     if (parts.length === 0 || parts[0] !== rootTag) parts.unshift(rootTag);
     return parts.slice(0, pathCap);
   }
-  function describe(el, idx, region, excluded_by) {
+  function isInsideUserMessage(el) {
+    return !!closestMatch(el, userMessageSel);
+  }
+  function isInsideAnyMessage(el) {
+    return !!closestMatch(el, messageSel);
+  }
+  function follows(ref, el, inside) {
+    if (!ref) return null;
+    if (inside(el)) return false;
+    return !!(ref.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+  }
+  function positionFlags(el) {
+    return {
+      after_last_message_node: follows(lastMessage, el, isInsideAnyMessage),
+      after_last_user_message: follows(lastUser, el, isInsideUserMessage),
+    };
+  }
+  function describe(el, idx, region, excluded_by, container_index) {
     const rect = el.getBoundingClientRect();
     const text = textInfo(el.innerText || '');
+    const pos = positionFlags(el);
     return {
       index: idx,
       region: region,
@@ -110,14 +159,20 @@ function (cfg) {
         rect: [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)],
         in_viewport: rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth,
         visible: rect.width > 0 && rect.height > 0,
-        after_last_user_message: false,
-        after_last_message_node: false
+        after_last_user_message: pos.after_last_user_message,
+        after_last_message_node: pos.after_last_message_node,
       },
-      path: buildPath(el)
+      path: buildPath(el),
+      container_index: container_index === undefined ? null : container_index,
     };
   }
+  const messageEls = messageRoots(messageSel);
+  const userEls = messageRoots(userMessageSel);
+  const lastMessage = lastInDocumentOrder(messageEls);
+  const lastUser = lastInDocumentOrder(userEls);
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-  const matches = [];
+  const seenMatch = new Set();
+  const allMatches = [];
   let scanned = 0;
   let node;
   while ((node = walker.nextNode()) && scanned < scanCap) {
@@ -126,7 +181,10 @@ function (cfg) {
     const lower = raw.toLowerCase();
     let hit = false;
     for (const t of terms) {
-      if (t && lower.indexOf(t) >= 0) { hit = true; break; }
+      if (t && lower.indexOf(t) >= 0) {
+        hit = true;
+        break;
+      }
     }
     const parent = node.parentElement;
     if (!parent) continue;
@@ -134,24 +192,70 @@ function (cfg) {
       const al = (parent.getAttribute('aria-label') || '').toLowerCase();
       const ti = (parent.getAttribute('title') || '').toLowerCase();
       for (const t of terms) {
-        if (t && (al.indexOf(t) >= 0 || ti.indexOf(t) >= 0)) { hit = true; break; }
+        if (t && (al.indexOf(t) >= 0 || ti.indexOf(t) >= 0)) {
+          hit = true;
+          break;
+        }
       }
     }
-    if (hit) matches.push(parent);
+    if (!hit || seenMatch.has(parent)) continue;
+    seenMatch.add(parent);
+    allMatches.push(parent);
   }
-  const counts = { outside: 0, inside_message: 0, inside_composer: 0, excluded_other: 0, total: 0 };
-  const nodes = [];
-  let insideUsed = 0;
-  for (let i = 0; i < matches.length && nodes.length < maxNodes; i += 1) {
-    const el = matches[i];
-    const cls = classify(el);
+  const counts = { outside: 0, inside_message: 0, inside_composer: 0, excluded_other: 0, total: 0, returned: 0 };
+  for (let i = 0; i < allMatches.length; i += 1) {
+    const cls = classify(allMatches[i]);
     counts[cls.region] = (counts[cls.region] || 0) + 1;
     counts.total += 1;
-    if (cls.region === 'inside_message') {
-      if (insideUsed >= maxInsideMessage) continue;
-      insideUsed += 1;
+  }
+  const containers = [];
+  const containerForElement = new Map();
+  function containerIndexFor(el, region) {
+    if (region === 'inside_message' || region === 'inside_composer') return null;
+    let cur = el.parentElement;
+    let highest = null;
+    let depth = 0;
+    while (cur && cur !== root && depth < 8) {
+      depth += 1;
+      let blocked = false;
+      for (const sel of messageSel) {
+        try {
+          if (cur.querySelector(sel)) {
+            blocked = true;
+            break;
+          }
+        } catch (e) {}
+      }
+      if (blocked) break;
+      highest = cur;
+      cur = cur.parentElement;
     }
-    nodes.push(describe(el, nodes.length, cls.region, cls.excluded_by));
+    if (!highest) return null;
+    if (!containerForElement.has(highest)) {
+      const idx = containers.length;
+      containerForElement.set(highest, idx);
+      containers.push(describe(highest, idx, 'outside', null, null));
+    }
+    return containerForElement.get(highest);
+  }
+  const selected = [];
+  let insideUsed = 0;
+  for (let i = 0; i < allMatches.length; i += 1) {
+    if (selected.length >= maxNodes) break;
+    const el = allMatches[i];
+    const cls = classify(el);
+    if (cls.region === 'inside_message' && insideUsed >= maxInsideMessage) continue;
+    if (cls.region === 'inside_message') insideUsed += 1;
+    const cidx = containerIndexFor(el, cls.region);
+    selected.push({ el: el, cls: cls, container_index: cidx });
+  }
+  counts.returned = selected.length;
+  const nodes = [];
+  for (let i = 0; i < selected.length; i += 1) {
+    const item = selected[i];
+    nodes.push(
+      describe(item.el, i, item.cls.region, item.cls.excluded_by, item.container_index)
+    );
   }
   const controlsOutside = [];
   const ctrlEls = root.querySelectorAll("button, a[href], [role='button']");
@@ -164,24 +268,20 @@ function (cfg) {
       role: el.getAttribute('role'),
       text: textInfo(clip((el.innerText || ''), 80)),
       aria_label: el.getAttribute('aria-label'),
-      disabled: !!el.disabled
+      disabled: !!el.disabled,
     });
   }
+  const scanCapHit = scanned >= scanCap;
   return {
-    nodes: nodes,
-    counts: counts,
-    scan_capped: scanned >= scanCap,
+    nodes: nodes, containers: containers, counts: counts, scan_capped: scanCapHit, text_nodes_scanned: scanned,
     page: {
-      ready_state: document.readyState,
-      login_wall: /\/login/i.test(location.href) || /\/logout/i.test(location.href),
-      streaming: !!document.querySelector("[aria-busy='true']"),
-      root: root.tagName ? root.tagName.toLowerCase() : 'body',
-      window_scroll_y: window.scrollY || 0,
-      body_scroll_height: (document.body && document.body.scrollHeight) || 0,
-      inner_height: window.innerHeight || 0,
-      title: textInfo(document.title || '')
+      ready_state: document.readyState, login_wall: /\/login/i.test(location.href) || /\/logout/i.test(location.href),
+      streaming: !!document.querySelector("[aria-busy='true']"), root: root.tagName ? root.tagName.toLowerCase() : 'body',
+      window_scroll_y: window.scrollY || 0, body_scroll_height: (document.body && document.body.scrollHeight) || 0,
+      inner_height: window.innerHeight || 0, title: textInfo(document.title || ''), url: textInfo(location.href || ''),
+      turn_nodes: messageEls.length, user_turn_nodes: userEls.length, text_nodes_scanned: scanned, scan_capped: scanCapHit,
+      time_origin_ms: Math.round(performance.timeOrigin),
     },
     controls_outside_messages: controlsOutside,
-    text_nodes_scanned: scanned
   };
 }

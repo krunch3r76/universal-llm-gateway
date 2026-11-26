@@ -145,7 +145,10 @@ def _emit_observed(result: dict[str, Any]) -> None:
     nodes_returned = 0
     counts = observation.get("counts")
     if isinstance(counts, dict):
-        nodes_returned = int(counts.get("returned") or counts.get("total") or 0)
+        if "returned" in counts:
+            nodes_returned = int(counts["returned"])
+        else:
+            nodes_returned = int(counts.get("total") or 0)
     looked = bool(observation.get("looked"))
     payload_code = result.get("code")
     opened = bool(result.get("opened_on_demand"))

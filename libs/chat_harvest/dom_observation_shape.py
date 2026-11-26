@@ -6,9 +6,12 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from browser_governance.contract import sanitize_ui_banner_text
-
 from chat_harvest.dom_observation_request import url_matches
+from chat_harvest.dom_observation_sanitize import (  # noqa: F401
+    shape_control,
+    shape_node,
+    shape_page_block,
+)
 from chat_harvest.readonly_cdp import COLLECT_SCRIPT, ReadonlyCDP
 
 OBSERVATION_MAX_BYTES = 65536
@@ -19,40 +22,42 @@ _HANDLING = (
 )
 
 
-def _shape_text_block(raw: dict[str, Any] | None) -> dict[str, Any]:
-    text = raw or {}
-    page = str(text.get("page_text") or "")
-    sanitized = sanitize_ui_banner_text(page, max_chars=500) or ""
-    chars = int(text.get("chars") or len(page))
-    cut = bool(text.get("cut")) or len(page) > 500
-    if len(sanitized) > 500:
-        sanitized = sanitized[:500]
-        cut = True
-    return {"page_text": sanitized, "chars": chars, "cut": cut}
+def _observation_byte_size(obs: dict[str, Any]) -> int:
+    return len(json.dumps(obs, ensure_ascii=True).encode())
 
 
-def shape_node(raw: dict[str, Any]) -> dict[str, Any]:
-    node = dict(raw)
-    node["text"] = _shape_text_block(raw.get("text"))
-    node["controls"] = [
-        {**ctrl, "text": _shape_text_block(ctrl.get("text"))}
-        for ctrl in (raw.get("controls") or [])
-    ]
-    return node
+def _referenced_container_indexes(nodes: list[dict[str, Any]]) -> set[int]:
+    return {int(n["container_index"]) for n in nodes if n.get("container_index") is not None}
 
 
 def cap_observation_size(observation: dict[str, Any]) -> dict[str, Any]:
     obs = json.loads(json.dumps(observation, ensure_ascii=True))
     dropped = 0
     nodes = list(obs.get("nodes") or [])
-    while nodes and len(json.dumps(obs, ensure_ascii=True).encode()) > OBSERVATION_MAX_BYTES:
+    while nodes and _observation_byte_size(obs) > OBSERVATION_MAX_BYTES:
         nodes.pop()
         dropped += 1
         obs["nodes"] = nodes
         obs.setdefault("counts", {})["returned"] = len(nodes)
+    while _observation_byte_size(obs) > OBSERVATION_MAX_BYTES:
+        containers = list(obs.get("containers") or [])
+        if not containers:
+            break
+        refs = _referenced_container_indexes(nodes)
+        tail = len(containers) - 1
+        if tail in refs:
+            break
+        containers.pop()
+        obs["containers"] = containers
+    outside = list(obs.get("controls_outside_messages") or [])
+    while outside and _observation_byte_size(obs) > OBSERVATION_MAX_BYTES:
+        outside.pop()
+        obs["controls_outside_messages"] = outside
+    obs["nodes"] = nodes
     if dropped:
         obs["truncated"] = True
         obs["dropped"] = dropped
+        obs.setdefault("counts", {})["returned"] = len(nodes)
     else:
         obs.setdefault("truncated", False)
     return obs
@@ -68,13 +73,16 @@ def build_observation_block(
     cdp_methods: dict[str, int],
 ) -> dict[str, Any]:
     collect = raw_collect or {}
-    nodes = [shape_node(n) for n in collect.get("nodes") or []]
+    raw_nodes = collect.get("nodes") or []
+    nodes = [shape_node(n) for n in raw_nodes]
     counts = dict(collect.get("counts") or {})
-    counts.setdefault("total", len(nodes))
-    counts.setdefault("returned", len(nodes))
-    page = collect.get("page") or {}
-    if isinstance(page.get("title"), dict):
-        page = {**page, "title": _shape_text_block(page["title"])}
+    counts.setdefault("returned", len(raw_nodes))
+    counts.setdefault("total", counts.get("total") or len(raw_nodes))
+    page = shape_page_block(collect.get("page") or {})
+    if page.get("time_origin_ms") is not None:
+        tab = {**tab, "time_origin_ms": page.pop("time_origin_ms")}
+    containers = [shape_node(c) for c in (collect.get("containers") or [])]
+    outside = [shape_control(c) for c in (collect.get("controls_outside_messages") or [])]
     obs = {
         "looked": looked,
         "source": "dom.observation",
@@ -90,8 +98,8 @@ def build_observation_block(
         "counts": counts,
         "truncated": False,
         "nodes": nodes,
-        "containers": [],
-        "controls_outside_messages": collect.get("controls_outside_messages") or [],
+        "containers": containers,
+        "controls_outside_messages": outside,
     }
     return cap_observation_size(obs)
 
@@ -133,7 +141,7 @@ def empty_observation_block(
 ) -> dict[str, Any]:
     return build_observation_block(
         looked=looked,
-        raw_collect={"nodes": [], "counts": {"total": 0}, "page": {}},
+        raw_collect={"nodes": [], "counts": {"total": 0, "returned": 0}, "page": {}},
         query={"match_terms": match_terms, "max_nodes": max_nodes, "scope": scope},
         readiness=readiness,
         tab=tab,
@@ -193,7 +201,14 @@ def attach_page(
                 conversation_id="",
                 observation=None,
             )
-        conn, minted = cdp.open_tab(chat_url)
+        try:
+            conn, minted = cdp.open_tab(chat_url)
+        except Exception:
+            minted = cdp.opened_target_id
+            if minted:
+                tab_info["origin"] = "opened_on_demand"
+                tab_info["target_id"] = minted
+            raise
         tab_info["origin"] = "opened_on_demand"
         tab_info["target_id"] = minted
         return conn, minted, None
@@ -213,29 +228,40 @@ def collect_observation(
     match_terms: list[str],
     max_nodes: int,
     scope: str,
-    minted_target: str | None,
 ) -> dict[str, Any]:
     collect_raw = cdp.evaluate(conn, COLLECT_SCRIPT, cfg)
-    if not isinstance(collect_raw, dict):
-        collect_raw = {}
-    observation = build_observation_block(
+    return build_observation_block(
         looked=True,
         raw_collect=collect_raw,
         query={"match_terms": match_terms, "max_nodes": max_nodes, "scope": scope},
         readiness=readiness,
         tab=tab_info,
-        cdp_methods=dict(cdp.method_counts),
+        cdp_methods={},
     )
-    if minted_target:
-        observation.setdefault("tab", {})["minted_tab_closed"] = True
-    return observation
 
 
-def close_minted_tab(cdp: ReadonlyCDP, minted_target: str | None, tab_info: dict[str, Any]) -> None:
-    if not minted_target:
+def stamp_tab_close_and_methods(
+    *,
+    cdp: ReadonlyCDP,
+    tab_info: dict[str, Any],
+    result: dict[str, Any] | None,
+) -> None:
+    minted_id = cdp.opened_target_id
+    if minted_id:
+        tab_info["origin"] = "opened_on_demand"
+        tab_info["target_id"] = minted_id
+        try:
+            cdp.close_tab(minted_id)
+            tab_info["minted_tab_closed"] = True
+        except Exception:
+            tab_info["minted_tab_closed"] = False
+        if result is not None:
+            result["opened_on_demand"] = True
+    elif tab_info.get("origin") == "existing_tab":
+        tab_info["minted_tab_closed"] = None
+    methods = dict(cdp.method_counts)
+    if result is None or result.get("observation") is None:
         return
-    try:
-        cdp.close_tab(minted_target)
-        tab_info["minted_tab_closed"] = True
-    except Exception:
-        tab_info["minted_tab_closed"] = False
+    obs = result["observation"]
+    obs["tab"] = dict(tab_info)
+    obs["cdp_methods"] = methods

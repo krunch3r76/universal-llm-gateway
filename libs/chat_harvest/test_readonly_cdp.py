@@ -36,9 +36,17 @@ _FORBIDDEN_METHODS = [
 
 
 class FakeSocket:
-    def __init__(self, *, evaluate_value: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        evaluate_value: Any = None,
+        exception_details: bool = False,
+        protocol_error: bool = False,
+    ) -> None:
         self.frames: list[dict[str, Any]] = []
         self._evaluate_value = evaluate_value if evaluate_value is not None else {}
+        self._exception_details = exception_details
+        self._protocol_error = protocol_error
         self._timeout = 5.0
 
     def send(self, data: str) -> None:
@@ -46,6 +54,12 @@ class FakeSocket:
 
     def recv(self) -> str:
         msg_id = self.frames[-1]["id"]
+        if self._protocol_error:
+            return json.dumps({"id": msg_id, "error": "protocol_error"})
+        if self._exception_details:
+            return json.dumps(
+                {"id": msg_id, "result": {"exceptionDetails": {"text": "script boom"}}}
+            )
         return json.dumps({"id": msg_id, "result": {"result": {"value": self._evaluate_value}}})
 
     def settimeout(self, timeout: float) -> None:
@@ -103,6 +117,8 @@ def test_socket_send_only_in_guarded_function() -> None:
         repo / "libs/chat_harvest/dom_observation.py",
         repo / "libs/chat_harvest/dom_observation_shape.py",
         repo / "libs/chat_harvest/dom_observation_request.py",
+        repo / "libs/chat_harvest/dom_observation_sanitize.py",
+        repo / "libs/chat_harvest/dom_observation_poll.py",
         repo / "libs/cdp_ask/chat_session_observe.py",
     ]
     send_sites: list[str] = []
@@ -173,63 +189,92 @@ def test_existing_tab_receives_only_evaluate() -> None:
     assert not any(f["method"] in BROWSER_METHODS for f in cdp.frames)
 
 
-def test_no_tab_mints_once_and_closes_even_on_error() -> None:
-    chat_url = "https://claude.ai/chat/thread-uuid"
-    cdp = ReadonlyCDP("http://127.0.0.1:9222")
-    _fake_http(cdp, [])
+def test_no_tab_mints_once_and_closes_even_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from chat_harvest.dom_observation import run_dom_observation
 
+    chat_url = "https://claude.ai/chat/thread-uuid"
     minted_id = "target-99"
     page_ws = "ws://127.0.0.1:9222/devtools/page/minted"
+    cdp = ReadonlyCDP("http://127.0.0.1:9222")
 
-    def _open(ws: str, **_kwargs: Any) -> FakeSocket:
-        if "browser" in ws:
-            sock = FakeSocket()
-            orig_recv = sock.recv
-
-            def _recv() -> str:
-                mid = sock.frames[-1]["id"]
-                if sock.frames[-1]["method"] == "Target.createTarget":
-                    return json.dumps({"id": mid, "result": {"targetId": minted_id}})
-                if sock.frames[-1]["method"] == "Target.closeTarget":
-                    return json.dumps({"id": mid, "result": {}})
-                return orig_recv()
-
-            sock.recv = _recv  # type: ignore[method-assign]
-            return sock
-        return FakeSocket()
-
-    set_open_connection(_open)
+    state = {"minted": False}
 
     def _get(url: str) -> Any:
         if url.endswith("/json/version"):
             return {"webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/browser/abc"}
         if url.endswith("/json/list"):
-            return [
-                {
-                    "type": "page",
-                    "id": minted_id,
-                    "targetId": minted_id,
-                    "url": chat_url,
-                    "webSocketDebuggerUrl": page_ws,
-                }
-            ]
+            if state["minted"]:
+                return [
+                    {
+                        "type": "page",
+                        "id": minted_id,
+                        "targetId": minted_id,
+                        "url": chat_url,
+                        "webSocketDebuggerUrl": page_ws,
+                    }
+                ]
+            return []
         raise AssertionError(url)
 
     cdp._http_get = _get  # noqa: SLF001
-    conn, tid = cdp.open_tab(chat_url)
+
+    def _open(ws: str, **_kwargs: Any) -> FakeSocket:
+        if "browser" in ws:
+            sock = FakeSocket()
+
+            def _recv() -> str:
+                mid = sock.frames[-1]["id"]
+                if sock.frames[-1]["method"] == "Target.createTarget":
+                    state["minted"] = True
+                    return json.dumps({"id": mid, "result": {"targetId": minted_id}})
+                if sock.frames[-1]["method"] == "Target.closeTarget":
+                    return json.dumps({"id": mid, "result": {}})
+                return json.dumps({"id": mid, "result": {"result": {"value": {}}}})
+
+            sock.recv = _recv  # type: ignore[method-assign]
+            return sock
+
+        class PageSock(FakeSocket):
+            def recv(self) -> str:
+                if len(self.frames) >= 5:
+                    return super().recv()
+                return json.dumps(
+                    {
+                        "id": self.frames[-1]["id"],
+                        "result": {
+                            "result": {
+                                "value": {
+                                    "turn_nodes": 1,
+                                    "element_count": 1,
+                                    "login_wall": False,
+                                }
+                            }
+                        },
+                    }
+                )
+
+        return PageSock(exception_details=True)
+
+    set_open_connection(_open)
+    monkeypatch.setattr("chat_harvest.dom_observation_poll.time.sleep", lambda _s: None)
+    out = run_dom_observation(
+        chat_url=chat_url,
+        conversation_id="thread-uuid",
+        cdp_url="http://127.0.0.1:9222",
+        match_terms=["zz"],
+        max_nodes=20,
+        open_on_demand=True,
+        scope="conversation:thread-uuid",
+        transport=cdp,
+    )
     create_frames = [f for f in cdp.frames if f["method"] == "Target.createTarget"]
+    close_frames = [f for f in cdp.frames if f["method"] == "Target.closeTarget"]
     assert len(create_frames) == 1
     assert create_frames[0]["params"] == {"url": chat_url, "background": True}
-
-    def _recv_error() -> str:
-        mid = conn.frames[-1]["id"]
-        return json.dumps({"id": mid, "error": "failed"})
-
-    conn.recv = _recv_error  # type: ignore[method-assign]
-    with pytest.raises(OSError):
-        cdp.evaluate(conn, COLLECT_SCRIPT, {"match_terms": ["xy"]})
-    cdp.close_tab(tid)
-    assert any(f["method"] == "Target.closeTarget" for f in cdp.frames)
+    assert len(close_frames) == 1
+    assert close_frames[0]["params"] == {"targetId": minted_id}
+    assert out["outcome"] == "unreachable"
+    assert out["code"] == "collector_error"
 
 
 def test_open_on_demand_false_without_match_opens_no_socket() -> None:

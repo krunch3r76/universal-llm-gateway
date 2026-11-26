@@ -26,8 +26,38 @@ PROBE_ENDPOINT_SHA = (
 )
 EXECUTE_PROBE_SHA = "221aad3b0415742d64afb117470ef6b6c78b673cd5b769baf1aa59ad10b30bfc"
 
-_HARVEST_FIELDS = sorted(ChatHarvestRequest.model_fields.keys())
-_RESPONSE_FIELDS = sorted(ChatHarvestResponse.model_fields.keys())
+_HARVEST_FIELDS = [
+    "after_turn",
+    "cdp_url",
+    "include_turns",
+    "limit",
+    "metadata_only",
+    "site",
+    "supersede",
+    "url",
+]
+_RESPONSE_FIELDS = [
+    "alignment",
+    "archive_sha256",
+    "archive_uri",
+    "code",
+    "conflict",
+    "conversation_id",
+    "existing_sha256",
+    "harvested_at",
+    "last_turn_index",
+    "message_count",
+    "messages",
+    "messages_sha256",
+    "opened_on_demand",
+    "outcome",
+    "reason",
+    "site",
+    "streaming",
+    "truncated",
+    "turn_count",
+    "url",
+]
 
 
 @pytest.fixture
@@ -91,7 +121,7 @@ def _install_cdp_fake(monkeypatch: pytest.MonkeyPatch, *, collect: dict[str, Any
         return FakeSocket(evaluate_value=collect)
 
     set_open_connection(_open)
-    monkeypatch.setattr("chat_harvest.dom_observation.time.sleep", lambda _s: None)
+    monkeypatch.setattr("chat_harvest.dom_observation_poll.time.sleep", lambda _s: None)
     return recorded
 
 
@@ -113,6 +143,7 @@ def test_observe_200_real_handler_fake_transport(
         ],
         "counts": {"total": 1, "outside": 1, "returned": 1},
         "page": {"title": {"page_text": "t", "chars": 1, "cut": False}},
+        "containers": [],
     }
 
     from chat_harvest.readonly_cdp import set_open_connection
@@ -145,7 +176,7 @@ def test_observe_200_real_handler_fake_transport(
             return json.dumps({"id": msg_id, "result": {"result": {"value": value}}})
 
     set_open_connection(lambda *_a, **_k: SeqSocket())
-    monkeypatch.setattr("chat_harvest.dom_observation.time.sleep", lambda _s: None)
+    monkeypatch.setattr("chat_harvest.dom_observation_poll.time.sleep", lambda _s: None)
     resp = client.post(
         "/v1/chat-session/observe",
         json={"url": CLAUDE_CHAT_URL, "match_terms": ["paused", "card"]},
@@ -169,17 +200,50 @@ def test_observe_emits_one_event_without_page_text(
 ) -> None:
     collect = {
         "nodes": [{"text": {"page_text": "SECRET_PAGE_TEXT", "chars": 16, "cut": False}, "controls": []}],
-        "counts": {"total": 1},
+        "counts": {"total": 1, "returned": 1},
         "page": {},
+        "containers": [],
     }
-    _install_cdp_fake(monkeypatch, collect=collect)
-    client.post(
+    from chat_harvest.readonly_cdp import set_open_connection
+    from chat_harvest.test_readonly_cdp import FakeSocket
+
+    target = {
+        "type": "page",
+        "id": "p1",
+        "url": CLAUDE_CHAT_URL,
+        "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/p1",
+    }
+    monkeypatch.setattr(
+        "chat_harvest.readonly_cdp.ReadonlyCDP.http_get_json",
+        lambda _self, url: (
+            [target] if url.endswith("/json/list") else {"webSocketDebuggerUrl": "ws://b"}
+        ),
+    )
+    ready = {
+        "turn_nodes": 2,
+        "element_count": 10,
+        "login_wall": False,
+        "visibility_state": "visible",
+    }
+
+    class SeqSocket(FakeSocket):
+        def recv(self) -> str:
+            value = collect if len(self.frames) >= 5 else ready
+            msg_id = self.frames[-1]["id"]
+            return json.dumps({"id": msg_id, "result": {"result": {"value": value}}})
+
+    set_open_connection(lambda *_a, **_k: SeqSocket())
+    monkeypatch.setattr("chat_harvest.dom_observation_poll.time.sleep", lambda _s: None)
+    resp = client.post(
         "/v1/chat-session/observe",
         json={"url": CLAUDE_CHAT_URL, "match_terms": ["sec", "ret"]},
     )
+    assert resp.status_code == 200
+    assert "SECRET_PAGE_TEXT" in resp.json()["observation"]["nodes"][0]["text"]["page_text"]
     assert len(observed_events) == 1
     assert observed_events[0]["signal"] == "mcp.chat.session.observed"
     assert "SECRET_PAGE_TEXT" not in str(observed_events[0]["payload"])
+    assert observed_events[0]["payload"]["nodes_returned"] == 1
     assert "opened_on_demand" not in observed_events[0]["payload"]
 
 
@@ -282,10 +346,15 @@ def test_probe_never_enters_observe_path(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _boom(**_kwargs: object) -> None:
+    async def _boom(_req: object) -> None:
         raise AssertionError("observe path invoked")
 
-    monkeypatch.setattr("cdp_ask.chat_session_observe.execute_observe", _boom)
+    monkeypatch.setattr("cdp_ask.app.execute_observe", _boom)
+    with pytest.raises(AssertionError, match="observe path invoked"):
+        client.post(
+            "/v1/chat-session/observe",
+            json={"url": CLAUDE_CHAT_URL, "match_terms": ["aa", "bb"]},
+        )
 
     async def _fake_harvest(**_kwargs: object) -> ChatHarvestResponse:
         return ChatHarvestResponse(
@@ -313,3 +382,23 @@ def test_probe_never_enters_observe_path(
 def test_probe_models_field_names_frozen() -> None:
     assert sorted(ChatHarvestRequest.model_fields.keys()) == _HARVEST_FIELDS
     assert sorted(ChatHarvestResponse.model_fields.keys()) == _RESPONSE_FIELDS
+
+
+def test_emit_observed_returned_zero_not_total(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cdp_ask import chat_session_observe as mod
+
+    captured: list[Any] = []
+
+    def _cap(event: object) -> None:
+        captured.append(event)
+
+    monkeypatch.setattr(mod, "emit", _cap)
+    mod._emit_observed(
+        {
+            "site": "claude",
+            "conversation_id": "c",
+            "outcome": "observed",
+            "observation": {"looked": True, "counts": {"returned": 0, "total": 3}},
+        }
+    )
+    assert captured[0].payload["nodes_returned"] == 0

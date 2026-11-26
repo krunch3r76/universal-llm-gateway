@@ -21,6 +21,10 @@ class ReadOnlyViolation(Exception):  # noqa: N818
     """Attempted to send a forbidden CDP method or evaluate an unregistered script."""
 
 
+class CollectorScriptError(OSError):
+    """Runtime.evaluate returned exceptionDetails or an unusable script value."""
+
+
 @dataclass(frozen=True, slots=True)
 class RegisteredScript:
     """Fixed collector script loaded at import time."""
@@ -108,6 +112,10 @@ class ReadonlyCDP:
     _http_get: Callable[[str], Any] | None = None
 
     @property
+    def opened_target_id(self) -> str | None:
+        return self._opened_target_id
+
+    @property
     def port(self) -> int:
         parsed = urlparse(self.cdp_base)
         return int(parsed.port or 9222)
@@ -170,8 +178,13 @@ class ReadonlyCDP:
         message = _recv_for_id(conn, msg_id, timeout_s=self.timeout_s)
         if "error" in message:
             raise OSError(str(message["error"]))
-        result = message.get("result", {}).get("result", {})
-        return result.get("value")
+        payload = message.get("result", {})
+        if payload.get("exceptionDetails"):
+            raise CollectorScriptError("Runtime.evaluate exceptionDetails")
+        inner = payload.get("result", {})
+        if script is COLLECT_SCRIPT and not isinstance(inner.get("value"), dict):
+            raise CollectorScriptError("collect script did not return an object")
+        return inner.get("value")
 
     def open_tab(self, url: str) -> tuple[Any, str]:
         conn, _ = self._browser_connection()
@@ -212,7 +225,9 @@ class ReadonlyCDP:
                 frames=self.frames,
                 method_counts=self.method_counts,
             )
-            _recv_for_id(conn, msg_id, timeout_s=self.timeout_s)
+            message = _recv_for_id(conn, msg_id, timeout_s=self.timeout_s)
+            if "error" in message:
+                raise OSError(str(message["error"]))
         finally:
             conn.close()
             self._opened_target_id = None

@@ -7,83 +7,21 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from chat_harvest.dom_observation_poll import poll_until_stable, poll_until_turns
 from chat_harvest.dom_observation_request import (
     MESSAGE_SELECTORS,
-    READY_BUDGET_S,
-    READY_POLL_S,
-    STABLE_BUDGET_S,
-    STABLE_POLL_S,
     WALL_BUDGET_S,
     open_tab_state,
     script_config,
 )
 from chat_harvest.dom_observation_shape import (
     attach_page,
-    close_minted_tab,
     collect_observation,
     failure_observation_response,
     observation_response,
+    stamp_tab_close_and_methods,
 )
-from chat_harvest.readonly_cdp import READY_SCRIPT, ReadonlyCDP
-
-
-def _poll_until_turns(
-    cdp: ReadonlyCDP,
-    conn: Any,
-    cfg_ready: dict[str, Any],
-    *,
-    readiness: dict[str, Any],
-    tab_info: dict[str, Any],
-    deadline: float,
-    clock: Callable[[], float],
-    budget_left: Callable[[], float],
-) -> dict[str, Any] | None:
-    ready_deadline = min(deadline, clock() + READY_BUDGET_S)
-    while clock() < ready_deadline and budget_left() > 0:
-        readiness["polls"] += 1
-        t0 = clock()
-        ready_val = cdp.evaluate(conn, READY_SCRIPT, cfg_ready)
-        readiness["waited_ms"] += int((clock() - t0) * 1000)
-        if isinstance(ready_val, dict):
-            tab_info["visibility_state"] = ready_val.get("visibility_state")
-            if ready_val.get("login_wall"):
-                return {"login_wall": True}
-            if int(ready_val.get("turn_nodes") or 0) > 0:
-                readiness["turns_seen"] = True
-                return None
-        time.sleep(READY_POLL_S)
-    return None
-
-
-def _poll_until_stable(
-    cdp: ReadonlyCDP,
-    conn: Any,
-    cfg_ready: dict[str, Any],
-    *,
-    readiness: dict[str, Any],
-    deadline: float,
-    clock: Callable[[], float],
-    budget_left: Callable[[], float],
-) -> None:
-    stable_deadline = min(deadline, clock() + STABLE_BUDGET_S)
-    last_count: int | None = None
-    stable_hits = 0
-    while clock() < stable_deadline and budget_left() > 0:
-        t0 = clock()
-        ready_val = cdp.evaluate(conn, READY_SCRIPT, cfg_ready)
-        readiness["waited_ms"] += int((clock() - t0) * 1000)
-        readiness["polls"] += 1
-        if isinstance(ready_val, dict):
-            count = int(ready_val.get("element_count") or 0)
-            if last_count is not None and count == last_count:
-                stable_hits += 1
-                if stable_hits >= 3:
-                    readiness["stable"] = True
-                    return
-            else:
-                stable_hits = 1
-            last_count = count
-        time.sleep(STABLE_POLL_S)
+from chat_harvest.readonly_cdp import CollectorScriptError, ReadonlyCDP
 
 
 def _observe_after_ready(
@@ -97,14 +35,13 @@ def _observe_after_ready(
     match_terms: list[str],
     max_nodes: int,
     scope: str,
-    minted_target: str | None,
     readiness: dict[str, Any],
     tab_info: dict[str, Any],
     deadline: float,
     clock: Callable[[], float],
     budget_left: Callable[[], float],
 ) -> dict[str, Any]:
-    _poll_until_stable(
+    poll_until_stable(
         cdp,
         conn,
         cfg_ready,
@@ -114,10 +51,6 @@ def _observe_after_ready(
         budget_left=budget_left,
     )
     if budget_left() <= 0:
-        if minted_target:
-            with contextlib.suppress(Exception):
-                cdp.close_tab(minted_target)
-            tab_info["minted_tab_closed"] = True
         return failure_observation_response(
             outcome="unreachable",
             code="timeout",
@@ -128,7 +61,7 @@ def _observe_after_ready(
             max_nodes=max_nodes,
             scope=scope,
             tab=tab_info,
-            cdp_methods=cdp.method_counts,
+            cdp_methods={},
             readiness=readiness,
         )
     observation = collect_observation(
@@ -140,7 +73,6 @@ def _observe_after_ready(
         match_terms=match_terms,
         max_nodes=max_nodes,
         scope=scope,
-        minted_target=minted_target,
     )
     return observation_response(
         outcome="observed",
@@ -148,7 +80,7 @@ def _observe_after_ready(
         chat_url=chat_url,
         conversation_id=conversation_id,
         observation=observation,
-        opened_on_demand=bool(minted_target),
+        opened_on_demand=False,
     )
 
 
@@ -161,7 +93,6 @@ def _run_on_connected_page(
     match_terms: list[str],
     max_nodes: int,
     scope: str,
-    minted_target: str | None,
     readiness: dict[str, Any],
     tab_info: dict[str, Any],
     deadline: float,
@@ -170,7 +101,7 @@ def _run_on_connected_page(
 ) -> dict[str, Any]:
     cfg = script_config(match_terms, max_nodes)
     cfg_ready = {"message_sel": MESSAGE_SELECTORS}
-    ready_signal = _poll_until_turns(
+    ready_signal = poll_until_turns(
         cdp,
         conn,
         cfg_ready,
@@ -191,7 +122,7 @@ def _run_on_connected_page(
             max_nodes=max_nodes,
             scope=scope,
             tab=tab_info,
-            cdp_methods=cdp.method_counts,
+            cdp_methods={},
             readiness=readiness,
         )
     return _observe_after_ready(
@@ -204,13 +135,51 @@ def _run_on_connected_page(
         match_terms=match_terms,
         max_nodes=max_nodes,
         scope=scope,
-        minted_target=minted_target,
         readiness=readiness,
         tab_info=tab_info,
         deadline=deadline,
         clock=clock,
         budget_left=budget_left,
     )
+
+
+def _execute_dom_observation(
+    *,
+    cdp: ReadonlyCDP,
+    chat_url: str,
+    conversation_id: str,
+    match_terms: list[str],
+    max_nodes: int,
+    open_on_demand: bool,
+    scope: str,
+    readiness: dict[str, Any],
+    tab_info: dict[str, Any],
+    deadline: float,
+    clock: Callable[[], float],
+    budget_left: Callable[[], float],
+) -> tuple[Any | None, dict[str, Any]]:
+    conn, _minted, early = attach_page(
+        cdp, chat_url, open_on_demand=open_on_demand, tab_info=tab_info
+    )
+    if early is not None:
+        early["conversation_id"] = conversation_id
+        early["url"] = chat_url
+        return conn, early
+    body = _run_on_connected_page(
+        cdp=cdp,
+        conn=conn,
+        chat_url=chat_url,
+        conversation_id=conversation_id,
+        match_terms=match_terms,
+        max_nodes=max_nodes,
+        scope=scope,
+        readiness=readiness,
+        tab_info=tab_info,
+        deadline=deadline,
+        clock=clock,
+        budget_left=budget_left,
+    )
+    return conn, body
 
 
 def run_dom_observation(
@@ -231,36 +200,42 @@ def run_dom_observation(
     readiness = {"polls": 0, "waited_ms": 0, "turns_seen": False, "stable": False}
     tab_info = open_tab_state()
     conn: Any = None
-    minted_target: str | None = None
+    result: dict[str, Any] | None = None
 
     def budget_left() -> float:
         return deadline - clock()
 
     try:
-        conn, minted_target, early = attach_page(
-            cdp, chat_url, open_on_demand=open_on_demand, tab_info=tab_info
-        )
-        if early is not None:
-            early["conversation_id"] = conversation_id
-            early["url"] = chat_url
-            return early
-        return _run_on_connected_page(
+        conn, result = _execute_dom_observation(
             cdp=cdp,
-            conn=conn,
             chat_url=chat_url,
             conversation_id=conversation_id,
             match_terms=match_terms,
             max_nodes=max_nodes,
+            open_on_demand=open_on_demand,
             scope=scope,
-            minted_target=minted_target,
             readiness=readiness,
             tab_info=tab_info,
             deadline=deadline,
             clock=clock,
             budget_left=budget_left,
         )
+    except CollectorScriptError:
+        result = failure_observation_response(
+            outcome="unreachable",
+            code="collector_error",
+            looked=False,
+            chat_url=chat_url,
+            conversation_id=conversation_id,
+            match_terms=match_terms,
+            max_nodes=max_nodes,
+            scope=scope,
+            tab=tab_info,
+            cdp_methods={},
+            readiness=readiness,
+        )
     except Exception:
-        return failure_observation_response(
+        result = failure_observation_response(
             outcome="unreachable",
             code="unreachable",
             looked=False,
@@ -270,11 +245,12 @@ def run_dom_observation(
             max_nodes=max_nodes,
             scope=scope,
             tab=tab_info,
-            cdp_methods=cdp.method_counts if cdp else {},
+            cdp_methods={},
             readiness=readiness,
         )
     finally:
         if conn is not None:
             with contextlib.suppress(Exception):
                 conn.close()
-        close_minted_tab(cdp, minted_target, tab_info)
+        stamp_tab_close_and_methods(cdp=cdp, tab_info=tab_info, result=result)
+    return result

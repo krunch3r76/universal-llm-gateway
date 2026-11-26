@@ -16,6 +16,7 @@ MESSAGE_SELECTORS = [
     "[data-testid='assistant-message']",
     "div[class*='font-claude']",
 ]
+USER_MESSAGE_SELECTORS = ["[data-testid='user-message']"]
 COMPOSER_SELECTORS = [
     "[contenteditable='true']",
     "textarea",
@@ -36,6 +37,7 @@ def script_config(terms: list[str], max_nodes: int) -> dict[str, Any]:
         "match_terms": terms,
         "max_nodes": max_nodes,
         "message_sel": MESSAGE_SELECTORS,
+        "user_message_sel": USER_MESSAGE_SELECTORS,
         "composer_sel": COMPOSER_SELECTORS,
         "excluded_parts": EXCLUDED_PARTS,
         "caps": {
