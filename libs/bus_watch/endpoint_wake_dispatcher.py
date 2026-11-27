@@ -947,7 +947,9 @@ def _intermediate_subject_blocked(subject: str | None) -> bool:
 
 def _suppression_failure_detail(rule_id: str, subject: str | None) -> str | None:
     try:
-        from agent_bus_store.db.endpoint_wake_ledger import _encode_delivery_failure_detail
+        from agent_bus_store.db.endpoint_wake_ledger import (
+            _encode_delivery_failure_detail,
+        )
     except ImportError:
         return None
     text = subject or ""
