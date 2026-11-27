@@ -77,6 +77,22 @@ def test_framing_roundtrip() -> None:
     assert read_framed_message(buf) == payload
 
 
+def test_default_mcp_url_matches_ide_vortex_code() -> None:
+    """Breaks when SDK bridge default diverges from IDE vortex-code URL."""
+    bridge_path = REPO_ROOT / "scripts" / "mcp-fastmcp-remote-bridge.py"
+    source = bridge_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "DEFAULT_MCP_URL":
+                assert isinstance(node.value, ast.Constant)
+                assert node.value.value == "https://mcp.askapharmd.me/mcp/code"
+                return
+    pytest.fail("DEFAULT_MCP_URL assignment not found")
+
+
 def test_bridge_main_always_proxies_no_execve() -> None:
     bridge_path = REPO_ROOT / "scripts" / "mcp-fastmcp-remote-bridge.py"
     source = bridge_path.read_text(encoding="utf-8")
