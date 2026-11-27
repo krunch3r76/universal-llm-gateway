@@ -498,34 +498,3 @@ def hygiene_reclaim_released() -> HygieneReclaimResult:
     """Reclaim all released and orphaned_retry registry rows with default hygiene options."""
     return hygiene_reclaim_extended()
 
-def sweep_tmp_chrome_dirs(
-    tmp_root: Path,
-    *,
-    now: float | None = None,
-    dry_run: bool | None = None,
-) -> list[Path]:
-    """Sweep stale chrome-* directories under *tmp_root* (dry-run default)."""
-    import os as _os
-    import time as _time
-
-    if now is None:
-        now = _time.time()
-    if dry_run is None:
-        dry_run = _os.environ.get("ULG_TMP_CHROME_REAP", "0") != "1"
-    candidates: list[Path] = []
-    if not tmp_root.exists():
-        return candidates
-    for entry in tmp_root.iterdir():
-        if not entry.is_dir() or not entry.name.startswith("chrome-"):
-            continue
-        try:
-            age_h = (now - entry.stat().st_mtime) / 3600.0
-        except OSError:
-            continue
-        if age_h < 24.0:
-            continue
-        candidates.append(entry)
-        if not dry_run:
-            shutil.rmtree(entry, ignore_errors=True)
-    return candidates
-
