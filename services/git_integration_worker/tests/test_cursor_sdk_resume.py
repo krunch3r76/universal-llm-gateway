@@ -1222,6 +1222,8 @@ def test_release_success_clear_preserves_lease_key_and_clears_registry_pin(
         pin_lane_worktree,
     )
     from services.git_integration_worker.cursor_sdk_worktree_release import (
+        ReleaseRefusal,
+        ReleaseResult,
         release_lane_worktree,
     )
 
@@ -1308,8 +1310,10 @@ def test_release_success_clear_preserves_lease_key_and_clears_registry_pin(
         reason="reap",
         allow_unharvested=True,
     )
+    assert isinstance(result, ReleaseResult)
     assert result.released
     assert result.refusal is None
+    assert not isinstance(result.refusal, ReleaseRefusal)
     with ledger._connect() as conn:
         lease_after = conn.execute(
             "SELECT lease_key FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -1328,3 +1332,34 @@ def test_release_success_clear_preserves_lease_key_and_clears_registry_pin(
     assert lease_before == lease_after == lease_key
     assert reg is None
     assert pin["released_at"] is not None
+
+
+def test_release_refusal_not_registered_for_unregistered_worktree(
+    tmp_path: Path,
+) -> None:
+    """ReleaseRefusal shape on refusal path: registry miss for an on-disk worktree dir."""
+    import subprocess
+
+    from services.git_integration_worker.cursor_sdk_worktree_release import (
+        ReleaseRefusal,
+        ReleaseResult,
+        release_lane_worktree,
+    )
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "master"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    result = release_lane_worktree(
+        source_repo=repo,
+        dispatch_id="not-in-registry",
+        reason="unit_test",
+    )
+    assert isinstance(result, ReleaseResult)
+    assert not result.released
+    assert isinstance(result.refusal, ReleaseRefusal)
+    assert result.refusal == ReleaseRefusal.NOT_REGISTERED
