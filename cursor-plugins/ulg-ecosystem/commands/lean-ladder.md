@@ -26,7 +26,7 @@ When the plan may assign **host-checkout diagnostics or named pytest** (not lane
 | `slug` | no | **inferred** (see Slug inference) | `work_key=todo:<slug>` | `{{slug}}` throughout |
 | `packet` | no | `cortex://notes/tmp/packets/<slug>-packet.md` | Seed sidecar URI | `{{packet}}` |
 | `retrieval_report` | no | `cortex://notes/tmp/packets/<slug>-retrieval-report.md` | Seed retrieval report | `{{retrieval_report}}` |
-| `architect_model` | no | `cdp/fable-5.2` | Leg 1 wire — before accepting this default, honor `decision:cdp-fable-channel-outage` (`consult-routing` § CDP transport); if an open until-window applies, use that assertion's substitute | `{{architect_model}}` |
+| `architect_model` | no | `cdp/fable-5.2` (when CDP Fable open) | Leg 1 wire — **always** `entity_get` `decision:cdp-fable-channel-outage` before accept (`consult-routing` § CDP transport). Open until-window ⇒ do **not** fire `cdp/fable-*`. Resolve substitute from assertion attrs (`substitute_primary` / `substitute_chain`) or walk: (1) `cdp/opus-5-max` (2) `cursor/claude-fable-5-2` (Cursor pool — not blocked by CDP Fable outage) (3) `cdp/opus-5.5` high (4) nested-grok `cursor/grok-4.7` xhigh. Echo the resolved wire. Operator pin wins. | `{{architect_model}}` |
 | `architect_effort` | no | `high` | Leg 1 `reasoning_effort` | `{{architect_effort}}` |
 | `implement_model` | no | `cursor/composer-2.5` | Leg 3 wire (`cursor/*` only) | `{{implement_model}}` |
 | `lane` | no | `B` | Leg 3 lane | `{{lane}}` |
@@ -51,7 +51,8 @@ Prose parameters (`planner`, `wake`) are not `{{slots}}`; the template names whi
 
 ## Procedure
 
-1. **Parse** parameters and defaults; infer `slug` when absent. Echo resolved values in ≤8 lines (include `planner`, `planner_model`, `planner_effort`).
+1. **Parse** parameters and defaults; infer `slug` when absent. Echo resolved values in ≤8 lines (include `planner`, `planner_model`, `planner_effort`, **resolved `architect_model`**).
+   - **Resolve `architect_model` (before Leg 1):** `entity_get` `decision:cdp-fable-channel-outage`. Open until-window ⇒ refuse default `cdp/fable-5.2`; pick `substitute_primary` / first of `substitute_chain`, else walk `cdp/opus-5-max` → `cursor/claude-fable-5-2` → `cdp/opus-5.5` → nested-grok. Operator-named `architect_model=` wins even during outage (including `cursor/claude-fable-5-2`). When the resolved wire is `cursor/*`, Leg 1 admit uses cursor-sdk generate shape (`model_knobs.effort`, no `reasoning_effort`).
    - **Standing planner (for now):** default `planner=glass:8` + `planner_model=cursor/claude-fable-5-2` + chosen `planner_effort` (default `high`). Echo the effort; pass it on `spawn_tab`. `planner=here` is the opt-out to keep legs on this tab.
    - **Normalize `planner_model`:** rewrite dotted Fable forms before spawn or echo — `claude-fable-5.2` → `claude-fable-5-2`, `cursor/claude-fable-5.2` → `cursor/claude-fable-5-2` (keep any `cursor/` prefix for prose; strip it only for `spawn_tab` catalog id). Do not trust callers to type the hyphen.
    - **Explicit pin:** glass `spawn_tab` and any cursor-sdk generate that uses an Other Models id must pass an explicit `model=` (policy `cursor_sdk_other_models_pool: explicit_pin_only`). Never omit-model onto Fable.
