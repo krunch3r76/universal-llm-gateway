@@ -43,6 +43,7 @@ class DisplayChatWakeHandler(BaseHandler):
             select=True if select_opt is None else bool(select_opt),
             turn=opts.get("turn"),
             text=str(opts.get("text") or ""),
+            missed_prefix=str(opts.get("missed_prefix") or ""),
             wake_groups=opts.get("wake_groups"),
             mailbox=opts.get("mailbox"),
             from_sender=opts.get("from_sender"),

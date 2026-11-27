@@ -1428,11 +1428,12 @@ def test_fire_due_wakes_paste_prefixes_missed_once_then_stamps_surfaced(
         _turn: int | str,
         *,
         text: str = "",
+        missed_prefix: str = "",
         wake_groups: list[dict[str, Any]] | None = None,
         **_kwargs: object,
     ) -> tuple[str, str]:
         del wake_groups
-        pasted.append(text)
+        pasted.append(missed_prefix or text)
         return ("delivered", "ok")
 
     class Store:
@@ -2490,6 +2491,164 @@ def test_fire_due_wakes_orders_threads_by_turn_id(db: None) -> None:
     assert groups_seen[0][0]["thread_id"] == str(d_lo["id"])
     assert groups_seen[0][1]["thread_id"] == str(d_hi["id"])
     assert primary_threads == [str(d_hi["id"])]
+
+
+def test_fire_due_wakes_single_thread_missed_prefix_not_exchange_paste(db: None) -> None:
+    """Break: overdue sibling must ride missed_prefix, not exchange text=."""
+    import json
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agent_bus_store.db import create_thread, insert_turn
+    from agent_bus_store.db.connection import connect, write_connect
+    from agent_bus_store.db.endpoint_wake_ledger import (
+        advance_scan,
+        claim_due_wakes,
+        get_cursor,
+        record_wake_result,
+    )
+    from cursor_bridge.chat_target import wake_line
+
+    from pipelines.display_chat_wake.v1.handlers.wake import DisplayChatWakeHandler
+
+    sub_id = 45171
+    tab = "missed-single-tab"
+    detail = create_thread(thread_id=None, slug="missed-single")
+    assert detail
+    thread = str(detail["id"])
+    drop_turn_id, _, drop_num, _ = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="DROP|missed",
+        body="dropped",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO endpoint_wake_ledger "
+            "(agent, thread_id, turn_id, turn_number, state, subscription_id, "
+            "drop_reason, dropped_at, wake_attempt_count) "
+            "VALUES ('cursor-sdk', ?, ?, ?, 'refused', ?, 'dropped_cap', "
+            "datetime('now'), 5)",
+            (thread, drop_turn_id, drop_num, sub_id),
+        )
+    wake_turn_id, _, number, _ = insert_turn(
+        thread=thread,
+        from_agent="cursor",
+        to_agent="cursor-sdk",
+        subject="FACT|wake",
+        body="w",
+    )
+    get_cursor()
+    with connect() as conn:
+        rewind_wake_cursor_for_test(conn, CONSUMER, to=0)
+    advance_scan(
+        CONSUMER,
+        0,
+        wake_turn_id,
+        [
+            {
+                "agent": "cursor-sdk",
+                "thread_id": thread,
+                "turn_id": wake_turn_id,
+                "turn_number": number,
+                "subscription_id": sub_id,
+                "delivery_agent_id": tab,
+            }
+        ],
+        now="2032-01-01 00:00:00",
+    )
+    claimed = claim_due_wakes(now="2032-01-01 00:00:10")
+    assert claimed["wake_id"]
+    lines_captured: list[str] = []
+
+    class Store:
+        def claim(self) -> dict:
+            return claimed
+
+        def subscription(self, agent: str, thread_id: str):
+            if agent == "cursor-sdk":
+                return (
+                    "exact",
+                    {
+                        "id": sub_id,
+                        "surface": "cursor",
+                        "display": "8",
+                        "title": "t",
+                        "agent_id": tab,
+                    },
+                )
+            return None
+
+        def result(self, **payload: object) -> int:
+            return record_wake_result(
+                str(payload["wake_id"]),
+                str(payload["outcome"]),
+                str(payload["reason"]) if payload["reason"] is not None else None,
+                "exact",
+                sub_id,
+                None,
+            )
+
+    async def _fake_deliver_locked(*, line: str, **_: object) -> dict:
+        lines_captured.append(line)
+        return {"ok": True, "delivered": True, "pasted": True, "reason": "match"}
+
+    class _FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps({"ok": True, "delivered": True})
+                        }
+                    }
+                ]
+            }
+
+    class _FakeClient:
+        def post(self, *_a: object, **kwargs: object) -> _FakeResponse:
+            opts = (kwargs.get("json") or {})["pipeline_options"]  # type: ignore[index]
+            assert "text" not in opts
+            assert "missed_prefix" in opts
+            assert "missed:" in opts["missed_prefix"]
+            handler = DisplayChatWakeHandler()
+            ctx = MagicMock()
+            ctx.options = opts
+            out = asyncio.run(handler.execute(MagicMock(), ctx))
+            payload = json.loads(out.raw)
+            assert payload.get("reason") != "exchange_paste_cursor_stage_manager_only"
+            return _FakeResponse()
+
+        def __enter__(self) -> _FakeClient:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    base_wake = wake_line(thread, number, mailbox="cursor-sdk")
+    with (
+        patch(
+            "bus_watch.endpoint_wake_dispatcher.make_sync_client",
+            return_value=_FakeClient(),
+        ),
+        patch(
+            "cursor_bridge.wake_delivery._deliver_locked",
+            new=AsyncMock(side_effect=_fake_deliver_locked),
+        ),
+    ):
+        fire_due_wakes(Store())  # type: ignore[arg-type]
+    assert len(lines_captured) == 1
+    assert lines_captured[0].startswith("missed:")
+    assert base_wake in lines_captured[0]
+    with connect() as conn:
+        reason = conn.execute(
+            "SELECT reason FROM endpoint_wake_ledger WHERE wake_id=?",
+            (claimed["wake_id"],),
+        ).fetchone()["reason"]
+    assert reason != "exchange_paste_cursor_stage_manager_only"
 
 
 def test_fire_due_wakes_multi_thread_real_display_path(db: None) -> None:

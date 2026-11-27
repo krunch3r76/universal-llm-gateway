@@ -2184,23 +2184,20 @@ def scan_once(store: StoreClient, *, idle_mark: dict[str, float] | None = None) 
         _record_scan_drops_safe(drops)
 
 
-def _preview_missed_paste(
+def _preview_missed(
     sub: dict[str, Any], paste_text: str
-) -> tuple[str, list[int]]:
+) -> tuple[str, str, list[int]]:
     sid = sub.get("id")
     if sid is None:
-        return paste_text, []
+        return paste_text, "", []
     from agent_bus_store.db.connection import connect
-    from agent_bus_store.db.endpoint_wake_attempts import (
-        merge_missed_into_paste,
-        preview_missed_prefix,
-    )
+    from agent_bus_store.db.endpoint_wake_attempts import preview_missed_prefix
     from agent_bus_store.db.endpoint_wake_ledger import _now
 
     stamp = _now(None)
     with connect() as conn:
         prefix, ids = preview_missed_prefix(conn, subscription_id=int(sid), stamp=stamp)
-    return merge_missed_into_paste(paste_text, prefix), ids
+    return paste_text, prefix, ids
 
 
 def _stamp_missed_after_deliver(sub: dict[str, Any], missed_ids: list[int]) -> None:
@@ -2252,16 +2249,21 @@ def _display_post_maybe_missed(
     wake_mailbox: str | None = None,
     wake_from: str | None = None,
 ) -> tuple[str, str]:
-    text, missed_ids = _preview_missed_paste(sub, paste_text)
-    has_text = bool((text or "").strip())
-    route_kw = {"wake_mailbox": wake_mailbox, "wake_from": wake_from}
+    exchange_text, missed_prefix, missed_ids = _preview_missed(sub, paste_text)
+    has_exchange_text = bool((exchange_text or "").strip())
+    missed_kw = (
+        {"missed_prefix": missed_prefix}
+        if (missed_prefix or "").strip()
+        else {}
+    )
+    route_kw = {"wake_mailbox": wake_mailbox, "wake_from": wake_from, **missed_kw}
     if wake_groups is not None:
-        if has_text:
+        if has_exchange_text:
             state, reason = _display_post(
                 primary,
                 sub,
                 turn_arg,
-                text=text,
+                text=exchange_text,
                 wake_groups=wake_groups,
                 **route_kw,
             )
@@ -2269,8 +2271,10 @@ def _display_post_maybe_missed(
             state, reason = _display_post(
                 primary, sub, turn_arg, wake_groups=wake_groups, **route_kw
             )
-    elif has_text:
-        state, reason = _display_post(primary, sub, turn_arg, text=text, **route_kw)
+    elif has_exchange_text:
+        state, reason = _display_post(
+            primary, sub, turn_arg, text=exchange_text, **route_kw
+        )
     else:
         state, reason = _display_post(primary, sub, turn_arg, **route_kw)
     if state == "delivered":
@@ -2284,6 +2288,7 @@ def _display_post(
     turn: int | str,
     *,
     text: str = "",
+    missed_prefix: str = "",
     wake_groups: list[dict[str, Any]] | None = None,
     wake_mailbox: str | None = None,
     wake_from: str | None = None,
@@ -2295,6 +2300,7 @@ def _display_post(
             sub,
             turn,
             text=text,
+            missed_prefix=missed_prefix,
             wake_groups=wake_groups,
             wake_mailbox=wake_mailbox,
             wake_from=wake_from,
@@ -2311,6 +2317,7 @@ def _display_post_body(
     turn: int | str,
     *,
     text: str = "",
+    missed_prefix: str = "",
     wake_groups: list[dict[str, Any]] | None = None,
     wake_mailbox: str | None = None,
     wake_from: str | None = None,
@@ -2326,6 +2333,8 @@ def _display_post_body(
     }
     if (text or "").strip():
         options["text"] = text.strip()
+    if (missed_prefix or "").strip():
+        options["missed_prefix"] = missed_prefix.strip()
     if wake_groups:
         options["wake_groups"] = wake_groups
     if wake_mailbox:

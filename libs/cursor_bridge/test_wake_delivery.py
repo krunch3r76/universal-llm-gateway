@@ -663,6 +663,34 @@ async def test_composer_empty_probe_notifies_wake_redrive(
 
 
 @pytest.mark.asyncio
+async def test_deliver_wake_missed_prefix_ok_without_exchange_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Break: overdue missed prefix must not trip the 19627-only text gate."""
+    captured: dict[str, str] = {}
+
+    async def _deliver_locked(**kwargs: Any) -> dict[str, Any]:
+        captured["line"] = str(kwargs.get("line") or "")
+        return {"pasted": True, "reason": "match", "delivered": True}
+
+    monkeypatch.setattr(wd, "_deliver_locked", _deliver_locked)
+    monkeypatch.setattr(wd, "agent_paste_lock", _noop_paste_lock)
+
+    out = await deliver_wake(
+        display="8",
+        app="cursor",
+        thread="25029",
+        title="t",
+        turn=1,
+        missed_prefix="missed: 1#2(overdue,3)",
+    )
+    assert out.get("reason") != "exchange_paste_cursor_stage_manager_only"
+    assert out.get("delivered") is True
+    assert captured["line"].startswith("missed: 1#2")
+    assert "BRIDGE_WAKE" in captured["line"]
+
+
+@pytest.mark.asyncio
 async def test_deliver_wake_exchange_text_refuses_non_stage_manager_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

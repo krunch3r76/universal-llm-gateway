@@ -228,6 +228,7 @@ async def deliver_wake(
     select: bool = True,
     turn: object,
     text: str = "",
+    missed_prefix: str = "",
     wake_groups: object = None,
     mailbox: object = None,
     from_sender: object = None,
@@ -300,6 +301,12 @@ async def deliver_wake(
             )
         except ValueError:
             return _refuse("bad_options", display=target["display"], app=target["app"])
+
+    prefix_s = (missed_prefix or "").strip()
+    if prefix_s:
+        from agent_bus_store.db.endpoint_wake_attempts import merge_missed_into_paste
+
+        line = merge_missed_into_paste(line, prefix_s)
 
     lock_id = paste_lock_key(agent_id=aid_s, thread=thread_s)
     async with agent_paste_lock(target["display"], lock_id):
