@@ -97,6 +97,7 @@ def reap_orphaned_alive_rows(
     now: float | None = None,
     pid_alive: Callable[[int], bool] | None = None,
     kill_listener: Callable[[int], None] | None = None,
+    kill_row: Callable[[dict[str, Any]], None] | None = None,
     is_attached: Callable[[str], bool] | None = None,
     include_ttl_reap: bool = True,
 ) -> list[str]:
@@ -158,7 +159,10 @@ def reap_orphaned_alive_rows(
                 ):
                     continue
 
-                if kill_listener is not None:
+                if kill_row is not None:
+                    with contextlib.suppress(Exception):
+                        kill_row(row)
+                elif kill_listener is not None:
                     with contextlib.suppress(Exception):
                         kill_listener(port)
                 _release_orphaned_row(

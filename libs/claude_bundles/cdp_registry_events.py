@@ -911,6 +911,8 @@ def _payload(reg: Registration) -> dict:
         "parent_thread": (
             reg.parent_thread if isinstance(reg.parent_thread, str) else None
         ),
+        "root_starttime_ticks": reg.root_starttime_ticks,
+        "scope_unit": reg.scope_unit,
     }
 
 

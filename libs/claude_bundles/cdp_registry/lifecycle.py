@@ -90,10 +90,12 @@ def _mint_ids(taken_suffixes: set[str]) -> tuple[str, str]:
 
 
 def _rollback_allocating(registration_id: str) -> None:
+    row_snapshot: dict | None = None
     with _store.ports_lock():
         active = _store.load_active()
         row = active.pop(registration_id, None)
         if row is not None:
+            row_snapshot = dict(row)
             _store.write_active(active)
             _store.append_log(
                 "alloc_failed", {"registration_id": registration_id, **row}
@@ -108,6 +110,13 @@ def _rollback_allocating(registration_id: str) -> None:
                 )
             )
     _release_driver_lock(registration_id)
+    if row_snapshot is not None:
+        suffix = str(row_snapshot.get("profile_suffix") or "")
+        profile_path = Path(str(row_snapshot.get("profile") or ""))
+        if suffix.startswith("reg-") and profile_path.exists():
+            from claude_bundles.cdp_registry import hygiene
+
+            hygiene._reclaim_profile_to_trash(profile_path, suffix)
 
 
 def _operator_join_candidate(row: dict[str, Any]) -> bool:
@@ -348,6 +357,9 @@ def activate_allocating_row(
         current = dict(current)
         current["status"] = "active"
         current["chrome_pid"] = chrome_pid
+        ident = __import__("claude_bundles.cdp_lane", fromlist=["launch_identity"]).launch_identity(chrome_pid)
+        current["root_starttime_ticks"] = ident.get("root_starttime_ticks")
+        current["scope_unit"] = ident.get("scope_unit")
         active[registration_id] = current
         _store.write_active(active)
         _store.append_log(log_event, current)
@@ -710,7 +722,7 @@ def deregister_lane(
                     return
                 port = int(row["port"])
                 if listen(port):
-                    registry_package()._kill_listener(port)
+                    __import__("claude_bundles.cdp_lane", fromlist=["verified_stop"]).verified_stop(row)
             _release_driver_lock(registration_id)
             return
         if status == STATUS_DORMANT:
@@ -751,7 +763,7 @@ def deregister_lane(
                 _store.write_active(active)
                 _release_driver_lock(registration_id)
                 return
-            registry_package()._kill_listener(port)
+            __import__("claude_bundles.cdp_lane", fromlist=["verified_stop"]).verified_stop(row)
 
         row = dict(row)
         if error_release:
@@ -867,7 +879,7 @@ def detach(registration_id: str, *, reason: str) -> dict[str, Any]:
             and listen(port)
             and not _another_row_shares_port()
         ):
-            registry_package()._kill_listener(port)
+            __import__("claude_bundles.cdp_lane", fromlist=["verified_stop"]).verified_stop(row)
             listener_killed = True
         profile_outcome = (
             "skipped_tab_row"

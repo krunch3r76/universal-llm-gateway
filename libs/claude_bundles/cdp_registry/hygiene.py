@@ -44,10 +44,13 @@ def is_primary_profile(profile: Path) -> bool:
 
 
 def _pid_alive(pid: int) -> bool:
-    with contextlib.suppress(ProcessLookupError, PermissionError):
+    try:
         os.kill(pid, 0)
         return True
-    return False
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
 
 
 def _reclaim_profile_to_trash(
@@ -83,6 +86,63 @@ def _empty_reclaim_trash() -> list[str]:
             shutil.rmtree(entry)
             removed.append(str(entry))
     return removed
+
+
+
+def _tmp_chrome_dir_held(
+    entry: Path,
+    *,
+    chrome_port_for_profile: Callable[[Path], int | None] | None = None,
+) -> bool:
+    """True when a live Chrome appears to hold *entry* as its user-data-dir."""
+    probe = chrome_port_for_profile or cdp_lane.chrome_port_for_profile
+    return probe(entry) is not None
+
+
+def sweep_tmp_chrome_dirs(
+    tmp_root: Path,
+    *,
+    now: float | None = None,
+    dry_run: bool | None = None,
+    chrome_port_for_profile: Callable[[Path], int | None] | None = None,
+) -> list[Path]:
+    """List/move stale ``chrome-*`` dirs under *tmp_root*.
+
+    Default (``ULG_TMP_CHROME_REAP`` unset/``0``): dry-run — return age-eligible
+    candidates without mutating. When enabled (``=1``): move *dead* dirs older
+    than 24h into ``RECLAIM_TRASH_DIR``; live/held dirs (``chrome_port_for_profile``
+    non-None) are spared. Never ``rmtree`` a live-held directory.
+    """
+    if now is None:
+        now = time.time()
+    if dry_run is None:
+        dry_run = os.environ.get("ULG_TMP_CHROME_REAP", "0") != "1"
+    candidates: list[Path] = []
+    if not tmp_root.exists():
+        return candidates
+    reclaim_trash_dir = registry_package().RECLAIM_TRASH_DIR
+    for entry in tmp_root.iterdir():
+        if not entry.is_dir() or not entry.name.startswith("chrome-"):
+            continue
+        try:
+            age_h = (now - entry.stat().st_mtime) / 3600.0
+        except OSError:
+            continue
+        if age_h < 24.0:
+            continue
+        candidates.append(entry)
+        if dry_run:
+            continue
+        if _tmp_chrome_dir_held(
+            entry, chrome_port_for_profile=chrome_port_for_profile
+        ):
+            continue
+        reclaim_trash_dir.mkdir(parents=True, exist_ok=True)
+        dest = reclaim_trash_dir / entry.name
+        if dest.exists():
+            dest = reclaim_trash_dir / f"{entry.name}-{int(now)}"
+        shutil.move(str(entry), str(dest))
+    return candidates
 
 
 def _orphan_profile_sweep(
@@ -330,7 +390,9 @@ def hygiene_reclaim_extended(
         cdp_lane_reaper.reap_orphaned_alive_rows(
             active,
             listen,
-            kill_listener=registry_package()._kill_listener,
+            kill_row=lambda row: __import__(
+                "claude_bundles.cdp_lane", fromlist=["verified_stop"]
+            ).verified_stop(row),
             is_attached=lambda rid: _orphan_row_attached(rid, active, listen),
             include_ttl_reap=include_stale_active,
         )
@@ -435,3 +497,35 @@ def reclaim_best_effort() -> None:
 def hygiene_reclaim_released() -> HygieneReclaimResult:
     """Reclaim all released and orphaned_retry registry rows with default hygiene options."""
     return hygiene_reclaim_extended()
+
+def sweep_tmp_chrome_dirs(
+    tmp_root: Path,
+    *,
+    now: float | None = None,
+    dry_run: bool | None = None,
+) -> list[Path]:
+    """Sweep stale chrome-* directories under *tmp_root* (dry-run default)."""
+    import os as _os
+    import time as _time
+
+    if now is None:
+        now = _time.time()
+    if dry_run is None:
+        dry_run = _os.environ.get("ULG_TMP_CHROME_REAP", "0") != "1"
+    candidates: list[Path] = []
+    if not tmp_root.exists():
+        return candidates
+    for entry in tmp_root.iterdir():
+        if not entry.is_dir() or not entry.name.startswith("chrome-"):
+            continue
+        try:
+            age_h = (now - entry.stat().st_mtime) / 3600.0
+        except OSError:
+            continue
+        if age_h < 24.0:
+            continue
+        candidates.append(entry)
+        if not dry_run:
+            shutil.rmtree(entry, ignore_errors=True)
+    return candidates
+

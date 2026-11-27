@@ -363,6 +363,126 @@ def is_listening(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+
+
+PROC_ROOT: "Path | None" = None
+SIGNAL_CHILD: "Callable[[int], None] | None" = None
+
+
+def _proc_root(path: "Path | None" = None) -> "Path":
+    from pathlib import Path as _P
+
+    if path is not None:
+        return path
+    mod = _P("/proc")
+    custom = PROC_ROOT
+    return custom if custom is not None else mod
+
+
+def _read_starttime_ticks(pid: int, *, proc_root: "Path | None" = None) -> int | None:
+    from pathlib import Path as _P
+
+    root = _proc_root(proc_root)
+    try:
+        parts = (_P(root) / str(pid) / "stat").read_text().split()
+        if len(parts) > 21:
+            return int(parts[21])
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _read_scope_unit(pid: int, *, proc_root: "Path | None" = None) -> str:
+    from pathlib import Path as _P
+
+    root = _proc_root(proc_root)
+    scope = ""
+    try:
+        cg = (_P(root) / str(pid) / "cgroup").read_text().strip().splitlines()
+        for line in cg:
+            if "scope" in line or ".scope" in line:
+                scope = line.split(":")[-1].split("/")[-1]
+                break
+    except OSError:
+        scope = ""
+    return scope
+
+
+def launch_identity(pid: int, *, proc_root: "Path | None" = None) -> dict[str, object]:
+    """Record starttime ticks and scope unit for a launched child the caller owns."""
+    ticks = _read_starttime_ticks(pid, proc_root=proc_root)
+    scope = _read_scope_unit(pid, proc_root=proc_root)
+    return {"root_starttime_ticks": ticks, "scope_unit": scope}
+
+
+def _default_signal_child(pid: int) -> None:
+    import contextlib
+    import os
+    import signal
+    import time
+
+    os.killpg(os.getpgid(pid), signal.SIGTERM)
+    time.sleep(0.05)
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+
+
+def _resolve_signal_child(
+    signal_child: "Callable[[int], None] | None" = None,
+) -> "Callable[[int], None]":
+    if signal_child is not None:
+        return signal_child
+    custom = SIGNAL_CHILD
+    if custom is not None:
+        return custom
+    return _default_signal_child
+
+
+def verified_stop(
+    row: dict,
+    *,
+    proc_root: "Path | None" = None,
+    signal_child: "Callable[[int], None] | None" = None,
+) -> str:
+    """Stop Chrome only when row identity matches live process; else refuse."""
+    import logging
+    import os
+
+    from claude_bundles.cdp_registry import lifecycle as _lifecycle
+
+    log = logging.getLogger("cdp_registry")
+    port = row.get("port")
+    pid = row.get("chrome_pid")
+    if os.environ.get("ULG_CDP_VERIFIED_STOP", "1") == "0":
+        if isinstance(port, int):
+            _lifecycle.registry_package()._kill_listener(port)
+        return "legacy"
+    stored = row.get("root_starttime_ticks")
+    if stored is None:
+        if isinstance(port, int):
+            _lifecycle.registry_package()._kill_listener(port)
+        return "legacy"
+    if not isinstance(pid, int):
+        log.warning("verified_stop_refused missing chrome_pid registration=%s", row.get("registration_id"))
+        return "refused"
+    live = launch_identity(pid, proc_root=proc_root)
+    if live.get("root_starttime_ticks") != stored:
+        log.warning("verified_stop_refused tick_mismatch registration=%s", row.get("registration_id"))
+        return "refused"
+    scope = row.get("scope_unit") or live.get("scope_unit") or ""
+    if scope.startswith("cdp-host-"):
+        return "signals_only"
+    killer = _resolve_signal_child(signal_child)
+    try:
+        killer(int(pid))
+    except (ProcessLookupError, PermissionError, OSError) as exc:
+        log.warning("verified_stop_refused signal_failed registration=%s err=%s", row.get("registration_id"), exc)
+        return "refused"
+    return "stopped"
+
+
+
+
 def chrome_port_for_profile(profile: Path) -> int | None:
     """Return the debugging port of a live Chrome owning ``profile``, or None."""
     want = os.path.realpath(profile)
@@ -516,10 +636,15 @@ def _seed_profile(profile: Path, *, account_id: str | None = None) -> None:
     if (profile / "Default").exists():
         return
     profile.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
+    proc = subprocess.run(
         seed_profile_rsync_argv(PRIMARY_PROFILE, profile),
         check=False,
     )
+    if proc.returncode != 0:
+        partial = profile / "Default"
+        if partial.exists():
+            shutil.rmtree(partial)
+        raise LaneError(f"seed_profile rsync failed: exit {proc.returncode}")
 
 
 def _kill_lane_chrome(pid: int) -> None:

@@ -584,6 +584,8 @@ class Registration:
     target_id: str | None = None
     tab_kept_reason: str | None = None
     account_id: str | None = None
+    root_starttime_ticks: int | None = None
+    scope_unit: str | None = None
 
 
 @dataclass(frozen=True)
@@ -710,4 +712,11 @@ def _row_to_registration(row: dict[str, Any]) -> Registration:
         target_id=_optional_str(row.get("target_id")),
         tab_kept_reason=_optional_str(row.get("tab_kept_reason")),
         account_id=_optional_str(row.get("account_id")),
+        root_starttime_ticks=(
+            int(row["root_starttime_ticks"])
+            if row.get("root_starttime_ticks") is not None
+            and str(row.get("root_starttime_ticks")).strip() != ""
+            else None
+        ),
+        scope_unit=_optional_str(row.get("scope_unit")),
     )

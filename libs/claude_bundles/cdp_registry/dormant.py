@@ -212,7 +212,7 @@ def make_dormant(
             return None
         port = row.get("port")
         if isinstance(port, int) and listen(port):
-            registry_package()._kill_listener(port)
+            __import__("claude_bundles.cdp_lane", fromlist=["verified_stop"]).verified_stop(row)
         updated = dict(row)
         updated["status"] = STATUS_DORMANT
         updated["dormant_at"] = time.time()
@@ -374,7 +374,7 @@ def _abandon_superseded_relaunch(
     """
     if isinstance(port, int):
         with contextlib.suppress(Exception):
-            registry_package()._kill_listener(port)
+            __import__("claude_bundles.cdp_lane", fromlist=["verified_stop"]).verified_stop(prior)
     _restore_dormant(registration_id, prior)
 
 
