@@ -33,6 +33,13 @@ _DEFAULT_AUTO_RESUME_TTL_S = 86400
 _RECORD_KEY = "park"
 
 
+def is_discard_park(row: ParkRow | dict[str, Any]) -> bool:
+    """True when ``park_kind`` is ``cancel_discard`` (link ended, no resume)."""
+    if isinstance(row, ParkRow):
+        return row.park_kind == PARK_KIND_DISCARD
+    return str(row.get("park_kind") or "") == PARK_KIND_DISCARD
+
+
 def park_auto_resume_ttl_s() -> int:
     """Seconds after ``parked_at`` during which GIW auto-resumes a parked row.
 
@@ -152,7 +159,9 @@ def mark_parked(
 
     Also stamps ``record_json.resume_retain`` for ``park_for_restart`` so the
     Lane-B tree and dispatch HOME survive prune until the resume-retain TTL.
-    Discard rows use ``park_kind=cancel_discard`` and omit ``resume_retain``.
+    Discard rows use ``park_kind=cancel_discard``: strip ``resume_retain`` when
+    present and record ``park.prior_resume_retain``; ``timeout_retain`` is left
+    untouched.
     Returns the projection, or ``None`` when the row is gone.
     """
     parked_at = _now()
@@ -167,7 +176,7 @@ def mark_parked(
         if row is None:
             return None
         data = _record_data(row["record_json"])
-        data[_RECORD_KEY] = {
+        park_block: dict[str, Any] = {
             "intent_id": intent_id,
             "drain_epoch": drain_epoch,
             "actor": actor,
@@ -184,6 +193,10 @@ def mark_parked(
         }
         if park_kind == PARK_KIND_RESTART:
             data["resume_retain"] = True
+        elif park_kind == PARK_KIND_DISCARD and data.get("resume_retain"):
+            park_block["prior_resume_retain"] = True
+            data.pop("resume_retain", None)
+        data[_RECORD_KEY] = park_block
         conn.execute(
             "UPDATE cursor_sdk_dispatches SET status='cancelled', "
             "terminal_status='cancelled', terminal_at=?, park_kind=?, "
@@ -346,6 +359,7 @@ __all__ = [
     "PARK_KIND_DISCARD",
     "PARK_KIND_RESTART",
     "ParkRow",
+    "is_discard_park",
     "bump_resume_attempt",
     "load_park_row",
     "mark_park_expired",

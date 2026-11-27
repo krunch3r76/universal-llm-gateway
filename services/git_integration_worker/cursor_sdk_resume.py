@@ -24,6 +24,7 @@ from universal_protocol import error_envelope
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
+from services.git_integration_worker.cursor_sdk_park_ledger import is_discard_park
 from services.git_integration_worker.cursor_sdk_store_locus import (
     load_parent_row,
     load_row_columns,
@@ -43,6 +44,7 @@ logger = get_logger(__name__)
 ResumeIneligibleReason = Literal[
     "parent_missing",
     "parent_still_live",
+    "parent_discarded",
     "state_root_missing",
     "sdk_agent_id_missing",
     "state_root_absent_on_disk",
@@ -131,6 +133,11 @@ def resume_eligibility_reason(
     row = load_parent_row(ledger, parent_id=parent_id)
     if row is None:
         return "parent_missing"
+    park_kind_row = load_row_columns(
+        ledger, dispatch_id=parent_id, columns="park_kind"
+    )
+    if park_kind_row is not None and is_discard_park(park_kind_row):
+        return "parent_discarded"
     parked = _parked_for_restart(ledger, parent_id=parent_id)
     if not parked and row.status in _LIVE_STATUSES:
         if _bridge_death_resume_eligible(row.record_json):
@@ -265,9 +272,11 @@ def resume_retain_active(*, dispatch_id: str) -> bool:
     data = load_row_columns(
         ledger,
         dispatch_id=dispatch_id,
-        columns="record_json, terminal_at, terminal_status, sdk_agent_id, status",
+        columns="record_json, terminal_at, terminal_status, sdk_agent_id, status, park_kind",
     )
     if data is None:
+        return False
+    if is_discard_park(data):
         return False
     if data["status"] in _LIVE_STATUSES:
         return False

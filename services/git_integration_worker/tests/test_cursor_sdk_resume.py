@@ -990,3 +990,341 @@ def test_timeout_retain_default_matches_home_retention(
     monkeypatch.delenv("CURSOR_SDK_TIMEOUT_RETAIN_S", raising=False)
     monkeypatch.setenv("CURSOR_DISPATCH_HOME_RETENTION_DAYS", "7")
     assert cursor_sdk_timeout_retain_s() == 7 * 86400
+
+
+def _insert_discard_parent(
+    tmp_path: Path,
+    *,
+    dispatch_id: str = "discard-parent",
+    record_json: dict | None = None,
+) -> None:
+    store = tmp_path / f"store-{dispatch_id}"
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "agent.db").write_text("x")
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id=dispatch_id, message="parent")
+    fp = ledger.fingerprint(req)
+    payload = dict(record_json or {})
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            "message_present, status, record_json, state_root, sdk_agent_id, "
+            "terminal_status, park_kind, parked_at) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                dispatch_id,
+                fp,
+                req.thread_id,
+                req.execution_id,
+                "composer-2.5",
+                "cancelled",
+                json.dumps(payload),
+                str(store),
+                "agent-parent",
+                "cancelled",
+                "cancel_discard",
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+
+
+def test_resume_of_discard_parent_parent_discarded_422(
+    tmp_path: Path,
+) -> None:
+    """MP4: discard parent with store + agent id is not resumable."""
+    _insert_discard_parent(tmp_path)
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        before = dict(
+            conn.execute(
+                "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                ("discard-parent",),
+            ).fetchone()
+        )
+    child = _req(dispatch_id="child-discard", resume_of="discard-parent")
+    response = reject_resume_if_ineligible(child)
+    assert response is not None
+    body = json.loads(response.body.decode())
+    assert body["code"] == "CURSOR_RESUME_INELIGIBLE"
+    assert body["data"]["reason"] == "parent_discarded"
+    with ledger._connect() as conn:
+        after = dict(
+            conn.execute(
+                "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                ("discard-parent",),
+            ).fetchone()
+        )
+    assert before == after
+
+
+def test_restart_park_then_discard_strips_resume_retain(tmp_path: Path) -> None:
+    """MP4: mark_parked(cancel_discard) converges away restart resume_retain."""
+    from services.git_integration_worker.cursor_sdk_park_ledger import (
+        PARK_KIND_DISCARD,
+        PARK_KIND_RESTART,
+        mark_parked,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-then-discard", message="work")
+    fp = ledger.fingerprint(req)
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            "message_present, status) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?)",
+            (
+                "park-then-discard",
+                fp,
+                req.thread_id,
+                req.execution_id,
+                "composer-2.5",
+                "running",
+            ),
+        )
+    common = {
+        "dispatch_id": "park-then-discard",
+        "intent_id": None,
+        "drain_epoch": None,
+        "actor": "op",
+        "reason": "r",
+        "requested_at": "2026-09-15T00:00:00+00:00",
+        "tool_call_count": 0,
+        "last_tool_calls": [],
+        "sidecar_uri": None,
+    }
+    mark_parked(**common, method="run-budget", park_kind=PARK_KIND_RESTART)
+    mark_parked(**common, method="idle_discard", park_kind=PARK_KIND_DISCARD)
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json, park_kind FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id=?",
+            ("park-then-discard",),
+        ).fetchone()
+    rec = json.loads(row["record_json"])
+    assert row["park_kind"] == PARK_KIND_DISCARD
+    assert "resume_retain" not in rec
+    assert rec["park"]["prior_resume_retain"] is True
+
+
+def test_resume_retain_inactive_for_discard_with_legacy_flag(tmp_path: Path) -> None:
+    """MP4: resume_retain_active is False when park_kind is cancel_discard."""
+    _insert_discard_parent(
+        tmp_path,
+        record_json={"resume_retain": True},
+    )
+    assert not resume_retain_active(dispatch_id="discard-parent")
+
+
+def test_discard_harvest_emits_resume_ineligible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MP4: discard park partial harvest reports resume_eligible=false."""
+    from services.git_integration_worker.cursor_sdk_closeout.bridge_death_harvest import (
+        emit_partial_harvest_on_park,
+        read_sidecar_payload,
+    )
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.bridge_death_harvest."
+        "cortex_files_root",
+        lambda: tmp_path / "cortex",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.bridge_death_harvest."
+        "emit_sdk_bridge_partial_harvest",
+        lambda **_kw: None,
+    )
+    result = emit_partial_harvest_on_park(
+        "disp-harvest-discard",
+        thread_id="t-harvest",
+        intent_id=None,
+        method="idle_discard",
+        tool_call_count=0,
+    )
+    assert result["resume_eligible"] is False
+    uri = result["sidecar_uri"]
+    assert uri is not None
+    payload = read_sidecar_payload(uri)
+    assert payload is not None
+    assert payload["resume_eligible"] is False
+    assert payload["degraded_reason"] == "discard"
+    assert (payload.get("forensics") or {}).get("cause") == "discard"
+
+
+def test_mark_parked_discard_leaves_timeout_retain(tmp_path: Path) -> None:
+    """AC2.6': cancel_discard does not strip timeout_retain."""
+    from services.git_integration_worker.cursor_sdk_park_ledger import (
+        PARK_KIND_DISCARD,
+        mark_parked,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="timeout-discard", message="work")
+    fp = ledger.fingerprint(req)
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            "message_present, status, record_json) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+            (
+                "timeout-discard",
+                fp,
+                req.thread_id,
+                req.execution_id,
+                "composer-2.5",
+                "running",
+                json.dumps({"timeout_retain": True, "resume_retain": True}),
+            ),
+        )
+    mark_parked(
+        dispatch_id="timeout-discard",
+        intent_id=None,
+        drain_epoch=None,
+        actor="op",
+        reason="kill",
+        requested_at="2026-09-15T00:00:00+00:00",
+        method="idle_discard",
+        tool_call_count=0,
+        last_tool_calls=[],
+        sidecar_uri=None,
+        park_kind=PARK_KIND_DISCARD,
+    )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("timeout-discard",),
+        ).fetchone()
+    rec = json.loads(row["record_json"])
+    assert rec.get("timeout_retain") is True
+    assert "resume_retain" not in rec
+
+
+def test_release_success_clear_preserves_lease_key_and_clears_registry_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Residual 5: success release deletes registry, releases pin, does not clear lease_key."""
+    import subprocess
+
+    from services.git_integration_worker.cursor_sdk_worktree import (
+        mint_dispatch_worktree,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+        ledger_connection,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_lock import (
+        lock_lane_worktree,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        ensure_worktree_schema,
+        pin_lane_worktree,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_release import (
+        release_lane_worktree,
+    )
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "master"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "t@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "t"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    (repo / "f").write_text("x\n")
+    subprocess.run(["git", "add", "f"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "rel-r5"
+    thread_id = "t-r5"
+    wt = mint_dispatch_worktree(
+        source_repo=repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+    lease_key = str(wt.resolve())
+    lock_outcome = lock_lane_worktree(
+        repo, wt, dispatch_id=dispatch_id, thread_id=thread_id
+    )
+    with ledger_connection() as conn:
+        ensure_worktree_schema(conn)
+        pin_lane_worktree(
+            conn,
+            source_repo=repo,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+            worktree_path=wt,
+            lock_reason=lock_outcome.lock_reason,
+        )
+    from services.git_integration_worker.models.cursor_api import CursorDispatchResponse
+
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id=dispatch_id, message="work")
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            model_id="composer-2.5",
+        ),
+        lease_key=lease_key,
+        source_repo=str(repo.resolve()),
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    with ledger._connect() as conn:
+        lease_before = conn.execute(
+            "SELECT lease_key FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()["lease_key"]
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_live_guard."
+        "worktree_held_by_live_bridge",
+        lambda **kwargs: None,
+    )
+    result = release_lane_worktree(
+        source_repo=repo,
+        dispatch_id=dispatch_id,
+        reason="reap",
+        allow_unharvested=True,
+    )
+    assert result.released
+    assert result.refusal is None
+    with ledger._connect() as conn:
+        lease_after = conn.execute(
+            "SELECT lease_key FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()["lease_key"]
+        reg = conn.execute(
+            "SELECT 1 FROM cursor_sdk_lane_worktrees "
+            "WHERE source_repo=? AND thread_id=?",
+            (str(repo.resolve()), thread_id),
+        ).fetchone()
+        pin = conn.execute(
+            "SELECT released_at, release_reason FROM cursor_sdk_lane_worktree_pins "
+            "WHERE source_repo=? AND thread_id=? AND dispatch_id=?",
+            (str(repo.resolve()), thread_id, dispatch_id),
+        ).fetchone()
+    assert lease_before == lease_after == lease_key
+    assert reg is None
+    assert pin["released_at"] is not None

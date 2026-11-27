@@ -167,21 +167,23 @@ def emit_partial_harvest_on_park(
 ) -> dict[str, Any]:
     """Write the park partial sidecar (steer-restart D6) and emit the harvest event.
 
-    Unlike bridge death, a park is resume-eligible by construction — the run
-    was cancelled cooperatively and ``sdk_agent_id`` is present — so no
+    A cooperative ``park_for_restart`` is resume-eligible by construction. Discard
+    methods (``idle_discard``, ``cancel_discard``) emit ``resume_eligible=False``
+    with cause ``discard`` so harvest matches ``park_kind=cancel_discard``. No
     ``bridge_death_*`` keys are stamped; ``cursor_sdk_park_ledger.mark_parked``
     owns the ``record_json.park`` block that carries the sidecar URI.
     """
     uri = park_partial_uri(thread_id=thread_id, dispatch_id=dispatch_id)
+    discard = method in _DISCARD_METHODS
     forensics: dict[str, Any] = {
-        "cause": "park_for_restart",
+        "cause": "discard" if discard else "park_for_restart",
         "intent_id": intent_id,
         "method": method,
     }
     resolved_count = tool_call_count
     resolved_last = last_tools
     resolved_stop = stop_cause
-    if method in _DISCARD_METHODS:
+    if discard:
         prior = read_sidecar_payload(uri)
         if prior is not None:
             merged_count, merged_stop, merged = _merge_discard_onto_prior_stop_sidecar(
@@ -195,7 +197,9 @@ def emit_partial_harvest_on_park(
             resolved_stop = merged_stop or resolved_stop
             resolved_last = merged.get("last_tools")
             forensics = merged.get("forensics") or forensics
-            forensics["cause"] = "discard_after_park"
+        forensics["cause"] = "discard"
+    resume_eligible = not discard
+    degraded_reason = "discard" if discard else "park_for_restart"
     body = _sidecar_body(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
@@ -203,9 +207,9 @@ def emit_partial_harvest_on_park(
         last_tools=resolved_last,
         cortex_writes_observed=[],
         forensics=forensics,
-        resume_eligible=True,
+        resume_eligible=resume_eligible,
         status="parked",
-        degraded_reason="park_for_restart",
+        degraded_reason=degraded_reason,
         stop_cause=resolved_stop,
     )
     _write_sidecar(uri, body)
@@ -214,9 +218,9 @@ def emit_partial_harvest_on_park(
         thread_id=thread_id,
         tool_call_count=resolved_count,
         sidecar_uri=uri,
-        resume_eligible=True,
+        resume_eligible=resume_eligible,
     )
-    return {"sidecar_uri": uri, "resume_eligible": True}
+    return {"sidecar_uri": uri, "resume_eligible": resume_eligible}
 
 
 def emit_partial_harvest_on_bridge_death(
