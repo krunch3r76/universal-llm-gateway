@@ -82,7 +82,7 @@ services:
       - MCP_TLS_KEYFILE=${MCP_TLS_KEYFILE:-}
       - MCP_TLS_CERT_DIR=${MCP_TLS_CERT_DIR:-}
       - MCP_RESOURCE_SERVER_URL=${MCP_RESOURCE_SERVER_URL:-}
-      - MCP_OAUTH_DYNAMIC_REDIRECT_HOSTS=${MCP_OAUTH_DYNAMIC_REDIRECT_HOSTS:-claude.ai,claude.com,grok.com,*.grok.com,x.ai,*.x.ai,cursor.com,*.cursor.com,cursor.sh,*.cursor.sh}
+      - MCP_OAUTH_DYNAMIC_REDIRECT_HOSTS=${MCP_OAUTH_DYNAMIC_REDIRECT_HOSTS:-claude.ai,claude.com,grok.com,*.grok.com,x.ai,*.x.ai,cursor.com,*.cursor.com,cursor.sh,*.cursor.sh,chatgpt.com,*.chatgpt.com,openai.com,*.openai.com}
       - BRIDGE_TOKEN=${BRIDGE_TOKEN:-}
       - AGENT_BUS_TOKEN=${AGENT_BUS_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}

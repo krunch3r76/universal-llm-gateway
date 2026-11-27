@@ -24,6 +24,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from cursor_agent_runtime import ensure_cursor_runtime, runtime_cursor_bin
 from io_agent_display_browser import (
     display_browser_environment,
     format_systemd_environment_block,
@@ -32,17 +33,19 @@ from io_agent_display_browser import (
 
 _SLOT = "cursor-jupiter"
 _SUBSCRIPTION_DISPLAY = "jupiter"
+# Cosmic Xwayland for house BROWSER / xdg-open children (not the subscription name).
+_X11_DISPLAY = ":1"
 _CDP_PORT = 19338
 _HUB_TUNNEL_PORT = 19339
 _UNIT_NAME = "jupiter-agent-cursor.service"
 _DESKTOP_NAME = "cursor-glass-jupiter.desktop"
-_CURSOR_BIN = Path("/usr/share/cursor/cursor")
 
 
 def render_cursor_unit_body(*, home: Path) -> str:
     profile = home / ".gateway" / "cursor-jupiter"
+    cursor_bin = runtime_cursor_bin(home)
     env_block = format_systemd_environment_block(
-        display_browser_environment(_SLOT, _SUBSCRIPTION_DISPLAY, home=home)
+        display_browser_environment(_SLOT, _X11_DISPLAY, home=home)
     )
     return f"""[Unit]
 Description=Cursor Glass on jupiter (local CDP {_CDP_PORT}; io hub {_HUB_TUNNEL_PORT})
@@ -51,7 +54,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart={_CURSOR_BIN} \\
+ExecStart={cursor_bin} \\
   --user-data-dir={profile} \\
   --remote-debugging-port={_CDP_PORT} \\
   --remote-allow-origins=* \\
@@ -68,8 +71,9 @@ WantedBy=graphical-session.target
 def render_desktop_entry(*, home: Path) -> str:
     """Cosmic menu entry — use this instead of stock Cursor for Glass CDP."""
     profile = home / ".gateway" / "cursor-jupiter"
+    cursor_bin = runtime_cursor_bin(home)
     exec_line = (
-        f"{_CURSOR_BIN} --user-data-dir={profile} "
+        f"{cursor_bin} --user-data-dir={profile} "
         f"--remote-debugging-port={_CDP_PORT} --remote-allow-origins=* %F"
     )
     return f"""[Desktop Entry]
@@ -124,6 +128,7 @@ def provision_jupiter_glass(
     autostart: bool,
     daemon_reload: Callable[[], object] | None = None,
 ) -> dict[str, object]:
+    runtime = ensure_cursor_runtime(home=home, apply=apply)
     unit_rendered = render_cursor_unit_body(home=home)
     desktop_rendered = render_desktop_entry(home=home)
     unit_path = _systemd_user_dir(home) / _UNIT_NAME
@@ -191,6 +196,7 @@ def provision_jupiter_glass(
         "autostart": autostart,
         "daemon_reload": reload_ran,
         "browser_shim": shim,
+        "cursor_runtime": runtime,
         "verify_local_command": verify_local,
     }
 

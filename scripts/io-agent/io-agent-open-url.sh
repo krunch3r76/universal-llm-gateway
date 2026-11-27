@@ -164,10 +164,29 @@ case "${URL}" in
     CHROME_BIN="$(resolve_chrome_bin)"
     BROWSER_CLASS="${IO_AGENT_BROWSER_CLASS:-io-agent-browser}"
     if [[ ! -x "${CHROME_BIN}" ]]; then
-      echo "io-agent-open-url: no Playwright Chromium (${CHROME_BIN:-empty})." >&2
-      echo "Install: \$HOME/.venvs/universal/bin/python -m playwright install chromium" >&2
-      log_line "error:no-chromium" "${URL_KEY}"
-      exit 1
+      # Glass / cosmic seats often have no Playwright Chromium; Cursor sign-in
+      # still needs a real browser — fall through to system xdg-open (Firefox).
+      echo "io-agent-open-url: no house Chromium; delegating to system xdg-open" >&2
+      DELEGATE="$(find_delegate_xdg_open || true)"
+      if [[ -z "${DELEGATE}" ]]; then
+        echo "io-agent-open-url: no Playwright Chromium and no delegate xdg-open." >&2
+        echo "Install: \$HOME/.venvs/universal/bin/python -m playwright install chromium" >&2
+        log_line "error:no-chromium" "${URL_KEY}"
+        exit 1
+      fi
+      if [[ "${DRY}" == "1" ]]; then
+        echo "route=delegate-xdg-open"
+        echo "display=${HOUSE_DISPLAY}"
+        echo "argv=$(quote_argv "${DELEGATE}" "${URL}")"
+        log_line "delegate-xdg-open" "${URL_KEY}"
+        exit 0
+      fi
+      log_line "delegate-xdg-open" "${URL_KEY}"
+      # Keep Wayland for cosmic Firefox; only strip when HOUSE_DISPLAY looks like :N.
+      if [[ "${HOUSE_DISPLAY}" == :* ]]; then
+        exec env -u WAYLAND_DISPLAY DISPLAY="${HOUSE_DISPLAY}" "${DELEGATE}" "${URL}"
+      fi
+      exec "${DELEGATE}" "${URL}"
     fi
     CHROME_ARGS=(
       "${CHROME_BIN}"

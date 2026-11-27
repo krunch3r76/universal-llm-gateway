@@ -46,6 +46,10 @@ skills:
     # Attended grand impresario on a commissioned work item; Cursor plugin only.
     surface_class: cursor_only
     mcp_surface_required: code
+  cursor-grand-impresario:
+    # Attended Cursor hybrid: orchestrate lean-ladder climbs; default child tab grok-4.5 High; optional Fable planner.
+    surface_class: cursor_only
+    mcp_surface_required: code
   agent-guidance-writing:
     surface_class: cursor_only
     mcp_surface_required: none

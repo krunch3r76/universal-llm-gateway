@@ -506,7 +506,7 @@ def test_rendered_cursor_unit_shape(tmp_path: Path) -> None:
         "UnsetEnvironment=COSMIC_RENDER_DEVICE",
         "Environment=DISPLAY=:8",
         "Environment=LIBGL_ALWAYS_SOFTWARE=1",
-        "ExecStart=/usr/share/cursor/cursor",
+        "ExecStart=/home/io/.gateway/cursor-agent-runtime/cursor",
         "--user-data-dir=/home/io/.gateway/cursor-io",
         "--remote-debugging-port=9338",
         "ExecStartPost=/home/io/.venvs/universal/bin/python /home/io/.config/io-agent-maximize.py :8",

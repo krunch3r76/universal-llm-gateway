@@ -13,8 +13,10 @@ When the plan may assign **host-checkout diagnostics or named pytest** (not lane
 ## Usage
 
 ```
-/lean-ladder "<question>" [slug=<slug>] [key=value ...]
+/lean-ladder "<question>" [slug=<slug>] [planner_effort=<low|medium|high|xhigh>] [key=value ...]
 ```
+
+**Standing planner (for now):** Glass tab on `cursor/claude-fable-5-2` with operator-chosen `planner_effort` (default `high`). Opt out with `planner=here` to keep the ladder on this tab.
 
 ## Parameters
 
@@ -29,9 +31,9 @@ When the plan may assign **host-checkout diagnostics or named pytest** (not lane
 | `implement_model` | no | `cursor/composer-2.5` | Leg 3 wire (`cursor/*` only) | `{{implement_model}}` |
 | `lane` | no | `B` | Leg 3 lane | `{{lane}}` |
 | `density_triage` | no | `mechanical` | Todo attribute; Leg 3 flag | `{{density_triage}}` |
-| `planner` | no | `here` | `here` or `glass:<n>` — selects § Wake registration subsection | prose |
-| `planner_model` | no | `claude-fable-5-2` | Glass spawn **explicit** `model=` pin (Other Models pool is `explicit_pin_only` — omit 422s). Bare catalog id or `cursor/<id>`; **hyphenated** (`claude-fable-5-2` / `cursor/claude-fable-5-2`). Never dotted `claude-fable-5.2` (alias map resolves bare `fable-5.2` only; dotted form → `model_not_in_ui`). Never `cursor/grok-4.7` as planner. No `ban_override` (Fable is not in `model_bans`). Card knobs: `context` / `effort` / `fast` only — **no `thinking`** on 5-2. `$/M` → `config/model_rates.yaml` (do not inline). | `{{planner_model}}` |
-| `planner_effort` | no | `high` | Glass spawn effort (card default already `high`; pin only when overriding) | `{{planner_effort}}` |
+| `planner` | no | `glass:8` | `glass:<n>` (default) or `here` — selects § Wake registration subsection. Standing default spawns a Fable planner tab; pass `planner=here` to run legs on this tab instead | prose |
+| `planner_model` | no | `cursor/claude-fable-5-2` | Glass spawn **explicit** `model=` pin (Other Models pool is `explicit_pin_only` — omit 422s). Wire form `cursor/claude-fable-5-2` (or bare catalog `claude-fable-5-2`); **hyphenated** only. Never dotted `claude-fable-5.2` (alias map resolves bare `fable-5.2` only; dotted form → `model_not_in_ui`). Never `cursor/grok-4.7` as planner. No `ban_override` (Fable is not in `model_bans`). Card knobs: `context` / `effort` / `fast` only — **no `thinking`** on 5-2. `$/M` → `config/model_rates.yaml` (do not inline). | `{{planner_model}}` |
+| `planner_effort` | no | `high` | **Choose per invocation** — Glass spawn `effort=` (`low` / `medium` / `high` / `xhigh`). Echo the resolved value; pin on `spawn_tab` even when it matches the card default | `{{planner_effort}}` |
 | `wake` | no | `subscribe` (**standing operator rule: always register**) | `subscribe` or `none` — `none` only when the operator types `wake=none` in this invocation; never inferred, never chosen to dodge a registration error — § No-wake resume and mailbox routing vs § Wake registration | prose |
 
 Leg 1 (architect confer) always runs, on light and heavy paths alike. A confer sidecar that already exists for the slug (resumed arc) is reused, not re-fired.
@@ -49,10 +51,11 @@ Prose parameters (`planner`, `wake`) are not `{{slots}}`; the template names whi
 
 ## Procedure
 
-1. **Parse** parameters and defaults; infer `slug` when absent. Echo resolved values in ≤8 lines.
+1. **Parse** parameters and defaults; infer `slug` when absent. Echo resolved values in ≤8 lines (include `planner`, `planner_model`, `planner_effort`).
+   - **Standing planner (for now):** default `planner=glass:8` + `planner_model=cursor/claude-fable-5-2` + chosen `planner_effort` (default `high`). Echo the effort; pass it on `spawn_tab`. `planner=here` is the opt-out to keep legs on this tab.
    - **Normalize `planner_model`:** rewrite dotted Fable forms before spawn or echo — `claude-fable-5.2` → `claude-fable-5-2`, `cursor/claude-fable-5.2` → `cursor/claude-fable-5-2` (keep any `cursor/` prefix for prose; strip it only for `spawn_tab` catalog id). Do not trust callers to type the hyphen.
    - **Explicit pin:** glass `spawn_tab` and any cursor-sdk generate that uses an Other Models id must pass an explicit `model=` (policy `cursor_sdk_other_models_pool: explicit_pin_only`). Never omit-model onto Fable.
-   - **Explicit `planner_model` → glass:** when the operator **names** `planner_model=…` in this invocation (not the default alone) and `planner` is omitted or `planner=here`, upgrade to `planner=glass:8` (or keep `planner=glass:<n>` if already set) and echo that upgrade — a tab already running cannot remint its model. **Default-only** `planner_model` with `planner=here` stays on this tab (no auto-spawn).
+   - **Named `planner_model` with `planner=here`:** when the operator **names** `planner_model=…` and also `planner=here`, honor `here` (no upgrade) — a tab already running cannot remint its model. When `planner` is omitted, keep the standing `glass:8` default (or keep `planner=glass:<n>` if already set).
    - **Bus subjects:** never put the token `admitted` / `ADMITTED` anywhere in a subject the ladder emits (`_INTERMEDIATE_SUBJECT_RE` → `default_suppress`, silent no-wake — a:44930). Use `ADMIT` / `ACCEPTED` / `GRANTED`.
    - **Rates:** do not paste $/M into packets or posts — read `config/model_rates.yaml` (and `cursor-model-economics` for shape/verdict). Mechanical limbs stay `cursor/composer-2.5` (R9: no mechanical work on a Fable/Opus wire).
 2. **Rename this tab** — once `slug` is resolved, rename the tab that runs the legs with Cursor's `rename_chat`: title `lean-ladder {slug}`; when the run has a bus thread id `{n}` (after § Wake registration, or the first worker thread when `wake=none`), rename once more to `{n} {slug}`; after § Completion housekeeping on a successful arc (no Auto-runnable work left; residuals already imprinted), rename once more to `{n} [closed] {slug}` (or `lean-ladder [closed] {slug}` only if no bus thread id ever existed). `BLOCKED` or an open operator gate ⇒ keep `{n} {slug}` without `[closed]`. Invoking `/lean-ladder` is the rename ask: do not wait to be asked again. `rename_chat` unavailable or failed ⇒ say so once and continue; no retry loop. With `planner=glass:<n>` the spawned tab renames itself, not the spawning seat.

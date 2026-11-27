@@ -24,6 +24,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from cursor_agent_runtime import ensure_cursor_runtime, runtime_cursor_bin
 from io_agent_display_browser import (
     display_browser_environment,
     format_systemd_environment_block,
@@ -32,20 +33,19 @@ from io_agent_display_browser import (
 
 _SLOT = "cursor-orion"
 _SUBSCRIPTION_DISPLAY = "orion-node"
+# Cosmic Xwayland for house BROWSER / xdg-open children (not the subscription name).
+_X11_DISPLAY = ":1"
 _CDP_PORT = 19338
 _UNIT_NAME = "orion-agent-cursor.service"
 _DESKTOP_NAME = "cursor-glass-orion.desktop"
-_CURSOR_BIN = Path("/usr/share/cursor/cursor")
 
 
 def render_cursor_unit_body(*, home: Path) -> str:
     """User systemd unit: Wayland Glass with remote debugging on 19338."""
     profile = home / ".gateway" / "cursor-orion"
-    venv_python = home / ".venvs" / "universal" / "bin" / "python"
+    cursor_bin = runtime_cursor_bin(home)
     env_block = format_systemd_environment_block(
-        display_browser_environment(
-            _SLOT, _SUBSCRIPTION_DISPLAY, home=home
-        )
+        display_browser_environment(_SLOT, _X11_DISPLAY, home=home)
     )
     # graphically-session-bound: Cosmic session supplies WAYLAND_DISPLAY and XDG_RUNTIME_DIR.
     return f"""[Unit]
@@ -55,7 +55,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart={_CURSOR_BIN} \\
+ExecStart={cursor_bin} \\
   --user-data-dir={profile} \\
   --remote-debugging-port={_CDP_PORT} \\
   --remote-allow-origins=* \\
@@ -72,8 +72,9 @@ WantedBy=graphical-session.target
 def render_desktop_entry(*, home: Path) -> str:
     """Application launcher that always passes the Glass CDP flags."""
     profile = home / ".gateway" / "cursor-orion"
+    cursor_bin = runtime_cursor_bin(home)
     exec_line = (
-        f"{_CURSOR_BIN} --user-data-dir={profile} "
+        f"{cursor_bin} --user-data-dir={profile} "
         f"--remote-debugging-port={_CDP_PORT} --remote-allow-origins=* %F"
     )
     return f"""[Desktop Entry]
@@ -129,6 +130,7 @@ def provision_orion_glass(
     daemon_reload: Callable[[], object] | None = None,
 ) -> dict[str, object]:
     """Install browser shim, systemd unit, and Cosmic desktop entry (no start/stop)."""
+    runtime = ensure_cursor_runtime(home=home, apply=apply)
     unit_rendered = render_cursor_unit_body(home=home)
     desktop_rendered = render_desktop_entry(home=home)
     unit_path = _systemd_user_dir(home) / _UNIT_NAME
@@ -196,6 +198,7 @@ def provision_orion_glass(
         "autostart": autostart,
         "daemon_reload": reload_ran,
         "browser_shim": shim,
+        "cursor_runtime": runtime,
         "enable_command": enable_cmd,
         "restart_command": restart_cmd,
         "verify_command": verify_cmd,

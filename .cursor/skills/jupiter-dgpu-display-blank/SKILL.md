@@ -23,6 +23,16 @@ With that head enabled, `nvidia-smi` reported `memory.used` 401 MiB and `memory.
 
 The script default `OUTPUT=HDMI-A-3` misses the live head. A blank that should target the 5090 has to disable `DP-2` only after `cosmic-randr xwayland --primary DP-1`.
 
+## Gap — stub EDID / freeze (2026-11-26)
+
+`∀ restore|mode on DP-2: analyze 4K readiness first`. Required before `cosmic-randr mode|enable|disable` on the NVIDIA head:
+
+1. `wc -c /sys/class/drm/card1-DP-2/edid` — healthy U2868 was **256** bytes; **128** + product name `0x0000` = stub EDID (OSD power unlock / bad link).
+2. `cosmic-randr list` must show **U2868** and a **3840x2160** mode. If the only current mode is **640x480**, do not apply 4K — `ModeNotFound` then repeated disable/enable **hangs cosmic-comp and freezes all heads** (operator had to SSH-restart the compositor).
+3. Stub path: operator fixes DP input / auto / cable / monitor power until EDID is 256 and model is U2868; only then apply restore knobs. Prefer `timeout` on every `cosmic-randr` call. Never loop disable/enable against a stub.
+
+OSD unlock (U2868PQU-class): **power off** → hold **Menu** → press **Power** → release Menu. Holding Menu while on does nothing.
+
 ## Procedure
 
 From repo root:

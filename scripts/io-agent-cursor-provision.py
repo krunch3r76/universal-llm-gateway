@@ -11,6 +11,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from cursor_agent_runtime import ensure_cursor_runtime, runtime_cursor_bin
 from io_agent_display_browser import (
     display_browser_environment,
     format_systemd_environment_block,
@@ -22,7 +23,6 @@ _DISPLAY = ":8"
 _CDP_PORT = 9338
 _UNIT_NAME = "io-agent-cursor.service"
 _UNIT_XVFB = "io-agent-xvfb-8.service"
-_CURSOR_BIN = Path("/usr/share/cursor/cursor")
 
 
 def render_cursor_unit_body(*, home: Path) -> str:
@@ -30,6 +30,7 @@ def render_cursor_unit_body(*, home: Path) -> str:
     profile = home / ".gateway" / "cursor-io"
     maximize = home / ".config" / "io-agent-maximize.py"
     venv_python = home / ".venvs" / "universal" / "bin" / "python"
+    cursor_bin = runtime_cursor_bin(home)
     env_block = format_systemd_environment_block(
         display_browser_environment(_SLOT, _DISPLAY, home=home)
     )
@@ -45,7 +46,8 @@ UnsetEnvironment=WAYLAND_DISPLAY
 # Xvfb has no DRI; cosmic.conf renderD128 breaks Chromium GPU → blank VNC/Glass window.
 UnsetEnvironment=COSMIC_RENDER_DEVICE
 Environment=LIBGL_ALWAYS_SOFTWARE=1
-ExecStart={_CURSOR_BIN} --user-data-dir={profile} --remote-debugging-port={_CDP_PORT} --window-size=1920,1200 --window-position=0,0 --ozone-platform=x11 --disable-gpu --disable-gpu-compositing
+# Fused user runtime: Cursor 3.32+ rejects --remote-debugging-port on the package ELF.
+ExecStart={cursor_bin} --user-data-dir={profile} --remote-debugging-port={_CDP_PORT} --window-size=1920,1200 --window-position=0,0 --ozone-platform=x11 --disable-gpu --disable-gpu-compositing
 ExecStartPost={venv_python} {maximize} {_DISPLAY}
 {env_block}
 Restart=always
@@ -77,6 +79,7 @@ def provision_cursor(
     *, home: Path, apply: bool, daemon_reload: Callable[[], object] | None = None
 ) -> dict[str, object]:
     """Install browser shim and optionally write the cursor systemd unit (no start/stop)."""
+    runtime = ensure_cursor_runtime(home=home, apply=apply)
     rendered = render_cursor_unit_body(home=home)
     unit_path = _systemd_user_dir(home) / _UNIT_NAME
     installed_text: str | None = None
@@ -113,6 +116,7 @@ def provision_cursor(
         "unit_changed": unit_changed,
         "daemon_reload": reload_ran,
         "browser_shim": shim,
+        "cursor_runtime": runtime,
         "restart_command": restart_cmd,
     }
 

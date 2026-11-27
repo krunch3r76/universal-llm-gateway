@@ -12,6 +12,7 @@ cdp-operator-proxy
 lane-act-gates
 skill-authoring-gate
 directive-authoring-standard
+cursor-grand-impresario
 cursor-model-economics
 claude-ai-cdp-navigation
 cowork-paste-resolve
