@@ -36,7 +36,7 @@ def fetch_registry_claims(
             return RegistryClaims((), "claim_source_unavailable")
     else:
         try:
-            with httpx.Client(timeout_s) as client:
+            with httpx.Client(timeout=timeout_s) as client:
                 response = client.get(url)
             response.raise_for_status()
             payload = response.json()
