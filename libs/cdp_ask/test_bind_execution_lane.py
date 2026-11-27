@@ -19,6 +19,8 @@ from cdp_ask.runner import bind_execution_lane, run_execution
 
 pytestmark = pytest.mark.offline
 
+_FAKE_CHROME_PID = 424242
+
 
 def test_bind_execution_lane_operator_proxy_uses_ensure() -> None:
     req = SubmitProjectAskRequest(
@@ -245,7 +247,7 @@ def test_two_threads_join_one_launch(
         profile.mkdir(parents=True, exist_ok=True)
         entered.set()
         assert release.wait(timeout=5)
-        return 1
+        return _FAKE_CHROME_PID
 
     monkeypatch.setattr(reg.cdp_lane, "_launch_chrome", launch)
     loser_waiting, _seers = _signal_when_others_see_allocating(
@@ -304,7 +306,7 @@ def test_winner_failure_lets_loser_mint(
             entered.set()
             assert proceed.wait(timeout=5)
             raise RuntimeError("chrome fail")
-        return 1
+        return _FAKE_CHROME_PID
 
     monkeypatch.setattr(reg.cdp_lane, "_launch_chrome", launch)
     loser_waiting, _seers = _signal_when_others_see_allocating(
@@ -359,7 +361,7 @@ def test_join_wait_outlasts_launch_wait(
         entered_at.append(time.monotonic())
         entered.set()
         time.sleep(0.4)
-        return 1
+        return _FAKE_CHROME_PID
 
     monkeypatch.setattr(reg.cdp_lane, "_launch_chrome", launch)
     loser_waiting, _seers = _signal_when_others_see_allocating(
@@ -401,7 +403,7 @@ def test_stranded_allocating_row_is_not_joined(
     def launch(port: int, profile: Path) -> int:
         launches.append(port)
         profile.mkdir(parents=True, exist_ok=True)
-        return 1
+        return _FAKE_CHROME_PID
 
     monkeypatch.setattr(reg.cdp_lane, "_launch_chrome", launch)
     _seed_allocating(
@@ -431,7 +433,7 @@ def test_stranded_plus_live_winner_joins_winner(
         profile.mkdir(parents=True, exist_ok=True)
         entered.set()
         assert release.wait(timeout=5)
-        return 1
+        return _FAKE_CHROME_PID
 
     monkeypatch.setattr(reg.cdp_lane, "_launch_chrome", launch)
     _seed_allocating(
@@ -507,7 +509,7 @@ def test_three_threads_winner_failure_launches_twice(
             entered.set()
             assert proceed.wait(timeout=5)
             raise RuntimeError("winner failed")
-        return 1
+        return _FAKE_CHROME_PID
 
     monkeypatch.setattr(reg.cdp_lane, "_launch_chrome", launch)
     _seen, seers = _signal_when_others_see_allocating(
@@ -565,9 +567,9 @@ def test_rollback_between_wait_observations_launches_twice(
         if len(launches) == 1:
             entered.set()
             assert release.wait(timeout=5)
-            return 1
+            return _FAKE_CHROME_PID
         second_launch.set()
-        return 1
+        return _FAKE_CHROME_PID
 
     monkeypatch.setattr(reg.cdp_lane, "_launch_chrome", launch)
     barrier = threading.Barrier(2)
@@ -656,7 +658,7 @@ async def test_run_execution_bind_yields_the_event_loop(
         profile.mkdir(parents=True, exist_ok=True)
         entered.set()
         assert release.wait(timeout=5)
-        return 1
+        return _FAKE_CHROME_PID
 
     monkeypatch.setattr(reg.cdp_lane, "_launch_chrome", launch)
     monkeypatch.setattr(

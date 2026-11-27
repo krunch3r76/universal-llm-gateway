@@ -13,6 +13,7 @@ from claude_bundles import cdp_registry as reg
 from claude_bundles.cdp_registry import dormant_drain
 from claude_bundles.cdp_registry.dormant_drain import drain_live_hosts_to_dormant
 from claude_bundles.cdp_registry.models import dormant_max_rows, dormant_ttl_s
+from claude_bundles.conftest import FAKE_CHROME_PID
 
 pytestmark = pytest.mark.offline
 
@@ -448,7 +449,13 @@ def test_orphan_reaper_respects_streaming_monitoring_lease(
     seat = _seat(chat_url=url)
     active = reg._load_active()
     row = dict(active[seat.registration_id])
-    row.update({"status": "orphaned_alive", "orphaned_at": 0.0, "chrome_pid": 1})
+    row.update(
+        {
+            "status": "orphaned_alive",
+            "orphaned_at": 0.0,
+            "chrome_pid": FAKE_CHROME_PID,
+        }
+    )
     active[seat.registration_id] = row
     reg._store.write_active(active)
     monkeypatch.setattr(
@@ -1049,8 +1056,9 @@ def test_relaunch_dormant_prior_row_account_agrees_with_display(
     extra = '\ncdp_account_displays:\n  account-2: ":4"\n'
     cfg = tmp_path / "accounts.yaml"
     cfg.write_text(
-        (Path(__file__).resolve().parents[2] / "config" / "cdp" / "accounts.yaml")
-        .read_text(encoding="utf-8")
+        (
+            Path(__file__).resolve().parents[2] / "config" / "cdp" / "accounts.yaml"
+        ).read_text(encoding="utf-8")
         + extra,
         encoding="utf-8",
     )
@@ -1085,8 +1093,9 @@ def test_relaunch_dormant_account_two_stays_on_colon_four(
     extra = '\ncdp_account_displays:\n  account-2: ":4"\n'
     cfg = tmp_path / "accounts.yaml"
     cfg.write_text(
-        (Path(__file__).resolve().parents[2] / "config" / "cdp" / "accounts.yaml")
-        .read_text(encoding="utf-8")
+        (
+            Path(__file__).resolve().parents[2] / "config" / "cdp" / "accounts.yaml"
+        ).read_text(encoding="utf-8")
         + extra,
         encoding="utf-8",
     )

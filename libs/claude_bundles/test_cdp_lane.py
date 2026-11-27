@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from claude_bundles import cdp_lane
+from claude_bundles.conftest import FAKE_CHROME_PID
 
 pytestmark = pytest.mark.offline
 
@@ -282,7 +283,9 @@ def test_concurrent_fresh_acquire_distinct_suffixes(
 ) -> None:
     ask_fd = cdp_lane._open_lock(cdp_lane.lock_path_for("ask"))
     fcntl.flock(ask_fd, fcntl.LOCK_EX)
-    monkeypatch.setattr(cdp_lane, "_launch_chrome", lambda port, profile: 1)
+    monkeypatch.setattr(
+        cdp_lane, "_launch_chrome", lambda port, profile: FAKE_CHROME_PID
+    )
     monkeypatch.setattr(cdp_lane, "is_listening", lambda port: False)
     monkeypatch.setattr(cdp_lane, "chrome_port_for_profile", lambda profile: None)
 

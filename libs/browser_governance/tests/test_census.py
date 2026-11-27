@@ -17,6 +17,7 @@ from browser_governance.census import (
     run_census_and_emit,
     run_census_throttled,
 )
+from claude_bundles.conftest import FAKE_CHROME_PID
 
 
 def _write_proc_tree(root: Path) -> None:
@@ -70,9 +71,7 @@ def _write_proc_tree(root: Path) -> None:
     )
     _pid(
         "1003",
-        cmdline=(
-            b"/usr/bin/Xvfb\x00:8\x00-screen\x000\x001280x720x24\x00"
-        ),
+        cmdline=(b"/usr/bin/Xvfb\x00:8\x00-screen\x000\x001280x720x24\x00"),
         rss_kb=64000,
         pss_kb=32000,
     )
@@ -93,9 +92,9 @@ def test_collect_local_browser_census_synthetic_proc(
     _write_proc_tree(proc_root)
     monkeypatch.setattr(
         "browser_governance.census._probe_cdp_json_list",
-        lambda _host, port, timeout=0.8: (port == 9338, 3, 2)
-        if port == 9338
-        else (False, 0, 0),
+        lambda _host, port, timeout=0.8: (
+            (port == 9338, 3, 2) if port == 9338 else (False, 0, 0)
+        ),
     )
 
     census = collect_local_browser_census(
@@ -214,7 +213,9 @@ def test_admission_preflight_off_skips_sampling(
         called = True
         return {}
 
-    monkeypatch.setattr("browser_governance.census.collect_local_browser_census", _collect)
+    monkeypatch.setattr(
+        "browser_governance.census.collect_local_browser_census", _collect
+    )
     result = check_ephemeral_admission_preflight(caller="test")
     assert result == {"allowed": True, "mode": "off", "warnings": []}
     assert called is False
@@ -252,7 +253,11 @@ def test_admission_preflight_emits_on_low_mem(
     )
     result = check_ephemeral_admission_preflight(
         caller="cdp_registry.ephemeral",
-        snapshot={"mem_available_mib": 100.0, "swap_free_mib": 9000, "disk_free_gib": 9000},
+        snapshot={
+            "mem_available_mib": 100.0,
+            "swap_free_mib": 9000,
+            "disk_free_gib": 9000,
+        },
     )
     assert result["allowed"] is True
     assert result["warnings"]
@@ -310,13 +315,15 @@ def test_lifecycle_calls_admission_preflight(
     monkeypatch.setattr(
         lifecycle,
         "_events",
-        MagicMock(emit=lambda *_a, **_k: None, cdp_port_registered=lambda *_a, **_k: object()),
+        MagicMock(
+            emit=lambda *_a, **_k: None, cdp_port_registered=lambda *_a, **_k: object()
+        ),
     )
 
     lifecycle._finish_reserved_launch(
         row,
         launch=False,
-        launch_fn=lambda *_a, **_k: 1,
+        launch_fn=lambda *_a, **_k: FAKE_CHROME_PID,
     )
     assert calls == ["cdp_registry.ephemeral"]
 
@@ -370,8 +377,13 @@ def _stub_hygiene(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _load_status_module():
-    script = Path(__file__).resolve().parents[3] / "scripts/web-automation-substrate-status.py"
-    spec = importlib.util.spec_from_file_location("web_automation_substrate_status", script)
+    script = (
+        Path(__file__).resolve().parents[3]
+        / "scripts/web-automation-substrate-status.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "web_automation_substrate_status", script
+    )
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
@@ -408,9 +420,7 @@ def test_web_automation_status_census_exception_survives(
     def _boom(**_: Any) -> dict[str, Any]:
         raise RuntimeError("census boom")
 
-    monkeypatch.setattr(
-        "browser_governance.census.collect_local_browser_census", _boom
-    )
+    monkeypatch.setattr("browser_governance.census.collect_local_browser_census", _boom)
     report = status_mod.build_report()
     assert report["resource_census"]["error"] == "RuntimeError"
 

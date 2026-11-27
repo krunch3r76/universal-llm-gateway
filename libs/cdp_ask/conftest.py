@@ -11,6 +11,10 @@ import socket
 from typing import Any
 
 import pytest
+from claude_bundles.conftest import (  # noqa: F401
+    cdp_lane_signal_recorder,
+    g1_registry_isolation,
+)
 
 _DISPLAY_CHAT_PASTE_ROUTES = "test_display_chat_paste_routes.py"
 
@@ -147,5 +151,3 @@ def _offline_bypass_project_select(
         return req
 
     monkeypatch.setattr("cdp_ask.runner.apply_project_select", _noop)
-
-from claude_bundles.conftest import g1_registry_isolation  # noqa: F401

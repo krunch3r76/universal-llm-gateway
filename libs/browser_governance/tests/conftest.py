@@ -1,1 +1,4 @@
-from claude_bundles.conftest import g1_registry_isolation  # noqa: F401
+from claude_bundles.conftest import (  # noqa: F401
+    cdp_lane_signal_recorder,
+    g1_registry_isolation,
+)

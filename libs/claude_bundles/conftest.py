@@ -2,11 +2,38 @@
 
 from __future__ import annotations
 
+import os
 from typing import NoReturn
 
 import pytest
 
 from claude_bundles.cdp_test_isolation import apply_g1_registry_isolation
+
+# Recorder-only stand-in. Never 1: pid 1 is a real process group leader.
+FAKE_CHROME_PID = 424242
+
+
+@pytest.fixture(autouse=True)
+def cdp_lane_signal_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[str, int, int]]:
+    """Record ``os.kill`` / ``os.killpg`` so CDP tests cannot signal the host.
+
+    ``_default_signal_child`` imports ``os`` locally, so the patch has to be on
+    the ``os`` module itself. Teardown restores the real functions.
+    """
+    recorded: list[tuple[str, int, int]] = []
+
+    def _killpg(pgid: int, sig: int) -> None:
+        recorded.append(("killpg", int(pgid), int(sig)))
+
+    def _kill(pid: int, sig: int) -> None:
+        recorded.append(("kill", int(pid), int(sig)))
+
+    monkeypatch.setattr(os, "killpg", _killpg)
+    monkeypatch.setattr(os, "kill", _kill)
+    return recorded
+
 
 _UNARMED_REASON = "g1 guard not armed: ledger criteria need the guarded invocation"
 

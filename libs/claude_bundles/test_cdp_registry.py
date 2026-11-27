@@ -13,6 +13,7 @@ import pytest
 
 from claude_bundles import cdp_orphans
 from claude_bundles import cdp_registry as reg
+from claude_bundles.conftest import FAKE_CHROME_PID
 from claude_bundles.x_display_capacity import _load_pin_lanes as _load_pin_lanes_real
 
 pytestmark = pytest.mark.offline
@@ -49,7 +50,20 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 def _noop_launch(port: int, profile: Path) -> int:
     profile.mkdir(parents=True, exist_ok=True)
-    return 1
+    return FAKE_CHROME_PID
+
+
+def _owned_launch(port: int, profile: Path) -> int:
+    """Chrome pid this test spawned: its own session, so the stop guard allows it."""
+    profile.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(
+        ["sleep", "30"],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return proc.pid
 
 
 def _write_accounts_yaml(tmp_path: Path, extra: dict[str, Any] | None = None) -> Path:
@@ -210,28 +224,32 @@ def test_register_lane_rejects_unknown_mission_kind(isolated_registry: Path) -> 
 
 
 def test_deregister_kill_true_on_orphaned_alive(
-    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+    isolated_registry: Path, cdp_lane_signal_recorder: list[tuple[str, int, int]]
 ) -> None:
-    killed: list[int] = []
-    monkeypatch.setattr(reg, "_kill_listener", lambda port: killed.append(port))
+    import signal
+
     r = reg.register_lane(
         holder="a",
-        launch_chrome=_noop_launch,
+        launch_chrome=_owned_launch,
         is_listening=lambda _p: False,
     )
+    chrome_pid = reg._load_active()[r.registration_id]["chrome_pid"]
     reg.deregister_lane(
         r.registration_id,
         reason="probe_failed",
         is_listening=lambda _p: True,
     )
     assert reg._load_active()[r.registration_id]["status"] == "orphaned_alive"
-    assert killed == []
+    assert cdp_lane_signal_recorder == []
     reg.deregister_lane(
         r.registration_id,
         kill=True,
         is_listening=lambda _p: True,
     )
-    assert killed == [r.port]
+    assert cdp_lane_signal_recorder == [
+        ("killpg", chrome_pid, signal.SIGTERM),
+        ("killpg", chrome_pid, signal.SIGKILL),
+    ]
     assert reg._load_active()[r.registration_id]["status"] == "released"
 
 
@@ -316,17 +334,21 @@ def test_deregister_marks_released_not_free(isolated_registry: Path) -> None:
 
 
 def test_deregister_voluntary_default_kills_listener(
-    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+    isolated_registry: Path, cdp_lane_signal_recorder: list[tuple[str, int, int]]
 ) -> None:
-    killed: list[int] = []
-    monkeypatch.setattr(reg, "_kill_listener", lambda port: killed.append(port))
+    import signal
+
     r = reg.register_lane(
         holder="a",
-        launch_chrome=_noop_launch,
+        launch_chrome=_owned_launch,
         is_listening=lambda _p: False,
     )
+    chrome_pid = reg._load_active()[r.registration_id]["chrome_pid"]
     reg.deregister_lane(r.registration_id, is_listening=lambda _p: True)
-    assert killed == [r.port]
+    assert cdp_lane_signal_recorder == [
+        ("killpg", chrome_pid, signal.SIGTERM),
+        ("killpg", chrome_pid, signal.SIGKILL),
+    ]
     assert reg._load_active()[r.registration_id]["status"] == "released"
 
 
@@ -529,7 +551,9 @@ def test_second_driver_attach_fails_closed(isolated_registry: Path) -> None:
     reg._HELD_LOCKS[r.registration_id] = held_fd
 
 
-def test_select_free_never_returns_a_free_pin_port(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_select_free_never_returns_a_free_pin_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A pin port that is not listening is still withheld. Missing pins do not withhold it."""
     monkeypatch.setattr(
         "claude_bundles.x_display_capacity._load_pin_lanes",
@@ -676,7 +700,7 @@ def test_registered_lane_dicts_enriched_fields(
     assert row["registration_id"] == r.registration_id
     assert row["driver_pid"] == reg._load_active()[r.registration_id]["holder_pid"]
     assert row["attached"] is True
-    assert row["chrome_pid"] == 1
+    assert row["chrome_pid"] == FAKE_CHROME_PID
 
 
 def test_hygiene_rmtree_released_profile(

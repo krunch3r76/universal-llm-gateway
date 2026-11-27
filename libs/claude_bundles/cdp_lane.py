@@ -38,7 +38,7 @@ import signal
 import socket
 import subprocess
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -219,6 +219,10 @@ class LaneError(RuntimeError):
     """Base for lane-allocation failures."""
 
 
+class SignalChildRefusedError(OSError):
+    """Refused to signal a process group this lane did not launch."""
+
+
 class LaneBusyError(LaneError):
     """The requested profile is actively leased and the queue timed out."""
 
@@ -363,28 +367,22 @@ def is_listening(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+PROC_ROOT: Path | None = None
+SIGNAL_CHILD: Callable[[int], None] | None = None
 
 
-PROC_ROOT: "Path | None" = None
-SIGNAL_CHILD: "Callable[[int], None] | None" = None
-
-
-def _proc_root(path: "Path | None" = None) -> "Path":
-    from pathlib import Path as _P
-
+def _proc_root(path: Path | None = None) -> Path:
     if path is not None:
         return path
-    mod = _P("/proc")
+    mod = Path("/proc")
     custom = PROC_ROOT
     return custom if custom is not None else mod
 
 
-def _read_starttime_ticks(pid: int, *, proc_root: "Path | None" = None) -> int | None:
-    from pathlib import Path as _P
-
+def _read_starttime_ticks(pid: int, *, proc_root: Path | None = None) -> int | None:
     root = _proc_root(proc_root)
     try:
-        parts = (_P(root) / str(pid) / "stat").read_text().split()
+        parts = (Path(root) / str(pid) / "stat").read_text().split()
         if len(parts) > 21:
             return int(parts[21])
     except (OSError, ValueError, IndexError):
@@ -392,13 +390,11 @@ def _read_starttime_ticks(pid: int, *, proc_root: "Path | None" = None) -> int |
     return None
 
 
-def _read_scope_unit(pid: int, *, proc_root: "Path | None" = None) -> str:
-    from pathlib import Path as _P
-
+def _read_scope_unit(pid: int, *, proc_root: Path | None = None) -> str:
     root = _proc_root(proc_root)
     scope = ""
     try:
-        cg = (_P(root) / str(pid) / "cgroup").read_text().strip().splitlines()
+        cg = (Path(root) / str(pid) / "cgroup").read_text().strip().splitlines()
         for line in cg:
             if "scope" in line or ".scope" in line:
                 scope = line.split(":")[-1].split("/")[-1]
@@ -408,28 +404,56 @@ def _read_scope_unit(pid: int, *, proc_root: "Path | None" = None) -> str:
     return scope
 
 
-def launch_identity(pid: int, *, proc_root: "Path | None" = None) -> dict[str, object]:
+def launch_identity(pid: int, *, proc_root: Path | None = None) -> dict[str, object]:
     """Record starttime ticks and scope unit for a launched child the caller owns."""
     ticks = _read_starttime_ticks(pid, proc_root=proc_root)
     scope = _read_scope_unit(pid, proc_root=proc_root)
     return {"root_starttime_ticks": ticks, "scope_unit": scope}
 
 
-def _default_signal_child(pid: int) -> None:
-    import contextlib
-    import os
-    import signal
-    import time
+def owned_process_group(pid: object) -> int:
+    """Return ``pid``'s pgid when this process may signal it.
 
-    os.killpg(os.getpgid(pid), signal.SIGTERM)
+    Refusal sends no signal. ``scoped_launch_argv`` may prefix ``systemd-run
+    --scope``, so Chrome can sit in a group led by another pid; ``pgid == pid``
+    is not required. A pgid of 1, or the caller's own group, is never ours.
+    """
+    if type(pid) is not int or pid <= 1:
+        raise SignalChildRefusedError(
+            f"refusing signal: pid {pid!r} is not an int greater than 1"
+        )
+    try:
+        pgid = os.getpgid(pid)
+    except ProcessLookupError as exc:
+        raise SignalChildRefusedError(
+            f"refusing signal: pid {pid} has no process group"
+        ) from exc
+    if pgid <= 1:
+        raise SignalChildRefusedError(
+            f"refusing signal: pgid {pgid} is not a launched group"
+        )
+    caller_pgid = os.getpgid(0)
+    if pgid == caller_pgid:
+        raise SignalChildRefusedError(
+            f"refusing signal: pgid {pgid} is the caller's process group"
+        )
+    return pgid
+
+
+def _signal_owned_group(pid: int, sig: int) -> None:
+    os.killpg(owned_process_group(pid), sig)
+
+
+def _default_signal_child(pid: int) -> None:
+    _signal_owned_group(pid, signal.SIGTERM)
     time.sleep(0.05)
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    with contextlib.suppress(ProcessLookupError, SignalChildRefusedError):
+        _signal_owned_group(pid, signal.SIGKILL)
 
 
 def _resolve_signal_child(
-    signal_child: "Callable[[int], None] | None" = None,
-) -> "Callable[[int], None]":
+    signal_child: Callable[[int], None] | None = None,
+) -> Callable[[int], None]:
     if signal_child is not None:
         return signal_child
     custom = SIGNAL_CHILD
@@ -441,8 +465,8 @@ def _resolve_signal_child(
 def verified_stop(
     row: dict,
     *,
-    proc_root: "Path | None" = None,
-    signal_child: "Callable[[int], None] | None" = None,
+    proc_root: Path | None = None,
+    signal_child: Callable[[int], None] | None = None,
 ) -> str:
     """Stop Chrome only when row identity matches live process; else refuse."""
     import logging
@@ -462,12 +486,25 @@ def verified_stop(
         if isinstance(port, int):
             _lifecycle.registry_package()._kill_listener(port)
         return "legacy"
+    if isinstance(pid, int) and pid <= 1:
+        log.warning(
+            "verified_stop_refused chrome_pid_not_signalable registration=%s chrome_pid=%s",
+            row.get("registration_id"),
+            pid,
+        )
+        return "refused"
     if not isinstance(pid, int):
-        log.warning("verified_stop_refused missing chrome_pid registration=%s", row.get("registration_id"))
+        log.warning(
+            "verified_stop_refused missing chrome_pid registration=%s",
+            row.get("registration_id"),
+        )
         return "refused"
     live = launch_identity(pid, proc_root=proc_root)
     if live.get("root_starttime_ticks") != stored:
-        log.warning("verified_stop_refused tick_mismatch registration=%s", row.get("registration_id"))
+        log.warning(
+            "verified_stop_refused tick_mismatch registration=%s",
+            row.get("registration_id"),
+        )
         return "refused"
     scope = row.get("scope_unit") or live.get("scope_unit") or ""
     if scope.startswith("cdp-host-"):
@@ -476,11 +513,13 @@ def verified_stop(
     try:
         killer(int(pid))
     except (ProcessLookupError, PermissionError, OSError) as exc:
-        log.warning("verified_stop_refused signal_failed registration=%s err=%s", row.get("registration_id"), exc)
+        log.warning(
+            "verified_stop_refused signal_failed registration=%s err=%s",
+            row.get("registration_id"),
+            exc,
+        )
         return "refused"
     return "stopped"
-
-
 
 
 def chrome_port_for_profile(profile: Path) -> int | None:
@@ -650,7 +689,7 @@ def _seed_profile(profile: Path, *, account_id: str | None = None) -> None:
 def _kill_lane_chrome(pid: int) -> None:
     """Tear down a Chrome we launched but cannot hand back (whole process group)."""
     with contextlib.suppress(OSError, ProcessLookupError):
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        _signal_owned_group(pid, signal.SIGTERM)
 
 
 def _launch_chrome(
@@ -679,9 +718,7 @@ def _launch_chrome(
     eff_acct = resolve_effective_account_id(account_id, profile)
     chosen = display if display is not None else _LAUNCH_DISPLAY.get()
     display_val = (
-        cdp_display(chosen)
-        if chosen is not None
-        else cdp_display_for_account(eff_acct)
+        cdp_display(chosen) if chosen is not None else cdp_display_for_account(eff_acct)
     )
     from claude_bundles.cdp_registry.models import (
         RegistryError,
